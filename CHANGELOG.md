@@ -1,15 +1,10 @@
 # Changelog
 
-## 0.8.0 — Complete texture redesign from scratch (2026-08-04)
+## 0.8.0 — Particles & HUD icons redesign (2026-08-04)
 
 ### Changed
-- Every texture in the mod was redesigned from the ground up on one unified master palette — heaven sets shine in silver with gold trim, hell sets in obsidian with soul-teal accents and fire cores, lit from the top-left with dark colored outlines throughout
-- All 19 item textures redrawn: swords, maces (normal + enchanted), ingots, armor icons, banner patterns and the smithing template, all keeping their soft pulse animations
-- All 12 particle sprite sets rebuilt procedurally (flames, sparks, motes, bursts, soot, chain links, feathers) at the same frame counts, with flickering flame tips, breathing motes and expanding burst rings
-- Armor equipment textures (both layers, both sets) repainted with clean metal panels, trim lines and a chest emblem (gold star / soul flame)
-- Banner and shield patterns (heaven star, hell flame) redrawn at full 64×64 with shading and embers
-- New mod icon: a heaven/hell split monogram
-- HUD cooldown icons snapped onto the master palette so every on-screen element shares the same art direction
+- All 12 particle sprite sets rebuilt procedurally from scratch on one unified palette (flames, sparks, motes, bursts, soot, chain links, feathers) at the same frame counts, with flickering flame tips, breathing motes, pulsing sparks and expanding burst rings
+- HUD cooldown icons snapped onto the same master palette so every on-screen element shares one art direction (heaven gold, hell soul-teal, fire cores)
 
 ## 0.7.0 — Visual overhaul & client display settings (2026-08-04)
 
