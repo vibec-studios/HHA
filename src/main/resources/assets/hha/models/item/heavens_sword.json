@@ -1,4 +1,5 @@
 {
+  "gui_light": "front",
   "parent": "minecraft:item/handheld",
   "textures": {
     "layer0": "hha:item/heavens_sword"

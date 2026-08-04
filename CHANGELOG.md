@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.0 — Visual overhaul & client display settings (2026-08-04)
+
+### Added
+- New client-only display settings, persisted in `config/hha/client.json` and adjustable live with the new `/hhac` client command: HUD on/off (`hud`), ready-slot pulse (`pulse`), slot background (`background`), ultra bar (`ultrabar`), HUD scale 0.5–2.0 (`scale`), HUD position offset (`offset <x> <y>`) and client-side particle density (`density`, 0–1 — thins out HHA particles for weaker PCs; the grapple chain stays untouched). `/hhac list` shows all values, `/hhac reset` restores defaults
+- Heaven's and Hell's Ingots now have a soft animated gleam — four interpolated frames gently pulsing the gold/teal accents
+
+### Changed
+- All particle effects play noticeably smoother: every HHA particle sprite set now runs at double the frame count with crossfaded in-between frames (flames, bursts, sparks and motes went from 4 to 8 frames, chain links and feathers from 2 to 4)
+- All flat item models render with front-facing GUI lighting, so heaven/hell items appear fully lit in inventories instead of side-shaded
+- Redesigned HUD cooldown icons across the board (beams, camp, chain, mace, sword, ultra, wave)
+
 ## 0.6.2 — Sneak to let go of the chain (2026-07-16)
 
 ### Added

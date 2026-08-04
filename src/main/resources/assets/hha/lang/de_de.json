@@ -150,6 +150,11 @@
   "hha.hud.ultra": "Ultra",
   "hha.hud.ultra_active": "⚡ ULTRA — %ss ⚡",
 
+  "hha.clientcmd.set": "HHA-Client-Einstellung '%s' → %s",
+  "hha.clientcmd.reset": "HHA-Client-Einstellungen auf Standard zurückgesetzt.",
+  "hha.clientcmd.list_header": "HHA-Client-Einstellungen (/hhac <Einstellung> <Wert>):",
+  "hha.clientcmd.list_entry": "  %s = %s",
+
   "hha.info.overview.title": "Hell's Armory — Hilfe",
   "hha.info.overview.1": "Alle Hells-/Heavens-Rüstungen werden am Schmiedetisch ausschließlich aus Netherit-Rüstung aufgewertet.",
   "hha.info.overview.2": "Set-Tasten: Ability 1 = Strahl, Ability 2 = Fire Camp, Ability 3 = Ultra (Standard G/H/U); Waffenfähigkeiten starten per Rechtsklick.",

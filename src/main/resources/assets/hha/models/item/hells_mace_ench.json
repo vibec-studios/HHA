@@ -1,4 +1,5 @@
 {
+  "gui_light": "front",
   "parent": "minecraft:item/handheld_mace",
   "textures": {
     "layer0": "hha:item/hells_mace_ench"

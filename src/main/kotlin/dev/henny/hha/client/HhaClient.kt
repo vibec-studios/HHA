@@ -27,6 +27,9 @@ class HhaClient : ClientModInitializer {
     private var airJumpArmed = false
 
     override fun onInitializeClient() {
+        HhaClientConfig.load()
+        HhaClientCommands.register()
+
         EntityRendererRegistry.register(HhaEntities.HEAVENS_MACE) { context ->
             HeavensMaceEntityRenderer(context)
         }

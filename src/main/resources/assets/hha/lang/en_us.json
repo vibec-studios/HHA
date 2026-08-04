@@ -150,6 +150,11 @@
   "hha.hud.ultra": "Ultra",
   "hha.hud.ultra_active": "⚡ ULTRA — %ss ⚡",
 
+  "hha.clientcmd.set": "HHA client setting '%s' → %s",
+  "hha.clientcmd.reset": "HHA client settings reset to defaults.",
+  "hha.clientcmd.list_header": "HHA client settings (/hhac <setting> <value>):",
+  "hha.clientcmd.list_entry": "  %s = %s",
+
   "hha.info.overview.title": "Hell's Armory — Help",
   "hha.info.overview.1": "All Hell's/Heaven's armor is upgraded at a smithing table exclusively from Netherite armor.",
   "hha.info.overview.2": "Set keys: Ability 1 = beam, Ability 2 = Fire Camp, Ability 3 = Ultra (defaults G/H/U); weapon abilities use right-click.",

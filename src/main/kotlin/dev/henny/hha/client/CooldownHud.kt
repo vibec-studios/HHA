@@ -60,6 +60,7 @@ object CooldownHud {
     private fun render(client: MinecraftClient, context: DrawContext) {
         val player = client.player ?: return
         if (client.options.hudHidden) return
+        if (!HhaClientConfig.enabled("hud_enabled")) return
 
         val manager = player.itemCooldownManager
 
@@ -87,63 +88,88 @@ object CooldownHud {
 
         val time = client.world?.time ?: 0L
 
-        if (candidates.isNotEmpty()) {
-            val total = candidates.size * SLOT - (SLOT - 18)
-            var x = (context.scaledWindowWidth - total) / 2
-            val y = context.scaledWindowHeight - 82
+        // Client-Visuals: Skalierung läuft über die Matrix, das Layout rechnet
+        // im skalierten Koordinatenraum; Offsets verschieben die ganze Leiste.
+        val scale = HhaClientConfig.numF("hud_scale")
+        val offsetX = HhaClientConfig.num("hud_offset_x").toInt()
+        val offsetY = HhaClientConfig.num("hud_offset_y").toInt()
+        val pulseOn = HhaClientConfig.enabled("hud_pulse")
+        val backgroundOn = HhaClientConfig.enabled("hud_background")
 
-            for (slot in candidates) {
-                val stack = slot.stack
-                val icon = slot.icon
-                val base = slot.color
-                val progress = manager.getCooldownProgress(stack, 0f)
+        val matrices = context.matrices
+        matrices.pushMatrix()
+        try {
+            matrices.scale(scale, scale)
+            val viewW = context.scaledWindowWidth / scale
+            val viewH = context.scaledWindowHeight / scale
 
-                context.fill(x - 1, y - 1, x + 17, y + 17, 0x90000000.toInt())
+            if (candidates.isNotEmpty()) {
+                val total = candidates.size * SLOT - (SLOT - 18)
+                var x = ((viewW - total) / 2).toInt() + offsetX
+                val y = (viewH - 82).toInt() + offsetY
 
-                val border = if (progress <= 0f) {
-                    val pulse = sin(time * 0.35) * 0.5 + 0.5
-                    ((140 + pulse * 115).toInt() shl 24) or base
-                } else {
-                    0xFF3A3A3A.toInt()
+                for (slot in candidates) {
+                    val stack = slot.stack
+                    val icon = slot.icon
+                    val base = slot.color
+                    val progress = manager.getCooldownProgress(stack, 0f)
+
+                    if (backgroundOn) {
+                        context.fill(x - 1, y - 1, x + 17, y + 17, 0x90000000.toInt())
+                    }
+
+                    val border = if (progress <= 0f) {
+                        val alpha = if (pulseOn) {
+                            val pulse = sin(time * 0.35) * 0.5 + 0.5
+                            (140 + pulse * 115).toInt()
+                        } else {
+                            220
+                        }
+                        (alpha shl 24) or base
+                    } else {
+                        0xFF3A3A3A.toInt()
+                    }
+                    context.fill(x - 2, y - 2, x + 18, y - 1, border)
+                    context.fill(x - 2, y + 17, x + 18, y + 18, border)
+                    context.fill(x - 2, y - 1, x - 1, y + 17, border)
+                    context.fill(x + 17, y - 1, x + 18, y + 17, border)
+
+                    context.drawGuiTexture(RenderPipelines.GUI_TEXTURED, icon, x, y, 16, 16)
+
+                    if (progress > 0f) {
+                        val covered = (progress * 16f).toInt().coerceIn(0, 16)
+                        context.fill(x, y, x + 16, y + covered, 0xB0101010.toInt())
+                        context.fill(x - 2, y + 19, x + 18, y + 22, 0xAA000000.toInt())
+                        val w = ((1f - progress) * 20f).toInt()
+                        context.fill(x - 2, y + 20, x - 2 + w, y + 21, 0xFF000000.toInt() or base)
+                    }
+                    x += SLOT
                 }
-                context.fill(x - 2, y - 2, x + 18, y - 1, border)
-                context.fill(x - 2, y + 17, x + 18, y + 18, border)
-                context.fill(x - 2, y - 1, x - 1, y + 17, border)
-                context.fill(x + 17, y - 1, x + 18, y + 17, border)
+            }
 
-                context.drawGuiTexture(RenderPipelines.GUI_TEXTURED, icon, x, y, 16, 16)
+            if (ultraRemainingTicks > 0 && HhaClientConfig.enabled("ultra_bar")) {
+                val cx = (viewW / 2).toInt() + offsetX
+                val seconds = (ultraRemainingTicks + 19) / 20
+                val pulse = sin(time * 0.5) * 0.5 + 0.5
+                val titleColor = if (pulse > 0.5) 0xFFFFD75E.toInt() else 0xFFFF7B1F.toInt()
+                val title = Text.translatable("hha.hud.ultra_active", seconds)
+                    .formatted(Formatting.BOLD)
+                context.drawCenteredTextWithShadow(client.textRenderer, title, cx, 12 + offsetY, titleColor)
 
-                if (progress > 0f) {
-                    val covered = (progress * 16f).toInt().coerceIn(0, 16)
-                    context.fill(x, y, x + 16, y + covered, 0xB0101010.toInt())
-                    context.fill(x - 2, y + 19, x + 18, y + 22, 0xAA000000.toInt())
-                    val w = ((1f - progress) * 20f).toInt()
-                    context.fill(x - 2, y + 20, x - 2 + w, y + 21, 0xFF000000.toInt() or base)
+                val total = 1200f
+                val fraction = (ultraRemainingTicks / total).coerceIn(0f, 1f)
+                val barWidth = 140
+                val barX = cx - barWidth / 2
+                context.fill(barX - 2, 23 + offsetY, barX + barWidth + 2, 32 + offsetY, 0xAA000000.toInt())
+                context.fill(barX - 1, 24 + offsetY, barX + barWidth + 1, 31 + offsetY, 0xFF1A120B.toInt())
+                val fill = (barWidth * fraction).toInt()
+                context.fill(barX, 25 + offsetY, barX + fill, 30 + offsetY, 0xFFFF7B1F.toInt())
+                if (fill > 2) {
+                    context.fill(barX, 25 + offsetY, barX + fill - 2, 27 + offsetY, 0xFFFFD75E.toInt())
                 }
-                x += SLOT
             }
-        }
-
-        if (ultraRemainingTicks > 0) {
-            val cx = context.scaledWindowWidth / 2
-            val seconds = (ultraRemainingTicks + 19) / 20
-            val pulse = sin(time * 0.5) * 0.5 + 0.5
-            val titleColor = if (pulse > 0.5) 0xFFFFD75E.toInt() else 0xFFFF7B1F.toInt()
-            val title = Text.translatable("hha.hud.ultra_active", seconds)
-                .formatted(Formatting.BOLD)
-            context.drawCenteredTextWithShadow(client.textRenderer, title, cx, 12, titleColor)
-
-            val total = 1200f
-            val fraction = (ultraRemainingTicks / total).coerceIn(0f, 1f)
-            val barWidth = 140
-            val barX = cx - barWidth / 2
-            context.fill(barX - 2, 23, barX + barWidth + 2, 32, 0xAA000000.toInt())
-            context.fill(barX - 1, 24, barX + barWidth + 1, 31, 0xFF1A120B.toInt())
-            val fill = (barWidth * fraction).toInt()
-            context.fill(barX, 25, barX + fill, 30, 0xFFFF7B1F.toInt())
-            if (fill > 2) {
-                context.fill(barX, 25, barX + fill - 2, 27, 0xFFFFD75E.toInt())
-            }
+        } finally {
+            matrices.popMatrix()
         }
     }
 }

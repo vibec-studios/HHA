@@ -80,3 +80,22 @@ class MyAddonClient : HhaClientAddon {
   (im Beispiel `assets/myaddon/textures/gui/sprites/hud/nova.png`).
 - Bereite Fähigkeiten pulsieren in der Akzentfarbe, laufende Cooldowns
   dunkeln ab und zeigen einen Fortschrittsbalken — wie die eingebauten Slots.
+
+## Client-Einstellungen (`/hhac`)
+
+Rein clientseitige Darstellungsoptionen — sie werden **nie** vom Server
+überschrieben und liegen in `config/hha/client.json`. Der Clientbefehl
+`/hhac` ändert sie live:
+
+| Befehl | Schlüssel | Standard | Wirkung |
+| --- | --- | --- | --- |
+| `/hhac hud on\|off` | `hud_enabled` | `on` | komplette Cooldown-Leiste ein/aus |
+| `/hhac pulse on\|off` | `hud_pulse` | `on` | Pulsieren bereiter Slots |
+| `/hhac background on\|off` | `hud_background` | `on` | dunkler Slot-Hintergrund |
+| `/hhac ultrabar on\|off` | `ultra_bar` | `on` | Ultra-Statusleiste oben |
+| `/hhac scale <0.5–2.0>` | `hud_scale` | `1.0` | HUD-Skalierung |
+| `/hhac offset <x> <y>` | `hud_offset_x/y` | `0` | HUD-Position verschieben (Pixel) |
+| `/hhac density <0.0–1.0>` | `particle_density` | `1.0` | HHA-Partikel clientseitig ausdünnen (0 = aus; die Grapple-Kette bleibt immer sichtbar) |
+
+`/hhac list` zeigt alle aktuellen Werte, `/hhac reset` stellt die Defaults
+wieder her.
