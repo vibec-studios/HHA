@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- HUD cooldown icons redrawn so each glyph matches the ability it represents: holy pillar + purify plus (light beam), molten lance (lava beam), soul camp with brute faces (Fire Camp), fire blade with haste streaks and a crit burst (Blade Rush), expanding triple shockwave (Light Wave), gold mace struck by cyan lightning (thrown mace), steel chain ending in a fire hook (pull / grapple), and a gold/fire overdrive burst (Ultra)
+- The Ultra timer now shows the Ultra icon beside the countdown
+
 ## 0.8.0 — Particles & HUD icons redesign (2026-08-04)
 
 ### Changed

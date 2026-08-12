@@ -32,6 +32,7 @@ object CooldownHud {
     private val ICON_WAVE: Identifier = Hha.id("hud/wave")
     private val ICON_MACE: Identifier = Hha.id("hud/mace")
     private val ICON_CHAIN: Identifier = Hha.id("hud/chain")
+    private val ICON_ULTRA: Identifier = Hha.id("hud/ultra")
 
     /** Vom Server gemeldeter Ultra-Rest (Ticks); tickt clientseitig herunter. */
     var ultraRemainingTicks = 0
@@ -154,7 +155,14 @@ object CooldownHud {
                 val titleColor = if (pulse > 0.5) 0xFFFFD75E.toInt() else 0xFFFF7B1F.toInt()
                 val title = Text.translatable("hha.hud.ultra_active", seconds)
                     .formatted(Formatting.BOLD)
-                context.drawCenteredTextWithShadow(client.textRenderer, title, cx, 12 + offsetY, titleColor)
+                val titleWidth = client.textRenderer.getWidth(title)
+                val icon = 16
+                val gap = 3
+                val left = cx - (icon + gap + titleWidth) / 2
+                context.drawGuiTexture(RenderPipelines.GUI_TEXTURED, ICON_ULTRA, left, 8 + offsetY, icon, icon)
+                context.drawTextWithShadow(
+                    client.textRenderer, title, left + icon + gap, 12 + offsetY, titleColor,
+                )
 
                 val total = 1200f
                 val fraction = (ultraRemainingTicks / total).coerceIn(0f, 1f)
