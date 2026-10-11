@@ -1,10 +1,44 @@
 {
   "model": {
-    "type": "minecraft:condition",
-    "property": "minecraft:has_component",
-    "component": "minecraft:enchantments",
-    "ignore_default": true,
-    "on_true": { "type": "minecraft:model", "model": "hha:item/hells_mace_ench" },
-    "on_false": { "type": "minecraft:model", "model": "hha:item/hells_mace" }
+    "type": "minecraft:select",
+    "property": "minecraft:display_context",
+    "cases": [
+      {
+        "when": [
+          "gui",
+          "ground",
+          "fixed",
+          "on_shelf"
+        ],
+        "model": {
+          "type": "minecraft:condition",
+          "property": "minecraft:has_component",
+          "component": "minecraft:enchantments",
+          "ignore_default": true,
+          "on_true": {
+            "type": "minecraft:model",
+            "model": "hha:item/hells_mace_ench"
+          },
+          "on_false": {
+            "type": "minecraft:model",
+            "model": "hha:item/hells_mace"
+          }
+        }
+      }
+    ],
+    "fallback": {
+      "type": "minecraft:condition",
+      "property": "minecraft:has_component",
+      "component": "minecraft:enchantments",
+      "ignore_default": true,
+      "on_true": {
+        "type": "minecraft:model",
+        "model": "hha:item/hells_mace_ench_in_hand"
+      },
+      "on_false": {
+        "type": "minecraft:model",
+        "model": "hha:item/hells_mace_in_hand"
+      }
+    }
   }
 }
