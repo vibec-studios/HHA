@@ -59,27 +59,23 @@ object Abilities {
             if (blockHit.type == HitResult.Type.BLOCK) blockHit.pos.distanceTo(start) else BEAM_RANGE
 
         val muzzle = start.add(direction.multiply(1.2))
+        val beamEnd = start.add(direction.multiply(maxDistance))
         Fx.spawn(world, HhaParticles.INFERNAL_BURST, muzzle.x, muzzle.y, muzzle.z, 1, 0.0, 0.0, 0.0, 0.0)
+        Vfx.beam(world, Vfx.Style.HELL, start.add(direction.multiply(0.8)).add(0.0, -0.25, 0.0), beamEnd, 0.95f, 18)
+        Vfx.rune(world, Vfx.Style.FIRE, player.entityPos.add(0.0, 0.06, 0.0), 2.6f, 22, player)
+        Vfx.skyMood(world, Vfx.Style.HELL, player.entityPos, 0.7f, 50, 32f)
+        Vfx.shake(world, player.entityPos, 2.2f, 10, 18f)
 
         val (right, up) = beamBasis(direction)
         val alreadyHit = HashSet<UUID>()
         var d = 1.0
         while (d <= maxDistance) {
             val point = start.add(direction.multiply(d))
-            Fx.spawn(world, HhaParticles.SOUL_FLAME, point.x, point.y, point.z, 3, 0.12, 0.12, 0.12, 0.01)
-            Fx.spawn(world, HhaParticles.HELLFIRE, point.x, point.y, point.z, 2, 0.05, 0.05, 0.05, 0.005)
-            val angle = d * 1.4
-            for (strand in 0 until 3) {
-                val a = angle + strand * (Math.PI * 2.0 / 3.0)
-                val offset = right.multiply(cos(a) * 0.45).add(up.multiply(sin(a) * 0.45))
-                Fx.spawn(world, 
-                    if (strand == 0) HhaParticles.EMBER_SPARK else HhaParticles.SOUL_MOTE,
-                    point.x + offset.x, point.y + offset.y, point.z + offset.z,
-                    1, 0.0, 0.0, 0.0, 0.0
-                )
-            }
-            if (d.mod(4.0) < 0.5) {
-                Fx.orientedRing(world, point, right, up, 0.9, HhaParticles.SOUL_FLAME, 12)
+            if (d.mod(1.5) < 0.5) {
+                val a = d * 1.4
+                val offset = right.multiply(cos(a) * 0.8).add(up.multiply(sin(a) * 0.8))
+                Fx.spawn(world, HhaParticles.EMBER_SPARK, point.x + offset.x, point.y + offset.y, point.z + offset.z, 1, 0.1, 0.1, 0.1, 0.02)
+                Fx.spawn(world, HhaParticles.SOUL_MOTE, point.x, point.y, point.z, 1, 0.3, 0.3, 0.3, 0.01)
             }
 
             val hitBox = Box.of(point, 2.2, 2.2, 2.2)
@@ -87,7 +83,8 @@ object Abilities {
                 if (!Targeting.shouldHarm(player, entity) || !alreadyHit.add(entity.uuid)) continue
                 entity.damage(world, world.damageSources.playerAttack(player), HhaConfig.numF("beam_damage"))
                 entity.setOnFireFor(6.0f)
-                Fx.spawn(world, 
+                Vfx.nova(world, Vfx.Style.FIRE, entity.entityPos.add(0.0, entity.height * 0.5, 0.0), 2.6f, 12)
+                Fx.spawn(world,
                     HhaParticles.EMBER_SPARK,
                     entity.x, entity.y + entity.height * 0.5, entity.z,
                     10, 0.3, 0.3, 0.3, 0.03
@@ -98,7 +95,7 @@ object Abilities {
 
         if (blockHit.type == HitResult.Type.BLOCK) {
             val firePos = blockHit.blockPos.offset(blockHit.side)
-            if (world.getBlockState(firePos).isAir) {
+            if (world.getBlockState(firePos).isAir && !dev.henny.hha.logic.boss.HermesFights.isProtected(world, firePos)) {
                 world.setBlockState(firePos, AbstractFireBlock.getState(world, firePos))
             }
             Fx.spawn(world, 
@@ -121,14 +118,12 @@ object Abilities {
                 blockHit.pos.x, blockHit.pos.y + 0.4, blockHit.pos.z,
                 16, 0.25, 0.8, 0.25, 0.02
             )
-            Fx.ring(world, blockHit.pos, 1.2, HhaParticles.SOUL_FLAME, 16, 0.06)
-            Fx.ring(world, blockHit.pos, 2.2, HhaParticles.EMBER_SPARK, 20, 0.09)
-            Fx.ring(world, blockHit.pos, 3.2, HhaParticles.SOUL_MOTE, 24, 0.12)
+            Vfx.shockwave(world, Vfx.Style.FIRE, blockHit.pos, 6.5f, 16, 2.2f)
+            Vfx.pillar(world, Vfx.Style.HELL, blockHit.pos, 1.3f, 7f, 20)
             world.playSound(null, blockHit.blockPos, SoundEvents.ENTITY_GENERIC_EXPLODE.value(), SoundCategory.PLAYERS, 0.9f, 0.9f)
         }
 
         Fx.spiral(world, player.entityPos, 0.7, 1.6, HhaParticles.SOUL_FLAME)
-        Fx.ring(world, player.entityPos.add(0.0, 0.1, 0.0), 1.1, HhaParticles.HELLFIRE, 16, 0.05)
         world.playSound(null, player.blockPos, SoundEvents.ENTITY_BLAZE_SHOOT, SoundCategory.PLAYERS, 1.0f, 0.6f)
         world.playSound(null, player.blockPos, SoundEvents.ITEM_FIRECHARGE_USE, SoundCategory.PLAYERS, 1.0f, 0.8f)
         world.playSound(null, player.blockPos, SoundEvents.ENTITY_GHAST_SHOOT, SoundCategory.PLAYERS, 0.8f, 0.7f)
@@ -150,8 +145,15 @@ object Abilities {
         SoulCamp.create(world, player, brutes)
 
         val center = player.entityPos.add(0.0, 0.15, 0.0)
+        Vfx.rune(world, Vfx.Style.HELL, center.add(0.0, -0.07, 0.0), 7.5f, 60)
+        Vfx.shockwave(world, Vfx.Style.SOUL, center, 8f, 22, 3f)
+        for (uuid in brutes) {
+            val brute = world.getEntity(uuid) ?: continue
+            Vfx.pillar(world, Vfx.Style.HELL, brute.entityPos, 1.2f, 8f, 30)
+        }
+        Vfx.skyMood(world, Vfx.Style.HELL, player.entityPos, 0.85f, 120, 40f)
+        Vfx.shake(world, player.entityPos, 2.5f, 14, 20f)
         Fx.ring(world, center, 2.0, HhaParticles.SOUL_FLAME, 22, 0.04)
-        Fx.ring(world, center, 1.2, HhaParticles.SOUL_MOTE, 14, 0.03)
         Fx.spawn(world, 
             HhaParticles.SOOT,
             player.x, player.y + 0.8, player.z,
@@ -181,27 +183,23 @@ object Abilities {
             if (blockHit.type == HitResult.Type.BLOCK) blockHit.pos.distanceTo(start) else BEAM_RANGE
 
         val muzzle = start.add(direction.multiply(1.2))
+        val beamEnd = start.add(direction.multiply(maxDistance))
         Fx.spawn(world, HhaParticles.DIVINE_FLASH, muzzle.x, muzzle.y, muzzle.z, 1, 0.0, 0.0, 0.0, 0.0)
+        Vfx.beam(world, Vfx.Style.HEAVEN, start.add(direction.multiply(0.8)).add(0.0, -0.25, 0.0), beamEnd, 0.9f, 18)
+        Vfx.rune(world, Vfx.Style.HEAVEN, player.entityPos.add(0.0, 0.06, 0.0), 2.6f, 22, player)
+        Vfx.skyMood(world, Vfx.Style.GOLD, player.entityPos, 0.6f, 50, 32f)
+        Vfx.shake(world, player.entityPos, 1.8f, 10, 18f)
 
         val (right, up) = beamBasis(direction)
         val alreadyHit = HashSet<UUID>()
         var d = 1.0
         while (d <= maxDistance) {
             val point = start.add(direction.multiply(d))
-            Fx.spawn(world, HhaParticles.LIGHT_MOTE, point.x, point.y, point.z, 3, 0.1, 0.1, 0.1, 0.005)
-            Fx.spawn(world, HhaParticles.HOLY_FLAME, point.x, point.y, point.z, 2, 0.05, 0.05, 0.05, 0.005)
-            val angle = d * 1.4
-            for (strand in 0 until 3) {
-                val a = angle + strand * (Math.PI * 2.0 / 3.0)
-                val offset = right.multiply(cos(a) * 0.45).add(up.multiply(sin(a) * 0.45))
-                Fx.spawn(world, 
-                    if (strand == 0) HhaParticles.LIGHT_MOTE else HhaParticles.HOLY_SPARK,
-                    point.x + offset.x, point.y + offset.y, point.z + offset.z,
-                    1, 0.0, 0.0, 0.0, 0.0
-                )
-            }
-            if (d.mod(4.0) < 0.5) {
-                Fx.orientedRing(world, point, right, up, 0.9, HhaParticles.HOLY_SPARK, 12)
+            if (d.mod(1.5) < 0.5) {
+                val a = d * 1.4
+                val offset = right.multiply(cos(a) * 0.8).add(up.multiply(sin(a) * 0.8))
+                Fx.spawn(world, HhaParticles.HOLY_SPARK, point.x + offset.x, point.y + offset.y, point.z + offset.z, 1, 0.1, 0.1, 0.1, 0.02)
+                Fx.spawn(world, HhaParticles.LIGHT_MOTE, point.x, point.y, point.z, 1, 0.3, 0.3, 0.3, 0.01)
             }
 
             val hitBox = Box.of(point, 2.2, 2.2, 2.2)
@@ -212,6 +210,7 @@ object Abilities {
                 } else if (Targeting.shouldHarm(player, entity)) {
                     entity.damage(world, world.damageSources.playerAttack(player), HhaConfig.numF("beam_damage"))
                     entity.addStatusEffect(StatusEffectInstance(StatusEffects.GLOWING, 60, 0, false, false, false))
+                    Vfx.pillar(world, Vfx.Style.HEAVEN, entity.entityPos, 1.2f, 7f, 20)
                     Fx.spawn(world, 
                         HhaParticles.HOLY_SPARK,
                         entity.x, entity.y + entity.height * 0.5, entity.z,
@@ -238,12 +237,11 @@ object Abilities {
                 blockHit.pos.x, blockHit.pos.y + 0.4, blockHit.pos.z,
                 16, 0.25, 0.8, 0.25, 0.02
             )
-            Fx.ring(world, blockHit.pos, 1.2, HhaParticles.LIGHT_MOTE, 16, 0.06)
-            Fx.ring(world, blockHit.pos, 2.2, HhaParticles.HOLY_SPARK, 20, 0.09)
-            Fx.ring(world, blockHit.pos, 3.2, HhaParticles.LIGHT_MOTE, 24, 0.12)
+            Vfx.shockwave(world, Vfx.Style.HEAVEN, blockHit.pos, 6.5f, 16, 2.2f)
+            Vfx.pillar(world, Vfx.Style.HEAVEN, blockHit.pos, 1.3f, 8f, 20)
+            Vfx.feathers(world, Vfx.Style.HEAVEN, blockHit.pos.add(0.0, 0.5, 0.0), 14, 1.2f, 40)
         }
         Fx.spiral(world, player.entityPos, 0.7, 1.8, HhaParticles.HOLY_FLAME)
-        Fx.ring(world, player.entityPos.add(0.0, 0.1, 0.0), 1.1, HhaParticles.HOLY_SPARK, 16, 0.05)
         world.playSound(null, player.blockPos, SoundEvents.BLOCK_BEACON_ACTIVATE, SoundCategory.PLAYERS, 1.0f, 1.6f)
         world.playSound(null, player.blockPos, SoundEvents.BLOCK_AMETHYST_BLOCK_CHIME, SoundCategory.PLAYERS, 1.5f, 0.8f)
         world.playSound(null, player.blockPos, SoundEvents.BLOCK_BELL_RESONATE, SoundCategory.PLAYERS, 0.9f, 1.4f)
@@ -268,11 +266,12 @@ object Abilities {
             ally.x, ally.y + ally.height * 0.5, ally.z,
             10, 0.4, 0.5, 0.4, 0.02
         )
-        Fx.spawn(world, 
+        Fx.spawn(world,
             HhaParticles.FEATHER,
             ally.x, ally.y + ally.height + 0.5, ally.z,
             3, 0.3, 0.1, 0.3, 0.0
         )
+        Vfx.pillar(world, Vfx.Style.HEAVEN, ally.entityPos, 0.9f, 4.5f, 22)
     }
 
     /** Heaven's Sword Aktiv: Lichtwelle schleudert alle Gegner in der Linie weg. */
@@ -282,13 +281,17 @@ object Abilities {
         val direction = player.getRotationVec(1.0f).normalize()
         val knockback = HhaConfig.num("light_wave_knockback")
 
+        val waveOrigin = start.add(0.0, -0.35, 0.0)
+        Vfx.crescent(world, Vfx.Style.HEAVEN, waveOrigin, direction, WAVE_RANGE.toFloat() + 3f, 3.2f, 11)
+        Vfx.crescent(world, Vfx.Style.GOLD, waveOrigin.add(0.0, 0.5, 0.0), direction, WAVE_RANGE.toFloat(), 2.2f, 13)
+        Vfx.feathers(world, Vfx.Style.HEAVEN, waveOrigin.add(direction.multiply(4.0)), 12, 1.1f, 36)
+        Vfx.shake(world, player.entityPos, 1.4f, 8, 14f)
+
         val flung = HashSet<UUID>()
         var d = 0.5
         while (d <= WAVE_RANGE) {
             val point = start.add(direction.multiply(d))
-            Fx.spawn(world, HhaParticles.LIGHT_MOTE, point.x, point.y - 0.4, point.z, 4, 0.5, 0.4, 0.5, 0.02)
-            Fx.spawn(world, HhaParticles.HOLY_SPARK, point.x, point.y - 0.3, point.z, 2, 0.5, 0.3, 0.5, 0.0)
-            Fx.spawn(world, HhaParticles.FEATHER, point.x, point.y + 0.2, point.z, 1, 0.5, 0.3, 0.5, 0.0)
+            Fx.spawn(world, HhaParticles.LIGHT_MOTE, point.x, point.y - 0.4, point.z, 2, 0.5, 0.4, 0.5, 0.02)
 
             val hitBox = Box.of(point, 3.0, 3.0, 3.0)
             for (entity in world.getEntitiesByClass(LivingEntity::class.java, hitBox, { it.isAlive && it != player })) {

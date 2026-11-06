@@ -1,0 +1,24 @@
+{
+  "fabric:load_conditions": [
+    {
+      "condition": "hha:config",
+      "key": "heaven_ingot_free_recipe"
+    }
+  ],
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    "AGA",
+    "GDG",
+    "AGA"
+  ],
+  "key": {
+    "A": "minecraft:amethyst_shard",
+    "G": "minecraft:glowstone",
+    "D": "minecraft:diamond_block"
+  },
+  "result": {
+    "id": "hha:heaven_ingot",
+    "count": 1
+  }
+}

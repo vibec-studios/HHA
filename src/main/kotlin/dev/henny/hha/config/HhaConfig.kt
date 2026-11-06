@@ -47,6 +47,8 @@ object HhaConfig {
         "heaven_ingot_recipe" to true,
         "template_recipe" to true,
         "kit_mode" to true,
+        "hermes_fight" to true,
+        "heaven_ingot_free_recipe" to false,
     )
 
     /** Zahlenwerte: Schaden und Trigger-Schwellen. */
@@ -86,6 +88,11 @@ object HhaConfig {
         "chain_recharge" to 400.0,
         "ultra_duration" to 1200.0,
         "ultra_cooldown" to 6000.0,
+        "hermes_damage" to 1.0,
+        "hermes_toughness" to 1.0,
+        "hermes_max_hit" to 40.0,
+        "hermes_health_per_player" to 0.6,
+        "hermes_damage_per_player" to 0.2,
     )
 
     /** Alle bekannten Toggles (eingebaute + von Addons registrierte). */

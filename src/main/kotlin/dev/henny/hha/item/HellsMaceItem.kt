@@ -139,6 +139,8 @@ class HellsMaceItem(settings: Settings) : MaceItem(settings) {
         world.playSound(null, user.blockPos, SoundEvents.ENTITY_BLAZE_SHOOT, SoundCategory.PLAYERS, 0.7f, 1.4f)
         Fx.ring(world, user.entityPos.add(0.0, 0.1, 0.0), 0.9, dev.henny.hha.HhaParticles.HELLFIRE, 14, 0.04)
         spawnFireChain(world, user.eyePos, target)
+        dev.henny.hha.logic.Vfx.chain(world, dev.henny.hha.logic.Vfx.Style.FIRE, user, target, null, 12)
+        dev.henny.hha.logic.Vfx.flare(world, dev.henny.hha.logic.Vfx.Style.FIRE, target, 1.6f, 8)
         return ActionResult.SUCCESS
     }
 
@@ -174,6 +176,7 @@ class HellsMaceItem(settings: Settings) : MaceItem(settings) {
             6, 0.3, 0.3, 0.3, 0.02
         )
         spawnFireChain(world, user.eyePos, entity.entityPos.add(0.0, entity.height * 0.5, 0.0))
+        dev.henny.hha.logic.Vfx.chain(world, dev.henny.hha.logic.Vfx.Style.FIRE, user, entity.entityPos, entity, 18)
     }
 
     /** Feuerkette zwischen zwei Punkten — funktionales Visual, wird nie ausgedünnt. */

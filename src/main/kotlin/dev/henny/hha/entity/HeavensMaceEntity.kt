@@ -46,21 +46,22 @@ class HeavensMaceEntity : ThrownItemEntity {
         super.tick()
         val world = entityWorld as? ServerWorld ?: return
         life++
-        if (startPos == null) startPos = entityPos
+        if (startPos == null) {
+            startPos = entityPos
+            dev.henny.hha.logic.Vfx.trail(world, dev.henny.hha.logic.Vfx.Style.GOLD, this, 0.55f, 420)
+            dev.henny.hha.logic.Vfx.orbitRings(world, dev.henny.hha.logic.Vfx.Style.GOLD, this, 0.75f, 420)
+        }
 
-        dev.henny.hha.logic.Fx.spawn(world, dev.henny.hha.HhaParticles.LIGHT_MOTE, x, y, z, 3, 0.12, 0.12, 0.12, 0.01)
-        val spin = life * 0.9
-        val r = 0.45
-        dev.henny.hha.logic.Fx.spawn(world, 
-            dev.henny.hha.HhaParticles.HOLY_SPARK,
-            x + kotlin.math.cos(spin) * r, y + kotlin.math.sin(spin) * r, z + kotlin.math.sin(spin * 0.7) * r,
-            1, 0.0, 0.0, 0.0, 0.0
-        )
-        dev.henny.hha.logic.Fx.spawn(world, 
-            dev.henny.hha.HhaParticles.HOLY_SPARK,
-            x - kotlin.math.cos(spin) * r, y - kotlin.math.sin(spin) * r, z - kotlin.math.sin(spin * 0.7) * r,
-            1, 0.0, 0.0, 0.0, 0.0
-        )
+        dev.henny.hha.logic.Fx.spawn(world, dev.henny.hha.HhaParticles.LIGHT_MOTE, x, y, z, 1, 0.12, 0.12, 0.12, 0.01)
+        if (life % 7 == 0) {
+            // Kleine Überschläge rund um den fliegenden Hammer.
+            val arc = world.random
+            dev.henny.hha.logic.Vfx.bolt(
+                world, dev.henny.hha.logic.Vfx.Style.STORM, entityPos,
+                entityPos.add(arc.nextDouble() * 3.0 - 1.5, arc.nextDouble() * 3.0 - 1.5, arc.nextDouble() * 3.0 - 1.5),
+                0.12f, 4,
+            )
+        }
         if (life % 4 == 0) {
             dev.henny.hha.logic.Fx.spawn(world, dev.henny.hha.HhaParticles.FEATHER, x, y, z, 1, 0.15, 0.15, 0.15, 0.0)
         }
@@ -112,11 +113,15 @@ class HeavensMaceEntity : ThrownItemEntity {
                 entity.damage(world, source, damage)
                 entity.setOnFireFor(8.0f)
             }
-            dev.henny.hha.logic.Fx.spawn(world, 
+            dev.henny.hha.logic.Fx.spawn(world,
                 dev.henny.hha.HhaParticles.DIVINE_FLASH,
                 entity.x, entity.y + entity.height * 0.5, entity.z,
                 1, 0.0, 0.0, 0.0, 0.0
             )
+            val strikeTop = entity.entityPos.add(world.random.nextDouble() * 4.0 - 2.0, 24.0, world.random.nextDouble() * 4.0 - 2.0)
+            dev.henny.hha.logic.Vfx.bolt(world, dev.henny.hha.logic.Vfx.Style.STORM, strikeTop, entity.entityPos.add(0.0, entity.height * 0.5, 0.0), 0.55f, 10)
+            dev.henny.hha.logic.Vfx.shockwave(world, dev.henny.hha.logic.Vfx.Style.STORM, entity.entityPos, 4.5f, 12, 1.6f)
+            dev.henny.hha.logic.Vfx.shake(world, entity.entityPos, 2.2f, 8, 18f)
         }
     }
 

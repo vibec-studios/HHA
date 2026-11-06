@@ -91,7 +91,21 @@ object HhaItems {
     lateinit var HEAVENS_SWORD: Item; private set
     lateinit var HEAVENS_MACE: Item; private set
 
+    /** Versiegelter Brief: ruft Hermes herbei. */
+    lateinit var HERMES_SUMMONS: Item; private set
+
+    /** Feder des Götterboten: Beute von Hermes und Zutat für Heavens Barren. */
+    lateinit var HERMES_FEATHER: Item; private set
+
+    /** Karte zu Hades: Beute von Hermes, führt zum Eingang der Halle unter dem Hades-Biom. */
+    lateinit var HADES_MAP: Item; private set
+
     fun init() {
+        HERMES_SUMMONS = register("hermes_summons") { s ->
+            dev.henny.hha.item.HermesSummonsItem(s.maxCount(1).rarity(Rarity.EPIC))
+        }
+        HERMES_FEATHER = register("hermes_feather") { s -> Item(s.rarity(Rarity.EPIC)) }
+        HADES_MAP = register("hades_map") { s -> dev.henny.hha.item.HadesMapItem(s.maxCount(1).rarity(Rarity.EPIC)) }
         HELL_INGOT = register("hell_ingot") { s -> Item(s.fireproof().rarity(Rarity.RARE)) }
         HEAVEN_INGOT = register("heaven_ingot") { s -> Item(s.rarity(Rarity.RARE)) }
         HELL_BANNER_PATTERN = register("hell_banner_pattern") { s ->
@@ -198,6 +212,10 @@ object HhaItems {
                 .icon { ItemStack(HELLS_SWORD) }
                 .displayName(Text.translatable("itemGroup.hha.hells_set"))
                 .entries { _, entries ->
+                    entries.add(HERMES_SUMMONS)
+                    entries.add(HERMES_FEATHER)
+                    entries.add(HADES_MAP)
+                    HhaBlocks.BUILDING.forEach { entries.add(it) }
                     entries.add(HELL_INGOT)
                     entries.add(HEAVEN_INGOT)
                     entries.add(HELL_BANNER_PATTERN)

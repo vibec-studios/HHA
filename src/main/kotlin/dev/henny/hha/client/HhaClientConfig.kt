@@ -21,6 +21,8 @@ object HhaClientConfig {
         "hud_pulse" to true,
         "hud_background" to true,
         "ultra_bar" to true,
+        "vfx_3d" to true,
+        "screen_shake" to true,
     )
 
     /** Zahlenwerte: Skalierung, Verschiebung, Partikel-Dichte. */

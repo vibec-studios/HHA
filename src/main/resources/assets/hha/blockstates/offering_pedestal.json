@@ -1,0 +1,10 @@
+{
+  "variants": {
+    "lit=false": {
+      "model": "hha:block/offering_pedestal"
+    },
+    "lit=true": {
+      "model": "hha:block/offering_pedestal_lit"
+    }
+  }
+}

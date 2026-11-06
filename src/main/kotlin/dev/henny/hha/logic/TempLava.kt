@@ -19,7 +19,7 @@ object TempLava {
     private val lava = HashMap<RegistryKey<World>, HashMap<BlockPos, Long>>()
 
     fun place(world: ServerWorld, pos: BlockPos, lifetimeTicks: Long) {
-        if (!world.getBlockState(pos).isAir) return
+        if (!world.getBlockState(pos).isAir || dev.henny.hha.logic.boss.HermesFights.isProtected(world, pos)) return
         world.setBlockState(pos, Blocks.LAVA.defaultState)
         lava.getOrPut(world.registryKey) { HashMap() }[pos.toImmutable()] = world.time + lifetimeTicks
     }

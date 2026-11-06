@@ -1,0 +1,6 @@
+{
+  "type": "hha:hades_hall",
+  "biomes": "#hha:has_hades_hall",
+  "spawn_overrides": {},
+  "step": "underground_structures"
+}

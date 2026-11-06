@@ -1,0 +1,32 @@
+{
+  "ambient_light": 0.06,
+  "attributes": {
+    "minecraft:gameplay/bed_rule": {
+      "can_set_spawn": "never",
+      "can_sleep": "never",
+      "explodes": true
+    },
+    "minecraft:gameplay/can_start_raid": false,
+    "minecraft:gameplay/respawn_anchor_works": false,
+    "minecraft:gameplay/snow_golem_melts": true,
+    "minecraft:visual/sun_angle": 180.0,
+    "minecraft:visual/moon_angle": 180.0,
+    "minecraft:visual/star_brightness": 0.0,
+    "minecraft:visual/cloud_color": "#00000000",
+    "minecraft:visual/sky_color": "#6a0408",
+    "minecraft:visual/fog_color": "#e3101a",
+    "minecraft:visual/sky_light_color": "#ffd8d0",
+    "minecraft:visual/sky_light_factor": 0.85
+  },
+  "coordinate_scale": 1.0,
+  "has_ceiling": false,
+  "has_skylight": true,
+  "height": 256,
+  "infiniburn": "#minecraft:infiniburn_overworld",
+  "logical_height": 256,
+  "min_y": 0,
+  "monster_spawn_block_light_limit": 0,
+  "monster_spawn_light_level": 0,
+  "timelines": "#minecraft:in_nether",
+  "has_fixed_time": true
+}

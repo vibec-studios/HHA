@@ -58,7 +58,7 @@ class FeatherParticle(
     init {
         setSprite(spriteProvider.getSprite(random))
         setMaxAge(50 + random.nextInt(30))
-        scale(1.1f)
+        scale(1.5f)
         velocityX = 0.0
         velocityY = -0.02
         velocityZ = 0.0

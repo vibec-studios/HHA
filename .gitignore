@@ -25,3 +25,6 @@ tmp/
 
 # Lokale MCP-Konfiguration mit absoluten Pfaden
 .mcp.json
+
+# Python-Zwischenstaende der Asset-Generatoren
+__pycache__/

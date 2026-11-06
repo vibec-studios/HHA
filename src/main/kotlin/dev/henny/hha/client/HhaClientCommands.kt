@@ -23,6 +23,8 @@ object HhaClientCommands {
                     .then(boolNode("pulse", "hud_pulse"))
                     .then(boolNode("background", "hud_background"))
                     .then(boolNode("ultrabar", "ultra_bar"))
+                    .then(boolNode("vfx", "vfx_3d"))
+                    .then(boolNode("shake", "screen_shake"))
                     .then(numberNode("scale", "hud_scale"))
                     .then(numberNode("density", "particle_density"))
                     .then(

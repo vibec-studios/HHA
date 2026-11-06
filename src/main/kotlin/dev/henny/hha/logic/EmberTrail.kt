@@ -32,7 +32,7 @@ object EmberTrail {
         val current = player.blockPos.toImmutable()
         val previous = lastPos.put(player.uuid, current)
         if (previous == null || previous == current) return
-        if (!world.getBlockState(previous).isAir) return
+        if (!world.getBlockState(previous).isAir || dev.henny.hha.logic.boss.HermesFights.isProtected(world, previous)) return
         val below = previous.down()
         if (!world.getBlockState(below).isSideSolidFullSquare(world, below, Direction.UP)) return
 

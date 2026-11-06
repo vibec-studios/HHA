@@ -46,7 +46,7 @@ object HhaCommands {
         CommandSource.suggestMatching(
             HhaSets.all().map { set ->
                 if (set.id.namespace == "hha") set.id.path else "${set.id.namespace}.${set.id.path}"
-            },
+            } + dev.henny.hha.logic.Kits.VanillaKit.entries.map { it.key },
             builder,
         )
     }
@@ -66,6 +66,34 @@ object HhaCommands {
                         )
                     )
                     .then(literal("addons").executes { ctx -> listAddons(ctx.source) })
+                    .then(
+                        literal("hermes").requires(ADMIN)
+                            .then(literal("start").executes { ctx ->
+                                if (dev.henny.hha.logic.boss.HermesFights.start(ctx.source.playerOrThrow)) 1 else 0
+                            })
+                            .then(literal("stop").executes { ctx ->
+                                if (dev.henny.hha.logic.boss.HermesFights.stop(ctx.source.world)) 1 else 0
+                            })
+                            .then(literal("skip").executes { ctx ->
+                                dev.henny.hha.logic.boss.HermesFights.of(ctx.source.world)?.forceNextStage()
+                                1
+                            })
+                    )
+                    .then(
+                        literal("vfx").requires(ADMIN).then(
+                            argument("name", StringArgumentType.word())
+                                .suggests { _, builder -> CommandSource.suggestMatching(dev.henny.hha.logic.VfxDemo.NAMES, builder) }
+                                .executes { ctx ->
+                                    val name = StringArgumentType.getString(ctx, "name")
+                                    if (dev.henny.hha.logic.VfxDemo.play(ctx.source.playerOrThrow, name)) {
+                                        1
+                                    } else {
+                                        ctx.source.sendError(Text.literal("Unbekannter Effekt: $name"))
+                                        0
+                                    }
+                                }
+                        )
+                    )
                     .then(literal("list").requires(ADMIN).executes { ctx ->
                         val source = ctx.source
                         source.sendFeedback({ header("Fähigkeiten") }, false)
@@ -343,6 +371,12 @@ object HhaCommands {
         if (!HhaConfig.enabled("kit_mode")) {
             source.sendError(Text.translatable("hha.msg.kit_disabled"))
             return 0
+        }
+        val vanilla = dev.henny.hha.logic.Kits.VanillaKit.entries.firstOrNull { it.key == setName }
+        if (vanilla != null) {
+            dev.henny.hha.logic.Kits.give(player, vanilla)
+            source.sendFeedback({ Text.translatable("hha.msg.kit_${vanilla.key}").formatted(Formatting.GOLD) }, false)
+            return 1
         }
         val set = resolveSet(setName)
         if (set == null) {

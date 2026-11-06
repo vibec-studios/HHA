@@ -1,0 +1,406 @@
+{
+  "de": {
+    "descent.dead_know": {
+      "hash": "0fd3fa93188ef56d5887326c52da42e30093f4854ee47384d0cca2f0547c4f8e",
+      "seconds": 4.92
+    },
+    "descent.enough": {
+      "hash": "ec73d871b952671d61b07e2ac85201eda95e031993c1a1a7f9a1f0808020804e",
+      "seconds": 1.3
+    },
+    "descent.every_soul": {
+      "hash": "0a9a6bc5eedff1dbcd401a018352b1d524f28ca2c9a3a64df4b5915329c3a28f",
+      "seconds": 5.99
+    },
+    "descent.serpents": {
+      "hash": "ee99deedafb83614e4c308259df1f27c3fa5bde9e2cbb3a2918c59a0b2b805df",
+      "seconds": 4.92
+    },
+    "descent.way_short": {
+      "hash": "656ba102d89c748c2dd125550eb086901a28a7c5fea32aca74ad252f7e5ff892",
+      "seconds": 3.2
+    },
+    "feather.falls": {
+      "hash": "8a42f5bd51f5cefa009b5a99b6a32fe469d9a7e266446ab60ae87b1bdf577d8c",
+      "seconds": 5.45
+    },
+    "feather.moment": {
+      "hash": "3f7f91d6b90273853cc5d47fb54a4e399a3daecf1667053fb8fad34c4bca815a",
+      "seconds": 1.53
+    },
+    "feather.other_job": {
+      "hash": "a15ff4caf99b8d014207aa9c568acb3266867997743d6c017320fc76ab88ec91",
+      "seconds": 3.39
+    },
+    "feather.thief": {
+      "hash": "5273953fd80b0a655b4456dd85911275eadc9de850177d923760599ce972c7ef",
+      "seconds": 5.99
+    },
+    "feather.touched": {
+      "hash": "e9c87b35af85481c41a21aa939d5e96a3a4d7bac6804b5698424fa9f345a0e96",
+      "seconds": 5.53
+    },
+    "finale.another_day": {
+      "hash": "94b10e2fab55c29058acd957fe43cb39a29b2f3441389fca2fabb7cafed04a83",
+      "seconds": 3.11
+    },
+    "finale.catch": {
+      "hash": "29b6d52b228ceea6edfc408938c7c01789e3dfb0f2415c6652f356cb2fb09e65",
+      "seconds": 5.4
+    },
+    "finale.caught": {
+      "hash": "5bedf9a1627f425ae35a9b6f331e2a0e003e467b37df792499e555f5dfc3995e",
+      "seconds": 3.72
+    },
+    "finale.delivered": {
+      "hash": "c813d6ad8acc477a96f6304314079fd094b9f4b659c90839cec7c42d6813b34c",
+      "seconds": 6.08
+    },
+    "finale.hades_seal": {
+      "hash": "d07feb47611959aeb179b625268eed1336a8ed94a88d27bbfc4d916c14fa6953",
+      "seconds": 3.67
+    },
+    "finale.second_letter": {
+      "hash": "ccbe166f782b8f33778ba7280da5763a5fdfc6f3684a96aa964c035484175803",
+      "seconds": 5.57
+    },
+    "finale.sign": {
+      "hash": "bf15fff40032d1f4da38edd8179cc09946cf39a6af39faf71d696494b56d6381",
+      "seconds": 1.67
+    },
+    "finale.stinger": {
+      "hash": "a317176c0984cf75fbacfcefbb5bfce53e4aac9adc586c48180eabc46f2187ef",
+      "seconds": 3.31
+    },
+    "guide.back": {
+      "hash": "48a561d024f59870621485e734a39405c7cff924ae5d3b4e05b7bcd1c01fa7f0",
+      "seconds": 3.72
+    },
+    "guide.end": {
+      "hash": "dc03a645b2a55fca1e6aab1dadf5cb597d927cb1c06e0545b352cf8659ce0966",
+      "seconds": 3.66
+    },
+    "guide.follow": {
+      "hash": "3a8492d6189a1dc3d917b56870649a8344d8c7e3b0f6b02e92aaa3afa79f1517",
+      "seconds": 3.76
+    },
+    "guide.slow": {
+      "hash": "b74b841bdcb3e31283c4a8e2d8456d77bb24d940663abaa452a982a9c3aa1b2f",
+      "seconds": 4.92
+    },
+    "prologue.altar": {
+      "hash": "170ce22a6481d28e5638f6a34e4bf7f257a869b13bfd36ec4c3a86051b3c2abb",
+      "seconds": 6.47
+    },
+    "prologue.apollo": {
+      "hash": "cc0eb9fe426b6836789701e9c1cbcd46b75e2c67063ce4757e1a61f2d754992d",
+      "seconds": 7.89
+    },
+    "prologue.catch": {
+      "hash": "0288a6360f52fb347de73e04408aa0ee64d526a88f27c2fc9e6faa72aac5608c",
+      "seconds": 2.51
+    },
+    "prologue.condition": {
+      "hash": "12288c5de87459a868b9ed90f046153841509c3a6ad87247ae3114bf726679a3",
+      "seconds": 4.64
+    },
+    "prologue.delivery": {
+      "hash": "6f90fe7189db57d43957f56bec6dc7484750480f4b9a2502737cea83156d1386",
+      "seconds": 3.72
+    },
+    "prologue.pull": {
+      "hash": "3a6e143f2e6865bb4ff0d76d8d3b8df92e3f058833a57a48c0ef85abb8ccab44",
+      "seconds": 3.87
+    },
+    "prologue.seal": {
+      "hash": "1e6d84aeccc5a032e690dd821790b0b42ba6bd49595d61e4465fbf92cd325f86",
+      "seconds": 4.33
+    },
+    "prologue.sender": {
+      "hash": "5b59647aad7e2305802dbf0b90e083deb87f6771da9a7dc51a288df14cc32491",
+      "seconds": 6.32
+    },
+    "shade.ash": {
+      "hash": "5c2d74334c835b5c041463b46753df298252b37310ad3fd1d693c152ecb1b005",
+      "seconds": 7.58
+    },
+    "shade.breath": {
+      "hash": "70e0190d31789ca2293790cb5fce17544e8f7ee1b1921de8b8f95d628fcb4201",
+      "seconds": 6.11
+    },
+    "shade.coin": {
+      "hash": "3f3283c385aa338b3ea6ab95dd264cfba61e96043898b341c1d96fb5ae539794",
+      "seconds": 6.0
+    },
+    "shade.contract": {
+      "hash": "ef57e5ab0da4ce62c559b0a1f4a3fe838a45d982bc5677c0e12ee564d7fe6739",
+      "seconds": 6.12
+    },
+    "shade.contract_end": {
+      "hash": "9a73620a3928ce4f670cf8ecae16ef3fd8f9b05c6d6a4815a91476747d4e7b3d",
+      "seconds": 3.33
+    },
+    "shade.gate": {
+      "hash": "88feed517a7e1e604ac9bcb0cd980713361673d49956941552a378e5b81886f2",
+      "seconds": 6.93
+    },
+    "shade.open": {
+      "hash": "a4e63e37923ddbec2401dfd03fca8d125bfebc76daead3362a7f0385b5d393ce",
+      "seconds": 5.35
+    },
+    "shade.snakes": {
+      "hash": "0327c984d64341b1463deb9e616e4780150208215aac6cc3f940e3ccc6c8e875",
+      "seconds": 3.99
+    },
+    "shade.stay": {
+      "hash": "06c8486e8c527c945d61250215eb2ee94f88797fa11c3adb1e5f3a74002c6a6e",
+      "seconds": 2.46
+    },
+    "shade.voice": {
+      "hash": "51571bbd2f7195744318952698f45ca084f0bb1cf01e7c51f583c28489c44620",
+      "seconds": 5.86
+    },
+    "shade.warning": {
+      "hash": "8a4caa04ef8367f530c3b4767269d636090d0841b20de9ce65ee11e2fb2cf5f9",
+      "seconds": 3.78
+    },
+    "shade.who": {
+      "hash": "68ed7202c5c04da669cacb398f162ee1c4e1174012e8d2d69392b2966698f131",
+      "seconds": 3.68
+    },
+    "shade.wings": {
+      "hash": "b20b79741732d95b16f7177951d36e2c1417cbd8e841fc069c6a0ba3d0eff58b",
+      "seconds": 3.99
+    },
+    "zeus.breath": {
+      "hash": "9f5916cda7f5363fde2309ae93c5b02bfc3a63b0f688f4b9b4825265858aadd2",
+      "seconds": 4.41
+    },
+    "zeus.end_it": {
+      "hash": "b49199cf0fe355f767443c6397d68632722b8bf220cfd15e33db68d763d77328",
+      "seconds": 3.05
+    },
+    "zeus.feather": {
+      "hash": "3dd27b0271657a334b5877bfad75daf9bfc180c652f1990bdaf6f257fcd4c507",
+      "seconds": 6.42
+    },
+    "zeus.fun": {
+      "hash": "c7c5f9acd864a937f0dd9da3dfda127fb4af69bd80d3cf8061e9370444ef4016",
+      "seconds": 4.09
+    },
+    "zeus.name": {
+      "hash": "b94cc08c57de337e5eaa2c34ef3a17025cd636bffe4b95e3b9f3cd7bb1821863",
+      "seconds": 1.25
+    },
+    "zeus.rule": {
+      "hash": "ab9c760ff1fc74a38c2a277d27fb0c9b1fd311638704d3105ac55a860da45088",
+      "seconds": 5.67
+    },
+    "zeus.yes_father": {
+      "hash": "a0337d89ad68dcd0db7d13e6ab4f5dc0ba4506cf77b814d4a2628cd08bf7305b",
+      "seconds": 1.21
+    }
+  },
+  "en": {
+    "descent.dead_know": {
+      "hash": "4c1e2213cf98466a1b1ec97d3f3c3f0425336234bf293996cc35e1bc1184647a",
+      "seconds": 5.2
+    },
+    "descent.enough": {
+      "hash": "416f66204288e6b7481d8ca9876a69e1e30f64a50a695f6848e629fe3182c1ff",
+      "seconds": 1.25
+    },
+    "descent.every_soul": {
+      "hash": "38cb651086539f9570d5bb6e4ad2aeafb27493dd3836d4b6f4304f193d6939d8",
+      "seconds": 5.11
+    },
+    "descent.serpents": {
+      "hash": "32ac1589add28ccc55ce60d3ecadae5dee037dcad32a7b900a516f170489c4ad",
+      "seconds": 5.67
+    },
+    "descent.way_short": {
+      "hash": "e52522495f1961e491ad9d4957684046668223b0605bd520dbc382149241fc03",
+      "seconds": 3.02
+    },
+    "feather.falls": {
+      "hash": "aca246012bdc790986c75b9b528813b65e74005574d4cc27fc793819c53cae19",
+      "seconds": 4.7
+    },
+    "feather.moment": {
+      "hash": "532a5e5e8cb15b450d82013dc662c2a851826b12614369173185b13b46efaa35",
+      "seconds": 1.53
+    },
+    "feather.other_job": {
+      "hash": "7c9572f4935d119aaa9cf8796c2307d52f1f92e55cab871e94fa3c402dcdfaa2",
+      "seconds": 2.88
+    },
+    "feather.thief": {
+      "hash": "f6943f976283d1a1c831b3d718b6d07871794c020523e81588594bbe0e8f6776",
+      "seconds": 4.78
+    },
+    "feather.touched": {
+      "hash": "aa490e55c8a6d4c7ef3ee4d57bec1b95dbbc9556ff0dcdbec4a2e35642eb6eab",
+      "seconds": 5.99
+    },
+    "finale.another_day": {
+      "hash": "4da3b9261d60ff7bc526f8a5e6f1e11f401b00619342fb63987b0ecc659f2054",
+      "seconds": 2.5
+    },
+    "finale.catch": {
+      "hash": "10455bc0066b58a3863e31876c1fa6910e4eb563e647d90c5c16e79821618dee",
+      "seconds": 5.91
+    },
+    "finale.caught": {
+      "hash": "9946804944359e3f1ef0b4b8a206e07a7f05cfe073ca934229ef0da859f30382",
+      "seconds": 2.55
+    },
+    "finale.delivered": {
+      "hash": "62bcd7ed5dbe705a722cfc0812fba4ce764db29d1470861e37804803d77fe861",
+      "seconds": 5.62
+    },
+    "finale.hades_seal": {
+      "hash": "23e9ed6625785088fec014a12425d78732409eb2a1712012dc02a4e778a998f7",
+      "seconds": 3.62
+    },
+    "finale.second_letter": {
+      "hash": "75f71d385ed335cbe0f200178b3474f645eec547f6efba81a274616a592f0099",
+      "seconds": 4.64
+    },
+    "finale.sign": {
+      "hash": "ca0fd1c136949d8409bff75897167b972e5512d11fefe02dd4df48aa8a53c69f",
+      "seconds": 1.39
+    },
+    "finale.stinger": {
+      "hash": "1548e16fbdf670582ceba61cde1c48f590487c09283177a8b2fc3b219b38c7e4",
+      "seconds": 3.31
+    },
+    "guide.back": {
+      "hash": "e8598e7435ee61c5167af03542c030b238aaa7cd6771022ca138bb6967df5890",
+      "seconds": 2.93
+    },
+    "guide.end": {
+      "hash": "34490bcee75bc0cb381860b66805a739ecf035af90d83428d6f4c101846da56f",
+      "seconds": 3.34
+    },
+    "guide.follow": {
+      "hash": "2b882ea56fc8ca57d17ef3c95a373f02c0a821f314e39535ddc4daa2ccd1fd28",
+      "seconds": 3.48
+    },
+    "guide.slow": {
+      "hash": "e699199aa60b72617828d06d45b878e0be1314034986ecd42c7021816b3ccbf9",
+      "seconds": 5.39
+    },
+    "prologue.altar": {
+      "hash": "b8eb2d6379d358333e8520f4f2d830f1e6cafbef2456dc7a3af5e1fe36681181",
+      "seconds": 6.28
+    },
+    "prologue.apollo": {
+      "hash": "41b098b40d015d0cd13f7e35d0f27033c588280aeff94dc371b38b86da5624df",
+      "seconds": 6.5
+    },
+    "prologue.catch": {
+      "hash": "29104067c4b95d0e79157ad82fc70f17f2b39857110a702c4ce3629dc0126d6b",
+      "seconds": 1.86
+    },
+    "prologue.condition": {
+      "hash": "c36725f10fad7b781c3e9031ad1bdd23762bd571d6a31791827085dfb9a46865",
+      "seconds": 4.41
+    },
+    "prologue.delivery": {
+      "hash": "79e2d3670bebe746165b3d18c30c66b01bb0b284fe8414174d4c4825799ba3c2",
+      "seconds": 2.93
+    },
+    "prologue.pull": {
+      "hash": "09421551a96a6f5f857c1ca7319cc448fd1eca296e021cd26898a5c354970c75",
+      "seconds": 3.68
+    },
+    "prologue.seal": {
+      "hash": "3d2d8eafee091daf3680444976c3a53cedb4166d1a924376610a73f2cf796824",
+      "seconds": 4.01
+    },
+    "prologue.sender": {
+      "hash": "2e8ffa2a58a4025cb7ce0bff444f9d58694c237916e814ec0b32bba62b16c80f",
+      "seconds": 7.48
+    },
+    "shade.ash": {
+      "hash": "c5d60a136aa069d6f7f5e502d9637e8c904addc5c412db793f6c75b79eb3dbb5",
+      "seconds": 6.02
+    },
+    "shade.breath": {
+      "hash": "4491923d3237e037c32b394939a363a678199192431a7d8f3be9f438262a8fca",
+      "seconds": 4.49
+    },
+    "shade.coin": {
+      "hash": "2830f2d63281771de238a842abd50bc82cb53ba9820b5373937fe9ef4125b10d",
+      "seconds": 6.05
+    },
+    "shade.contract": {
+      "hash": "078d60881584722e00c61146dcb4236c9ebbc761756cbf861e38bcaefe095aa7",
+      "seconds": 5.0
+    },
+    "shade.contract_end": {
+      "hash": "2696af1b716c98056c1eba9b2536b5852ed375c0abb43e0acaba9f9a8a6b42b6",
+      "seconds": 3.06
+    },
+    "shade.gate": {
+      "hash": "91e5e7f05eb3de151b7924ca9d938cee4d59556fae89f5fa93b108387c2fa9eb",
+      "seconds": 6.22
+    },
+    "shade.open": {
+      "hash": "e21fe4ea0ce0d712142aedf1c5796215f0256400350d1b938f09368d834db93f",
+      "seconds": 4.84
+    },
+    "shade.snakes": {
+      "hash": "1e4ef2b2f952e8238f04592907f565729312a15f1e494dc25f6ad0354cbd89fa",
+      "seconds": 4.34
+    },
+    "shade.stay": {
+      "hash": "86e4345ab5bc041b139321f654cf4a01bc7decae023644dc90cbb683a432020f",
+      "seconds": 2.31
+    },
+    "shade.voice": {
+      "hash": "e33a4283ee7d364e08a4f82bcdd910e61ebbee7e12558c48764c99a3b10fd8b9",
+      "seconds": 5.4
+    },
+    "shade.warning": {
+      "hash": "859eb83c8bcf4e171cab765c5c9732eb89e85acb673b20078707263ef467e984",
+      "seconds": 3.12
+    },
+    "shade.who": {
+      "hash": "8e4e9146119d2dc5a38574e9c2a0f2ac5ca5cea6c6946ff18127ea396cc9f22a",
+      "seconds": 3.12
+    },
+    "shade.wings": {
+      "hash": "86d0e2a410b10e804a92516434ed88beece616839f840f5db66273eae4602bd2",
+      "seconds": 3.48
+    },
+    "zeus.breath": {
+      "hash": "3fc3bb0aba89ec980babdbd8b09ac3c1fd18db7386f5f9452c96b4d6f00c733f",
+      "seconds": 4.41
+    },
+    "zeus.end_it": {
+      "hash": "fd15b47ef0944a42bb1d5f227db483d8045d84373d12caef3c691a69a20066f5",
+      "seconds": 3.04
+    },
+    "zeus.feather": {
+      "hash": "5fd8fd90c77e1ec8c4adcbd19d330b7d321a1181a3a36baee7854c6c38b2a786",
+      "seconds": 5.63
+    },
+    "zeus.fun": {
+      "hash": "67331837dc7ac6ce38ee8b58ac0be9d63a54a70d0b5a89638b96b2ebb7e691e9",
+      "seconds": 4.04
+    },
+    "zeus.name": {
+      "hash": "b94cc08c57de337e5eaa2c34ef3a17025cd636bffe4b95e3b9f3cd7bb1821863",
+      "seconds": 1.47
+    },
+    "zeus.rule": {
+      "hash": "951903819f319dd190234cf4672b0fcd282653f1c647fddb721474bb2b52b9db",
+      "seconds": 5.94
+    },
+    "zeus.yes_father": {
+      "hash": "7c9129c5e41d37f7b27aab49c194f8f93199f24345b92d2607b0957857e38ca7",
+      "seconds": 1.07
+    }
+  }
+}

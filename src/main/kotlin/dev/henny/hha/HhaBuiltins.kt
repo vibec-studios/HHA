@@ -94,6 +94,18 @@ object HhaBuiltins {
     }
 
     private fun registerLore() {
+        HhaLore.register(HhaItems.HERMES_SUMMONS) {
+            line("item.hha.hermes_summons.lore1")
+            line("item.hha.hermes_summons.lore2")
+        }
+        HhaLore.register(HhaItems.HADES_MAP) {
+            line("item.hha.hades_map.lore1")
+            line("item.hha.hades_map.lore2")
+        }
+        HhaLore.register(HhaItems.HERMES_FEATHER) {
+            line("item.hha.hermes_feather.lore1")
+            line("item.hha.hermes_feather.lore2")
+        }
         HhaLore.register(HhaItems.HELL_HELMET) {
             line("item.hha.hell_helmet.lore1")
             line("item.hha.hell_helmet.lore2", hearts("undying_rage_health"))

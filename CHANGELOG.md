@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Added
+- **Bossfight "The Last Delivery" against Hermes** (`docs/hermes.md`): four stages with their own attacks, arena look, sky and music, six cutscenes with camera moves and dialogue, and the Divine Parcel as reward (full Heaven armor plus 4 Feathers of the Messenger). Started with the new Sealed Messenger Letter. Dying in the arena never costs items
+- New entities with custom animated models: Hermes in double pixel density with articulated feathered wings that fold and spread per pose (plus illusions and dash afterimages), two Caduceus serpents, Herma stones, Divine Parcel, feather and soul-lance projectiles
+- New 3D effect engine with its own shader instead of flat particles: volumetric beams, shockwaves with flying debris, crescent slashes, branching lightning, light pillars, six-winged seraph wings made of individual feathers, shattering shields, real chain links, portals, tornadoes, rune circles, camera shake and screen flash
+- **The real sky sets the mood**: abilities and boss stages tint the actual Minecraft sky, fog and clouds, move the sun and stars, and bring vanilla rain and lightning. Custom 3D clouds surround the arena: a sea below, a deck above, and when Zeus answers a thunderstorm rolls in from the horizon with lightning glowing inside the clouds; at the finale it tears open and god rays fall through
+- Light Beam, Lava Beam, Light Wave, Fire Camp, Ultra Mode, Divine Shield, Shockwave, Magma Stomp, Blade Rush, double jump, thrown Heaven's Mace and the Hell's Mace chain all use the new effects; Heaven and Hell helmets show a 3D halo and soul-fire crown
+- **Hermes glows**: the orb, staff, halo, eyes, chest sun, wing edges and sandals carry live light effects read from his bones. The colour follows the stage (gold, dusk violet, soul blue, storm white with lightning arcs), it flares when he casts and nearly goes out while he is exhausted, so the glow also shows when he can be hit. His model gained an ornate caduceus with a crystal orb and two animated serpents of light that climb the staff, rear up at the top and flick their tongues, plus glowing inlays, a courier satchel, a nose and more hair
+- **Smooth feathers instead of pixelated ones**: wings, feather projectiles, the parcel, particles and all feather effects now use high-resolution curved feathers with a real quill, split barbs and a downy base
+- **The serpents became dragons**: long snout, curved horns, rows of teeth, feather mane, scaled body with belly plates and back fins, two pairs of flapping wings and a tail fan. The body is longer, slithers in a running wave and no longer disappears when the head leaves the screen
+- **New orchestral battle music**: four stereo themes (72 to 100 seconds) with strings, brass, choir, harp and taiko that share one leitmotif and loop seamlessly
+- **Better sounds**: all boss effects were rebuilt and joined by new ones for charging, blinking, deflected blows, hits on Hermes, feather volleys, light lances, and the serpents' roar, hiss and bite, replacing the vanilla placeholders
+- **New biome: Olympus.** The warm stony peaks of the Overworld become marble mountains with ruined columns, and a temple on the summit holds a riddle: four offering stones want the gifts of Hermes' first day, in the order of the sun. Solving it starts the fight without a letter
+- **New cave biome: Realm of Hades**, with soul soil, basalt and soul fire. A domed hall lies beneath it, reached by a spiral shaft from the surface
+- **New boss: the Shade of the Messenger.** Pay the ferryman a gold nugget at the altar to fight the evil Hermes in three phases, with his own texture, green effects, music and cutscenes. Beating him fills the black gate with green light
+- **New dimension: Tartarus**, an open ash wasteland under a blood-red sky with its own blocks and huge leaning pale crystals, reached through a round gate with a 3D tunnel effect that pulls you in
+- **Hermes guides you through Tartarus**: he keeps appearing ahead as a ghost, waits, and flies on when you get close, leading to the sealed gate of Hades (a placeholder for what comes next)
+- **Map to Hades**: reward from the Hermes fight that turns into a real map marking the nearest hall
+- **Zeus got his moment**: two blazing eyes open in the storm clouds above the forum, framed by a brow and beard of cloud, and lightning falls from them
+- **Spoken dialogue**: all 46 lines are voiced in German and English with ElevenLabs, and scenes wait for a sentence to finish (`tools/hha_assets/voice_lines.py`)
+- `/hha kit diamond` and `/hha kit netherite`: the same kits with normal armor and weapons
+- `/hha vfx <name>` previews every effect, `/hha hermes start|stop|skip` for admins, `/hhac vfx` and `/hhac shake` client switches
+- Config: `hermes_fight`, `heaven_ingot_free_recipe`, `hermes_damage`, `hermes_toughness`, `hermes_max_hit`
+- `runClientGameTest` runs the real game and takes screenshots of effects and the whole fight
+
+### Changed
+- **Serpents can be hit along their whole body**, not just at the head; bites are measured from the mouth, and the whole body flashes when struck
+- **Hermes scales with the number of players**: every extra player adds health and damage (`hermes_health_per_player`, `hermes_damage_per_player`), and serpents and herma stones get tougher too. His feather bolts now also respect `hermes_damage`. This replaces the old hidden 50% toughness per player
+- **Arenas cannot be changed**: during a fight blocks can't be broken or placed and explosions leave them intact; the Hades hall is protected all the time
+- **Heaven's Ingot now needs a Feather of the Messenger**, so new Heaven gear runs through the boss. `/hha toggle heaven_ingot_free_recipe true` restores the old recipe
+
 ### Changed
 - HUD cooldown icons redrawn so each glyph matches the ability it represents: holy pillar + purify plus (light beam), molten lance (lava beam), soul camp with brute faces (Fire Camp), fire blade with haste streaks and a crit burst (Blade Rush), expanding triple shockwave (Light Wave), gold mace struck by cyan lightning (thrown mace), steel chain ending in a fire hook (pull / grapple), and a gold/fire overdrive burst (Ultra)
 - The Ultra timer now shows the Ultra icon beside the countdown

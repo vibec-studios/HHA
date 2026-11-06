@@ -49,6 +49,8 @@ object SoulCamp {
         val center = findGround(world, fireColumn.x, fireColumn.z, player.blockY)
             ?: findGround(world, player.blockX, player.blockZ, player.blockY)
             ?: return
+        // In einer Arena gibt es kein Lager: Der Boden dort ist unantastbar.
+        if (dev.henny.hha.logic.boss.HermesFights.isProtected(world, center)) return
 
         val converted = LinkedHashMap<BlockPos, BlockState>()
         val cleared = LinkedHashMap<BlockPos, BlockState>()

@@ -4,10 +4,20 @@
   "package": "dev.henny.hha.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
-    "LivingEntityMixin"
+    "LivingEntityMixin",
+    "VanillaBiomeParametersMixin",
+    "ExplosionImplMixin"
   ],
   "client": [
-    "client.ParticleManagerMixin"
+    "client.ParticleManagerMixin",
+    "client.CameraMixin",
+    "client.GameRendererMixin",
+    "client.InGameHudMixin",
+    "client.InputLockMixins",
+    "client.KeyboardInputMixin",
+    "client.MouseMixin",
+    "client.EnvironmentAttributeInterpolatorMixin",
+    "client.ClientWorldAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -30,6 +30,7 @@ object ProjectileGrapple {
 
     fun start(world: ServerWorld, player: ServerPlayerEntity, projectile: Entity) {
         rides[player.uuid] = Ride(projectile.uuid, world.time + TIMEOUT_TICKS, !player.isSneaking)
+        Vfx.chain(world, Vfx.Style.FIRE, player, projectile.entityPos, projectile, TIMEOUT_TICKS.toInt())
         world.playSound(null, player.blockPos, SoundEvents.BLOCK_CHAIN_PLACE, SoundCategory.PLAYERS, 1.0f, 0.9f)
         world.playSound(null, player.blockPos, SoundEvents.ITEM_TRIDENT_THROW.value(), SoundCategory.PLAYERS, 0.8f, 1.2f)
     }

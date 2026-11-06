@@ -34,6 +34,9 @@ object SwordBuff {
             SoundCategory.PLAYERS, 0.8f, 0.6f
         )
         Fx.spiral(world, player.entityPos, 0.8, 2.2, dev.henny.hha.HhaParticles.HELLFIRE)
+        Vfx.aura(world, Vfx.Style.FIRE, player, DURATION_TICKS, 0.9f)
+        Vfx.nova(world, Vfx.Style.FIRE, player.entityPos.add(0.0, 1.0, 0.0), 3.5f, 12)
+        Vfx.skyMood(world, Vfx.Style.FIRE, player.entityPos, 0.5f, 60, 24f)
         Fx.ring(world, player.entityPos.add(0.0, 0.15, 0.0), 1.4, dev.henny.hha.HhaParticles.EMBER_SPARK, 18, 0.05)
         Fx.spawn(world, 
             dev.henny.hha.HhaParticles.EMBER_SPARK,

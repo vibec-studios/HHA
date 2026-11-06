@@ -17,6 +17,8 @@ Choose your side: the radiant **Heaven Set** with golden trims and holy light, o
 - **Heaven**: Halo regeneration aura, double jumps, fall shockwave, light trail that slows enemies, light beam with ally healing, glide, and combo-based auto-crits
 - **Hell**: undying rage, lava walking, magma stomp, Fire Camp with Piglin Brute vassals and a reverting **soul camp** (soul campfire, soul soil, torches & lanterns), blade rush with guaranteed crits
 - **Weapons**: throwable lightning mace (Heaven) and a chain mace with enemy pull & grappling hook (Hell)
+- **Boss fight**: earn the Heaven armor from Hermes, messenger of the gods: four stages, cutscenes and custom models ([docs](docs/hermes.md))
+- **3D effects**: volumetric beams, seraph wings, shockwaves and real chains instead of flat particles
 - **Shared**: +10 hearts set bonus, Ultra Mode, cooldown HUD, faction lock, `/trust` system
 - **Fully configurable**: every ability can be toggled and tuned live via `/hha`; crafting recipes can be disabled or replaced through an auto-generated datapack in `config/hha/datapack/`
 

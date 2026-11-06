@@ -16,7 +16,10 @@ import org.slf4j.LoggerFactory
 class Hha : ModInitializer {
 
     override fun onInitialize() {
+        HhaSounds.init()
+        HhaBlocks.init()
         HhaItems.init()
+        dev.henny.hha.world.HhaWorldgen.init()
         HhaEntities.init()
         HhaParticles.init()
         HhaBuiltins.init()
@@ -35,6 +38,7 @@ class Hha : ModInitializer {
         FactionLock.init()
         CombatEvents.init()
         DivineShield.init()
+        dev.henny.hha.logic.boss.HermesFights.init()
         ServerTickEvents.END_SERVER_TICK.register(PassiveEffects::tick)
         LOGGER.info("Hell's & Heaven's Set geladen — stay crispy, fly high.")
     }

@@ -161,6 +161,7 @@ object CombatEvents {
             target.x, y, target.z,
             1, 0.0, 0.0, 0.0, 0.0
         )
+        Vfx.flare(world, if (holy) Vfx.Style.HEAVEN else Vfx.Style.FIRE, target.entityPos.add(0.0, target.height * 0.6, 0.0), 1.8f, 7)
         if (holy) {
             world.playSound(
                 null, target.blockPos, SoundEvents.ENTITY_ARROW_HIT_PLAYER,

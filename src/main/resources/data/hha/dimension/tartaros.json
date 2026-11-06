@@ -1,0 +1,11 @@
+{
+  "type": "hha:tartaros",
+  "generator": {
+    "type": "minecraft:noise",
+    "biome_source": {
+      "type": "minecraft:fixed",
+      "biome": "hha:tartaros"
+    },
+    "settings": "hha:tartaros"
+  }
+}

@@ -67,6 +67,19 @@ object UltraMode {
         )
         ServerPlayNetworking.send(player, UltraHudPayload(duration.toInt()))
 
+        val ultraStyle = if (hell) Vfx.Style.FIRE else Vfx.Style.HEAVEN
+        Vfx.wings(world, ultraStyle, player, duration.toInt(), 1.15f)
+        Vfx.orbitRings(world, if (hell) Vfx.Style.HELL else Vfx.Style.GOLD, player, 1.25f, duration.toInt())
+        Vfx.aura(world, if (hell) Vfx.Style.FIRE else Vfx.Style.GOLD, player, duration.toInt(), 1.1f)
+        // Der Himmel färbt sich mit: Glutrot oder Abendgold, solange Ultra läuft.
+        Vfx.skyMood(world, if (hell) Vfx.Style.FIRE else Vfx.Style.GOLD, player.entityPos, 0.85f, duration.toInt(), 64f)
+        Vfx.clouds(world, if (hell) Vfx.Style.FIRE else Vfx.Style.GOLD, player.entityPos, 44f, 26f, duration.toInt(), player)
+        Vfx.pillar(world, ultraStyle, player.entityPos, 2.4f, 36f, 40)
+        Vfx.shockwave(world, ultraStyle, player.entityPos, 14f, 30, 5f)
+        Vfx.nova(world, ultraStyle, player.entityPos.add(0.0, 1.2, 0.0), 8f, 18)
+        Vfx.screenFlash(player, ultraStyle, 0.7f, 18)
+        Vfx.shake(world, player.entityPos, 5f, 24, 32f)
+
         player.networkHandler.sendPacket(TitleFadeS2CPacket(10, 50, 20))
         if (hell) {
             player.networkHandler.sendPacket(
@@ -106,28 +119,14 @@ object UltraMode {
             val main = if (state.hell) dev.henny.hha.HhaParticles.HELLFIRE else dev.henny.hha.HhaParticles.LIGHT_MOTE
             val accent = if (state.hell) dev.henny.hha.HhaParticles.EMBER_SPARK else dev.henny.hha.HhaParticles.HOLY_SPARK
 
-            if (t < 50) {
-                val radius = 0.5 + t * 0.25
-                val center = player.entityPos.add(0.0, 0.15, 0.0)
-                Fx.ring(world, center, radius, main, 36, 0.05)
-                Fx.ring(world, center.add(0.0, 0.4, 0.0), radius * 0.65, accent, 18, 0.03)
-                Fx.spawn(world, 
-                    main,
-                    player.x, player.y + t * 0.35, player.z,
-                    8, 0.3, 0.4, 0.3, 0.02
+            if (t < 50 && t % 10L == 0L) {
+                Fx.spawn(world,
+                    if (state.hell) dev.henny.hha.HhaParticles.INFERNAL_BURST else dev.henny.hha.HhaParticles.DIVINE_FLASH,
+                    player.x, player.y + 1.0, player.z,
+                    1, 0.3, 0.3, 0.3, 0.0
                 )
-                if (t % 10L == 0L) {
-                    Fx.spawn(world, 
-                        if (state.hell) dev.henny.hha.HhaParticles.INFERNAL_BURST else dev.henny.hha.HhaParticles.DIVINE_FLASH,
-                        player.x, player.y + 1.0, player.z,
-                        1, 0.3, 0.3, 0.3, 0.0
-                    )
-                }
             }
 
-            if (t % 4L == 0L) {
-                Fx.spiral(world, player.entityPos, 1.0, 2.4, main, 14)
-            }
             if (t % 6L == 0L) {
                 val aura = if (state.hell) dev.henny.hha.HhaParticles.HELLFIRE else dev.henny.hha.HhaParticles.HOLY_SPARK
                 Fx.spawn(world, aura, player.x, player.y + 1.1, player.z, 2, 0.6, 0.7, 0.6, 0.0)
@@ -170,8 +169,8 @@ object UltraMode {
         val main = if (state.hell) dev.henny.hha.HhaParticles.HELLFIRE else dev.henny.hha.HhaParticles.LIGHT_MOTE
         val accent = if (state.hell) dev.henny.hha.HhaParticles.EMBER_SPARK else dev.henny.hha.HhaParticles.HOLY_SPARK
         val center = player.entityPos.add(0.0, 0.3, 0.0)
-        Fx.ring(world, center, 2.0, main, 24, 0.15)
-        Fx.ring(world, center, 3.5, main, 30, 0.1)
+        Vfx.shockwave(world, if (state.hell) Vfx.Style.FIRE else Vfx.Style.HEAVEN, player.entityPos, 9f, 20, 2.5f)
+        Vfx.nova(world, if (state.hell) Vfx.Style.FIRE else Vfx.Style.HEAVEN, center.add(0.0, 0.9, 0.0), 4.5f, 14)
         Fx.ring(world, center, 5.0, accent, 20, 0.08)
         Fx.spawn(world, 
             if (state.hell) dev.henny.hha.HhaParticles.INFERNAL_BURST else dev.henny.hha.HhaParticles.DIVINE_FLASH,

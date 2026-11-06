@@ -1,0 +1,6 @@
+{
+  "type": "hha:olympus_temple",
+  "biomes": "#hha:has_olympus_temple",
+  "spawn_overrides": {},
+  "step": "surface_structures"
+}

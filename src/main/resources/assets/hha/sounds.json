@@ -1,0 +1,667 @@
+{
+  "boss.whoosh": {
+    "subtitle": "subtitles.hha.boss.whoosh",
+    "sounds": [
+      "hha:boss/whoosh"
+    ]
+  },
+  "boss.dash": {
+    "subtitle": "subtitles.hha.boss.dash",
+    "sounds": [
+      "hha:boss/dash"
+    ]
+  },
+  "boss.impact": {
+    "subtitle": "subtitles.hha.boss.impact",
+    "sounds": [
+      "hha:boss/impact"
+    ]
+  },
+  "boss.thunder": {
+    "subtitle": "subtitles.hha.boss.thunder",
+    "sounds": [
+      "hha:boss/thunder"
+    ]
+  },
+  "boss.rift": {
+    "subtitle": "subtitles.hha.boss.rift",
+    "sounds": [
+      "hha:boss/rift"
+    ]
+  },
+  "boss.soul": {
+    "subtitle": "subtitles.hha.boss.soul",
+    "sounds": [
+      "hha:boss/soul"
+    ]
+  },
+  "boss.chime": {
+    "subtitle": "subtitles.hha.boss.chime",
+    "sounds": [
+      "hha:boss/chime"
+    ]
+  },
+  "boss.sting": {
+    "subtitle": "subtitles.hha.boss.sting",
+    "sounds": [
+      "hha:boss/sting"
+    ]
+  },
+  "boss.voice": {
+    "sounds": [
+      "hha:boss/voice"
+    ]
+  },
+  "boss.charge": {
+    "subtitle": "subtitles.hha.boss.charge",
+    "sounds": [
+      "hha:boss/charge"
+    ]
+  },
+  "boss.blink": {
+    "subtitle": "subtitles.hha.boss.blink",
+    "sounds": [
+      "hha:boss/blink"
+    ]
+  },
+  "boss.deflect": {
+    "subtitle": "subtitles.hha.boss.deflect",
+    "sounds": [
+      "hha:boss/deflect"
+    ]
+  },
+  "boss.hit": {
+    "subtitle": "subtitles.hha.boss.hit",
+    "sounds": [
+      "hha:boss/hit"
+    ]
+  },
+  "boss.feather_volley": {
+    "subtitle": "subtitles.hha.boss.feather_volley",
+    "sounds": [
+      "hha:boss/feather_volley"
+    ]
+  },
+  "boss.spear": {
+    "subtitle": "subtitles.hha.boss.spear",
+    "sounds": [
+      "hha:boss/spear"
+    ]
+  },
+  "boss.roar": {
+    "subtitle": "subtitles.hha.boss.roar",
+    "sounds": [
+      "hha:boss/roar"
+    ]
+  },
+  "boss.hiss": {
+    "subtitle": "subtitles.hha.boss.hiss",
+    "sounds": [
+      "hha:boss/hiss"
+    ]
+  },
+  "boss.bite": {
+    "subtitle": "subtitles.hha.boss.bite",
+    "sounds": [
+      "hha:boss/bite"
+    ]
+  },
+  "boss.flood": {
+    "subtitle": "subtitles.hha.boss.flood",
+    "sounds": [
+      "hha:boss/flood"
+    ]
+  },
+  "boss.portal_hum": {
+    "subtitle": "subtitles.hha.boss.portal_hum",
+    "sounds": [
+      "hha:boss/portal_hum"
+    ]
+  },
+  "boss.portal_enter": {
+    "subtitle": "subtitles.hha.boss.portal_enter",
+    "sounds": [
+      "hha:boss/portal_enter"
+    ]
+  },
+  "music.messenger": {
+    "sounds": [
+      {
+        "name": "hha:music/messenger",
+        "stream": true
+      }
+    ]
+  },
+  "music.thief": {
+    "sounds": [
+      {
+        "name": "hha:music/thief",
+        "stream": true
+      }
+    ]
+  },
+  "music.guide": {
+    "sounds": [
+      {
+        "name": "hha:music/guide",
+        "stream": true
+      }
+    ]
+  },
+  "music.finale": {
+    "sounds": [
+      {
+        "name": "hha:music/finale",
+        "stream": true
+      }
+    ]
+  },
+  "music.shade": {
+    "sounds": [
+      {
+        "name": "hha:music/shade",
+        "stream": true
+      }
+    ]
+  },
+  "voice.de.descent_dead_know": {
+    "sounds": [
+      "hha:voice/de/descent_dead_know"
+    ]
+  },
+  "voice.de.descent_enough": {
+    "sounds": [
+      "hha:voice/de/descent_enough"
+    ]
+  },
+  "voice.de.descent_every_soul": {
+    "sounds": [
+      "hha:voice/de/descent_every_soul"
+    ]
+  },
+  "voice.de.descent_serpents": {
+    "sounds": [
+      "hha:voice/de/descent_serpents"
+    ]
+  },
+  "voice.de.descent_way_short": {
+    "sounds": [
+      "hha:voice/de/descent_way_short"
+    ]
+  },
+  "voice.de.feather_falls": {
+    "sounds": [
+      "hha:voice/de/feather_falls"
+    ]
+  },
+  "voice.de.feather_moment": {
+    "sounds": [
+      "hha:voice/de/feather_moment"
+    ]
+  },
+  "voice.de.feather_other_job": {
+    "sounds": [
+      "hha:voice/de/feather_other_job"
+    ]
+  },
+  "voice.de.feather_thief": {
+    "sounds": [
+      "hha:voice/de/feather_thief"
+    ]
+  },
+  "voice.de.feather_touched": {
+    "sounds": [
+      "hha:voice/de/feather_touched"
+    ]
+  },
+  "voice.de.finale_another_day": {
+    "sounds": [
+      "hha:voice/de/finale_another_day"
+    ]
+  },
+  "voice.de.finale_catch": {
+    "sounds": [
+      "hha:voice/de/finale_catch"
+    ]
+  },
+  "voice.de.finale_caught": {
+    "sounds": [
+      "hha:voice/de/finale_caught"
+    ]
+  },
+  "voice.de.finale_delivered": {
+    "sounds": [
+      "hha:voice/de/finale_delivered"
+    ]
+  },
+  "voice.de.finale_hades_seal": {
+    "sounds": [
+      "hha:voice/de/finale_hades_seal"
+    ]
+  },
+  "voice.de.finale_second_letter": {
+    "sounds": [
+      "hha:voice/de/finale_second_letter"
+    ]
+  },
+  "voice.de.finale_sign": {
+    "sounds": [
+      "hha:voice/de/finale_sign"
+    ]
+  },
+  "voice.de.finale_stinger": {
+    "sounds": [
+      "hha:voice/de/finale_stinger"
+    ]
+  },
+  "voice.de.guide_back": {
+    "sounds": [
+      "hha:voice/de/guide_back"
+    ]
+  },
+  "voice.de.guide_end": {
+    "sounds": [
+      "hha:voice/de/guide_end"
+    ]
+  },
+  "voice.de.guide_follow": {
+    "sounds": [
+      "hha:voice/de/guide_follow"
+    ]
+  },
+  "voice.de.guide_slow": {
+    "sounds": [
+      "hha:voice/de/guide_slow"
+    ]
+  },
+  "voice.de.prologue_altar": {
+    "sounds": [
+      "hha:voice/de/prologue_altar"
+    ]
+  },
+  "voice.de.prologue_apollo": {
+    "sounds": [
+      "hha:voice/de/prologue_apollo"
+    ]
+  },
+  "voice.de.prologue_catch": {
+    "sounds": [
+      "hha:voice/de/prologue_catch"
+    ]
+  },
+  "voice.de.prologue_condition": {
+    "sounds": [
+      "hha:voice/de/prologue_condition"
+    ]
+  },
+  "voice.de.prologue_delivery": {
+    "sounds": [
+      "hha:voice/de/prologue_delivery"
+    ]
+  },
+  "voice.de.prologue_pull": {
+    "sounds": [
+      "hha:voice/de/prologue_pull"
+    ]
+  },
+  "voice.de.prologue_seal": {
+    "sounds": [
+      "hha:voice/de/prologue_seal"
+    ]
+  },
+  "voice.de.prologue_sender": {
+    "sounds": [
+      "hha:voice/de/prologue_sender"
+    ]
+  },
+  "voice.de.shade_ash": {
+    "sounds": [
+      "hha:voice/de/shade_ash"
+    ]
+  },
+  "voice.de.shade_breath": {
+    "sounds": [
+      "hha:voice/de/shade_breath"
+    ]
+  },
+  "voice.de.shade_coin": {
+    "sounds": [
+      "hha:voice/de/shade_coin"
+    ]
+  },
+  "voice.de.shade_contract": {
+    "sounds": [
+      "hha:voice/de/shade_contract"
+    ]
+  },
+  "voice.de.shade_contract_end": {
+    "sounds": [
+      "hha:voice/de/shade_contract_end"
+    ]
+  },
+  "voice.de.shade_gate": {
+    "sounds": [
+      "hha:voice/de/shade_gate"
+    ]
+  },
+  "voice.de.shade_open": {
+    "sounds": [
+      "hha:voice/de/shade_open"
+    ]
+  },
+  "voice.de.shade_snakes": {
+    "sounds": [
+      "hha:voice/de/shade_snakes"
+    ]
+  },
+  "voice.de.shade_stay": {
+    "sounds": [
+      "hha:voice/de/shade_stay"
+    ]
+  },
+  "voice.de.shade_voice": {
+    "sounds": [
+      "hha:voice/de/shade_voice"
+    ]
+  },
+  "voice.de.shade_warning": {
+    "sounds": [
+      "hha:voice/de/shade_warning"
+    ]
+  },
+  "voice.de.shade_who": {
+    "sounds": [
+      "hha:voice/de/shade_who"
+    ]
+  },
+  "voice.de.shade_wings": {
+    "sounds": [
+      "hha:voice/de/shade_wings"
+    ]
+  },
+  "voice.de.zeus_breath": {
+    "sounds": [
+      "hha:voice/de/zeus_breath"
+    ]
+  },
+  "voice.de.zeus_end_it": {
+    "sounds": [
+      "hha:voice/de/zeus_end_it"
+    ]
+  },
+  "voice.de.zeus_feather": {
+    "sounds": [
+      "hha:voice/de/zeus_feather"
+    ]
+  },
+  "voice.de.zeus_fun": {
+    "sounds": [
+      "hha:voice/de/zeus_fun"
+    ]
+  },
+  "voice.de.zeus_name": {
+    "sounds": [
+      "hha:voice/de/zeus_name"
+    ]
+  },
+  "voice.de.zeus_rule": {
+    "sounds": [
+      "hha:voice/de/zeus_rule"
+    ]
+  },
+  "voice.de.zeus_yes_father": {
+    "sounds": [
+      "hha:voice/de/zeus_yes_father"
+    ]
+  },
+  "voice.en.descent_dead_know": {
+    "sounds": [
+      "hha:voice/en/descent_dead_know"
+    ]
+  },
+  "voice.en.descent_enough": {
+    "sounds": [
+      "hha:voice/en/descent_enough"
+    ]
+  },
+  "voice.en.descent_every_soul": {
+    "sounds": [
+      "hha:voice/en/descent_every_soul"
+    ]
+  },
+  "voice.en.descent_serpents": {
+    "sounds": [
+      "hha:voice/en/descent_serpents"
+    ]
+  },
+  "voice.en.descent_way_short": {
+    "sounds": [
+      "hha:voice/en/descent_way_short"
+    ]
+  },
+  "voice.en.feather_falls": {
+    "sounds": [
+      "hha:voice/en/feather_falls"
+    ]
+  },
+  "voice.en.feather_moment": {
+    "sounds": [
+      "hha:voice/en/feather_moment"
+    ]
+  },
+  "voice.en.feather_other_job": {
+    "sounds": [
+      "hha:voice/en/feather_other_job"
+    ]
+  },
+  "voice.en.feather_thief": {
+    "sounds": [
+      "hha:voice/en/feather_thief"
+    ]
+  },
+  "voice.en.feather_touched": {
+    "sounds": [
+      "hha:voice/en/feather_touched"
+    ]
+  },
+  "voice.en.finale_another_day": {
+    "sounds": [
+      "hha:voice/en/finale_another_day"
+    ]
+  },
+  "voice.en.finale_catch": {
+    "sounds": [
+      "hha:voice/en/finale_catch"
+    ]
+  },
+  "voice.en.finale_caught": {
+    "sounds": [
+      "hha:voice/en/finale_caught"
+    ]
+  },
+  "voice.en.finale_delivered": {
+    "sounds": [
+      "hha:voice/en/finale_delivered"
+    ]
+  },
+  "voice.en.finale_hades_seal": {
+    "sounds": [
+      "hha:voice/en/finale_hades_seal"
+    ]
+  },
+  "voice.en.finale_second_letter": {
+    "sounds": [
+      "hha:voice/en/finale_second_letter"
+    ]
+  },
+  "voice.en.finale_sign": {
+    "sounds": [
+      "hha:voice/en/finale_sign"
+    ]
+  },
+  "voice.en.finale_stinger": {
+    "sounds": [
+      "hha:voice/en/finale_stinger"
+    ]
+  },
+  "voice.en.guide_back": {
+    "sounds": [
+      "hha:voice/en/guide_back"
+    ]
+  },
+  "voice.en.guide_end": {
+    "sounds": [
+      "hha:voice/en/guide_end"
+    ]
+  },
+  "voice.en.guide_follow": {
+    "sounds": [
+      "hha:voice/en/guide_follow"
+    ]
+  },
+  "voice.en.guide_slow": {
+    "sounds": [
+      "hha:voice/en/guide_slow"
+    ]
+  },
+  "voice.en.prologue_altar": {
+    "sounds": [
+      "hha:voice/en/prologue_altar"
+    ]
+  },
+  "voice.en.prologue_apollo": {
+    "sounds": [
+      "hha:voice/en/prologue_apollo"
+    ]
+  },
+  "voice.en.prologue_catch": {
+    "sounds": [
+      "hha:voice/en/prologue_catch"
+    ]
+  },
+  "voice.en.prologue_condition": {
+    "sounds": [
+      "hha:voice/en/prologue_condition"
+    ]
+  },
+  "voice.en.prologue_delivery": {
+    "sounds": [
+      "hha:voice/en/prologue_delivery"
+    ]
+  },
+  "voice.en.prologue_pull": {
+    "sounds": [
+      "hha:voice/en/prologue_pull"
+    ]
+  },
+  "voice.en.prologue_seal": {
+    "sounds": [
+      "hha:voice/en/prologue_seal"
+    ]
+  },
+  "voice.en.prologue_sender": {
+    "sounds": [
+      "hha:voice/en/prologue_sender"
+    ]
+  },
+  "voice.en.shade_ash": {
+    "sounds": [
+      "hha:voice/en/shade_ash"
+    ]
+  },
+  "voice.en.shade_breath": {
+    "sounds": [
+      "hha:voice/en/shade_breath"
+    ]
+  },
+  "voice.en.shade_coin": {
+    "sounds": [
+      "hha:voice/en/shade_coin"
+    ]
+  },
+  "voice.en.shade_contract": {
+    "sounds": [
+      "hha:voice/en/shade_contract"
+    ]
+  },
+  "voice.en.shade_contract_end": {
+    "sounds": [
+      "hha:voice/en/shade_contract_end"
+    ]
+  },
+  "voice.en.shade_gate": {
+    "sounds": [
+      "hha:voice/en/shade_gate"
+    ]
+  },
+  "voice.en.shade_open": {
+    "sounds": [
+      "hha:voice/en/shade_open"
+    ]
+  },
+  "voice.en.shade_snakes": {
+    "sounds": [
+      "hha:voice/en/shade_snakes"
+    ]
+  },
+  "voice.en.shade_stay": {
+    "sounds": [
+      "hha:voice/en/shade_stay"
+    ]
+  },
+  "voice.en.shade_voice": {
+    "sounds": [
+      "hha:voice/en/shade_voice"
+    ]
+  },
+  "voice.en.shade_warning": {
+    "sounds": [
+      "hha:voice/en/shade_warning"
+    ]
+  },
+  "voice.en.shade_who": {
+    "sounds": [
+      "hha:voice/en/shade_who"
+    ]
+  },
+  "voice.en.shade_wings": {
+    "sounds": [
+      "hha:voice/en/shade_wings"
+    ]
+  },
+  "voice.en.zeus_breath": {
+    "sounds": [
+      "hha:voice/en/zeus_breath"
+    ]
+  },
+  "voice.en.zeus_end_it": {
+    "sounds": [
+      "hha:voice/en/zeus_end_it"
+    ]
+  },
+  "voice.en.zeus_feather": {
+    "sounds": [
+      "hha:voice/en/zeus_feather"
+    ]
+  },
+  "voice.en.zeus_fun": {
+    "sounds": [
+      "hha:voice/en/zeus_fun"
+    ]
+  },
+  "voice.en.zeus_name": {
+    "sounds": [
+      "hha:voice/en/zeus_name"
+    ]
+  },
+  "voice.en.zeus_rule": {
+    "sounds": [
+      "hha:voice/en/zeus_rule"
+    ]
+  },
+  "voice.en.zeus_yes_father": {
+    "sounds": [
+      "hha:voice/en/zeus_yes_father"
+    ]
+  }
+}

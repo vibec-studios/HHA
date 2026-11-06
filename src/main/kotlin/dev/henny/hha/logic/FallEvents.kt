@@ -66,11 +66,9 @@ object FallEvents {
             null, player.blockPos, SoundEvents.ITEM_MACE_SMASH_GROUND_HEAVY,
             SoundCategory.PLAYERS, 1.0f, 1.0f
         )
-        Fx.spawn(world, 
-            HhaParticles.LIGHT_MOTE,
-            player.x, player.y + 0.3, player.z,
-            10, 1.2, 0.2, 1.2, 0.02
-        )
+        Vfx.shockwave(world, Vfx.Style.HEAVEN, player.entityPos, (6.0 + fallDistance * 0.35).coerceAtMost(14.0).toFloat(), 18, 3f)
+        Vfx.feathers(world, Vfx.Style.HEAVEN, player.entityPos.add(0.0, 0.6, 0.0), 18, 1.4f, 40)
+        Vfx.shake(world, player.entityPos, 3f, 12, 20f)
         Fx.spawn(world, 
             HhaParticles.DIVINE_FLASH,
             player.x, player.y + 0.6, player.z,
@@ -80,11 +78,6 @@ object FallEvents {
             HhaParticles.HOLY_SPARK,
             player.x, player.y + 0.3, player.z,
             18, 1.6, 0.3, 1.6, 0.05
-        )
-        Fx.spawn(world, 
-            HhaParticles.FEATHER,
-            player.x, player.y + 0.8, player.z,
-            10, 1.4, 0.4, 1.4, 0.0
         )
     }
 
@@ -114,7 +107,10 @@ object FallEvents {
             null, feet, SoundEvents.ITEM_BUCKET_EMPTY_LAVA,
             SoundCategory.PLAYERS, 1.0f, 0.8f
         )
-        Fx.spawn(world, 
+        Vfx.shockwave(world, Vfx.Style.FIRE, player.entityPos, 7f, 18, 3f)
+        Vfx.pillar(world, Vfx.Style.FIRE, player.entityPos, 1.6f, 6f, 18)
+        Vfx.shake(world, player.entityPos, 3.5f, 12, 20f)
+        Fx.spawn(world,
             HhaParticles.SOOT,
             player.x, player.y + 0.3, player.z,
             12, 1.2, 0.3, 1.2, 0.02

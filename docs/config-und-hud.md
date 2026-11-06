@@ -93,6 +93,8 @@ Rein clientseitige Darstellungsoptionen — sie werden **nie** vom Server
 | `/hhac pulse on\|off` | `hud_pulse` | `on` | Pulsieren bereiter Slots |
 | `/hhac background on\|off` | `hud_background` | `on` | dunkler Slot-Hintergrund |
 | `/hhac ultrabar on\|off` | `ultra_bar` | `on` | Ultra-Statusleiste oben |
+| `/hhac vfx true\|false` | `vfx_3d` | `true` | 3D-Effekte (Strahlen, Flügel, Schockwellen …) |
+| `/hhac shake true\|false` | `screen_shake` | `true` | Kameraschütteln |
 | `/hhac scale <0.5–2.0>` | `hud_scale` | `1.0` | HUD-Skalierung |
 | `/hhac offset <x> <y>` | `hud_offset_x/y` | `0` | HUD-Position verschieben (Pixel) |
 | `/hhac density <0.0–1.0>` | `particle_density` | `1.0` | HHA-Partikel clientseitig ausdünnen (0 = aus; die Grapple-Kette bleibt immer sichtbar) |

@@ -30,11 +30,15 @@ public abstract class ParticleManagerMixin {
     private void hha$thinOutParticles(ParticleEffect effect, double x, double y, double z,
                                       double velocityX, double velocityY, double velocityZ,
                                       CallbackInfoReturnable<Particle> cir) {
-        double density = HhaClientConfig.INSTANCE.num("particle_density");
-        if (density >= 1.0) return;
         Identifier id = Registries.PARTICLE_TYPE.getId(effect.getType());
         if (id == null || !id.getNamespace().equals("hha")) return;
-        if (id.getPath().equals("chain_link")) return;
+        if (id.getPath().equals("chain_link")) {
+            // Mit 3D-Effekten übernimmt die echte Kette (ChainEffect) die Darstellung.
+            if (HhaClientConfig.INSTANCE.enabled("vfx_3d")) cir.setReturnValue(null);
+            return;
+        }
+        double density = HhaClientConfig.INSTANCE.num("particle_density");
+        if (density >= 1.0) return;
         if (density <= 0.0 || ThreadLocalRandom.current().nextDouble() >= density) {
             cir.setReturnValue(null);
         }

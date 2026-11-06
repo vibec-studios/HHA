@@ -69,12 +69,83 @@ data class UltraHudPayload(val remainingTicks: Int) : CustomPayload {
     }
 }
 
+/** S2C-Payload: startet einen clientseitigen 3D-Effekt (siehe logic/Vfx). */
+data class VfxPayload(
+    val kind: Int,
+    val style: Int,
+    val x: Double,
+    val y: Double,
+    val z: Double,
+    val dx: Double,
+    val dy: Double,
+    val dz: Double,
+    val a: Float,
+    val b: Float,
+    val life: Int,
+    val entity: Int,
+    val entity2: Int,
+) : CustomPayload {
+
+    override fun getId(): CustomPayload.Id<out CustomPayload> = ID
+
+    companion object {
+        val ID = CustomPayload.Id<VfxPayload>(Hha.id("vfx"))
+        val CODEC: PacketCodec<RegistryByteBuf, VfxPayload> = PacketCodec.of(
+            { value, buf ->
+                buf.writeVarInt(value.kind)
+                buf.writeVarInt(value.style)
+                buf.writeDouble(value.x)
+                buf.writeDouble(value.y)
+                buf.writeDouble(value.z)
+                buf.writeDouble(value.dx)
+                buf.writeDouble(value.dy)
+                buf.writeDouble(value.dz)
+                buf.writeFloat(value.a)
+                buf.writeFloat(value.b)
+                buf.writeVarInt(value.life)
+                buf.writeVarInt(value.entity)
+                buf.writeVarInt(value.entity2)
+            },
+            { buf ->
+                VfxPayload(
+                    buf.readVarInt(), buf.readVarInt(),
+                    buf.readDouble(), buf.readDouble(), buf.readDouble(),
+                    buf.readDouble(), buf.readDouble(), buf.readDouble(),
+                    buf.readFloat(), buf.readFloat(),
+                    buf.readVarInt(), buf.readVarInt(), buf.readVarInt(),
+                )
+            },
+        )
+    }
+}
+
+/**
+ * S2C-Payload: ein Befehl der Cutscene-Timeline (Kamerafahrt, Dialog, Blende …). Die Bedeutung von
+ * [numbers] und [texts] hängt von [op] ab, siehe `logic/boss/Cine` und `client/cine/CinePlayer`.
+ */
+data class CinePayload(val op: Int, val numbers: List<Double>, val texts: List<String>) : CustomPayload {
+
+    override fun getId(): CustomPayload.Id<out CustomPayload> = ID
+
+    companion object {
+        val ID = CustomPayload.Id<CinePayload>(Hha.id("cine"))
+        val CODEC: PacketCodec<RegistryByteBuf, CinePayload> = PacketCodec.tuple(
+            PacketCodecs.VAR_INT, CinePayload::op,
+            PacketCodecs.DOUBLE.collect(PacketCodecs.toList()), CinePayload::numbers,
+            PacketCodecs.STRING.collect(PacketCodecs.toList()), CinePayload::texts,
+            ::CinePayload,
+        )
+    }
+}
+
 object HhaNetworking {
 
     fun init() {
         PayloadTypeRegistry.playC2S().register(AbilityPayload.ID, AbilityPayload.CODEC)
         PayloadTypeRegistry.playS2C().register(UltraHudPayload.ID, UltraHudPayload.CODEC)
         PayloadTypeRegistry.playS2C().register(ConfigSyncPayload.ID, ConfigSyncPayload.CODEC)
+        PayloadTypeRegistry.playS2C().register(VfxPayload.ID, VfxPayload.CODEC)
+        PayloadTypeRegistry.playS2C().register(CinePayload.ID, CinePayload.CODEC)
 
         ServerPlayConnectionEvents.JOIN.register { _, sender, _ ->
             sender.sendPacket(ConfigSyncPayload(HhaConfig.numbersSnapshot()))

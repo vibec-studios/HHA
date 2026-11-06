@@ -1,0 +1,8 @@
+{
+  "parent": "minecraft:block/cube_bottom_top",
+  "textures": {
+    "top": "hha:block/olympus_altar_top",
+    "bottom": "hha:block/olympus_altar_side",
+    "side": "hha:block/olympus_altar_side"
+  }
+}

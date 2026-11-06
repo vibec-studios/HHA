@@ -31,6 +31,47 @@ dependencies {
     modImplementation("net.fabricmc.fabric-api:fabric-api:${project.property("fabric_version")}")
 }
 
+// Automatischer Client-Test: startet das echte Spiel, spielt Effekte und Bossfight ab und
+// macht Screenshots (./gradlew runClientGameTest, Bilder unter build/run/clientGameTest/screenshots).
+fabricApi {
+    configureTests {
+        createSourceSet.set(true)
+        modId.set("hha-gametest")
+        enableGameTests.set(false)
+        enableClientGameTests.set(true)
+        eula.set(true)
+    }
+}
+
+// Testmodus für den Client-Test durchreichen: -Dhha.test=vfx|boss
+loom {
+    runs {
+        named("clientGameTest") {
+            vmArg("-Dhha.test=${System.getProperty("hha.test", "all")}")
+        }
+        // Prüft nur die Weltgenerierungs-Daten: kein Fenster, keine Welt, beendet sich von selbst.
+        create("verifyWorldgen") {
+            server()
+            name = "Verify Worldgen"
+            source(sourceSets.getByName("gametest"))
+            runDir("build/run/verifyWorldgen")
+            vmArg("-Dhha.verifyWorldgen=true")
+            if (System.getProperty("hha.benchLocate") != null) vmArg("-Dhha.benchLocate=true")
+            if (System.getProperty("hha.mapTartaros") != null) vmArg("-Dhha.mapTartaros=true")
+            ideConfigGenerated(false)
+        }
+    }
+}
+
+// Der Prüflauf nutzt dieselbe EULA-Zustimmung wie die Client-Tests oben und lädt keine Welt.
+tasks.named("runVerifyWorldgen") {
+    doFirst {
+        val dir = file("build/run/verifyWorldgen")
+        dir.mkdirs()
+        file("build/run/verifyWorldgen/eula.txt").writeText("eula=true")
+    }
+}
+
 tasks.processResources {
     inputs.property("version", project.version)
     inputs.property("minecraft_version", project.property("minecraft_version"))

@@ -28,7 +28,7 @@ object AirJumps {
 
     fun tryJump(player: ServerPlayerEntity) {
         if (!dev.henny.hha.config.HhaConfig.enabled("air_jumps")) return
-        if (!HeavenSet.hasLeggings(player)) return
+        if (!HeavenSet.hasLeggings(player) && !dev.henny.hha.logic.boss.HermesFights.hasMessengerWings(player)) return
         if (player.isOnGround || player.isTouchingWater || player.isSpectator ||
             player.abilities.flying || player.hasVehicle()
         ) return
@@ -51,8 +51,8 @@ object AirJumps {
         player.fallDistance = 0.0
 
         val feet = player.entityPos.add(0.0, 0.05, 0.0)
-        Fx.ring(world, feet, 0.8, dev.henny.hha.HhaParticles.LIGHT_MOTE, 16, 0.03)
-        Fx.ring(world, feet, 0.4, dev.henny.hha.HhaParticles.HOLY_SPARK, 8, 0.02)
+        Vfx.shockwave(world, Vfx.Style.HEAVEN, feet, 2.4f, 9, 0.5f)
+        Vfx.wings(world, Vfx.Style.HEAVEN, player, 16, 0.75f)
         Fx.spawn(world, 
             dev.henny.hha.HhaParticles.FEATHER,
             feet.x, feet.y + 0.3, feet.z,

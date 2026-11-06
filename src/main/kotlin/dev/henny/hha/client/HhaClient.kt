@@ -36,6 +36,22 @@ class HhaClient : ClientModInitializer {
 
         dev.henny.hha.client.particle.HhaParticleFactories.register()
 
+        dev.henny.hha.client.vfx.VfxLayers.init()
+        dev.henny.hha.client.model.BossClient.register()
+        ClientPlayNetworking.registerGlobalReceiver(dev.henny.hha.net.CinePayload.ID) { payload, _ ->
+            dev.henny.hha.client.cine.CinePlayer.handle(payload)
+        }
+        net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents.END_MAIN.register { context ->
+            dev.henny.hha.client.vfx.VfxManager.render(context.consumers())
+        }
+        net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback.EVENT.register { context, _ ->
+            dev.henny.hha.client.vfx.ScreenFx.renderOverlay(context)
+        }
+        ClientPlayNetworking.registerGlobalReceiver(dev.henny.hha.net.VfxPayload.ID) { payload, context ->
+            val world = context.client().world ?: return@registerGlobalReceiver
+            dev.henny.hha.client.vfx.VfxManager.handle(payload, world)
+        }
+
         CooldownHud.register()
         HhaTooltips.register()
 
@@ -49,6 +65,10 @@ class HhaClient : ClientModInitializer {
         }
         net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.DISCONNECT.register { _, _ ->
             ClientConfigCache.clear()
+            dev.henny.hha.client.vfx.VfxManager.clear()
+            dev.henny.hha.client.vfx.SkyMood.reset()
+            dev.henny.hha.client.vfx.ScreenFx.reset()
+            dev.henny.hha.client.cine.CinePlayer.reset()
         }
 
         val category = KeyBinding.Category.create(Hha.id("hells_set"))
@@ -65,6 +85,10 @@ class HhaClient : ClientModInitializer {
 
         ClientTickEvents.END_CLIENT_TICK.register { client ->
             CooldownHud.clientTick()
+            client.world?.let { dev.henny.hha.client.vfx.VfxManager.tick(it) }
+            dev.henny.hha.client.vfx.ScreenFx.tick()
+            dev.henny.hha.client.vfx.SkyMood.tick(client.world)
+            dev.henny.hha.client.cine.CinePlayer.tick()
 
             val player = client.player ?: run {
                 jumpWasPressed = false
@@ -94,7 +118,8 @@ class HhaClient : ClientModInitializer {
                 !player.isOnGround && !player.isTouchingWater &&
                 !player.abilities.flying && !player.hasVehicle() &&
                 airJumpsUsedClient < 2 &&
-                player.getEquippedStack(EquipmentSlot.LEGS).isOf(HhaItems.HEAVEN_LEGGINGS)
+                (player.getEquippedStack(EquipmentSlot.LEGS).isOf(HhaItems.HEAVEN_LEGGINGS) ||
+                    dev.henny.hha.client.cine.CinePlayer.messengerWings)
             ) {
                 airJumpsUsedClient++
                 val look = player.getRotationVec(1.0f)

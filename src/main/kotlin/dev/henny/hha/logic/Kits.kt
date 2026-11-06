@@ -31,13 +31,40 @@ object Kits {
         EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET,
     )
 
+    /** Dieselben Kits ohne Set-Fähigkeiten, mit normaler Vanilla-Rüstung und Vanilla-Waffen. */
+    enum class VanillaKit(val key: String, val armor: Map<EquipmentSlot, Item>, val sword: Item, val axe: Item, val pickaxe: Item) {
+        DIAMOND(
+            "diamond",
+            mapOf(EquipmentSlot.HEAD to Items.DIAMOND_HELMET, EquipmentSlot.CHEST to Items.DIAMOND_CHESTPLATE, EquipmentSlot.LEGS to Items.DIAMOND_LEGGINGS, EquipmentSlot.FEET to Items.DIAMOND_BOOTS),
+            Items.DIAMOND_SWORD, Items.DIAMOND_AXE, Items.DIAMOND_PICKAXE,
+        ),
+        NETHERITE(
+            "netherite",
+            mapOf(EquipmentSlot.HEAD to Items.NETHERITE_HELMET, EquipmentSlot.CHEST to Items.NETHERITE_CHESTPLATE, EquipmentSlot.LEGS to Items.NETHERITE_LEGGINGS, EquipmentSlot.FEET to Items.NETHERITE_BOOTS),
+            Items.NETHERITE_SWORD, Items.NETHERITE_AXE, Items.NETHERITE_PICKAXE,
+        ),
+    }
+
     /** Generiert und gibt das Kit für ein registriertes Set. */
     fun give(player: ServerPlayerEntity, set: ArmorSet) {
+        equip(
+            player, { slot -> set.piece(slot) }, set.weapons, Items.DIAMOND_AXE, Items.NETHERITE_PICKAXE,
+            if (set.id == dev.henny.hha.api.set.HhaSets.HELL_ID) 0.8f else 1.2f,
+        )
+    }
+
+    fun give(player: ServerPlayerEntity, kit: VanillaKit) {
+        equip(player, { slot -> kit.armor[slot] }, listOf(kit.sword, Items.MACE), kit.axe, kit.pickaxe, 1f)
+    }
+
+    private fun equip(
+        player: ServerPlayerEntity, armor: (EquipmentSlot) -> Item?, weapons: List<Item>, axe: Item, pickaxe: Item, pitch: Float,
+    ) {
         val inventory = player.inventory
         inventory.clear()
 
         for (slot in armorSlots) {
-            val piece = set.piece(slot) ?: continue
+            val piece = armor(slot) ?: continue
             player.equipStack(
                 slot,
                 enchanted(
@@ -54,7 +81,7 @@ object Kits {
         )
 
         // Waffen-Rollen: [0] = Schwert (Hotbar 2), [1] = Mace (Hotbar 0), Rest ab Slot 3.
-        set.weapons.getOrNull(1)?.let { mace ->
+        weapons.getOrNull(1)?.let { mace ->
             inventory.setStack(
                 0,
                 enchanted(
@@ -67,7 +94,7 @@ object Kits {
             )
         }
         inventory.setStack(1, ItemStack(Items.TOTEM_OF_UNDYING))
-        set.weapons.getOrNull(0)?.let { sword ->
+        weapons.getOrNull(0)?.let { sword ->
             inventory.setStack(
                 2,
                 enchanted(
@@ -82,7 +109,7 @@ object Kits {
             )
         }
         var extraSlot = 3
-        for (weapon in set.weapons.drop(2)) {
+        for (weapon in weapons.drop(2)) {
             if (extraSlot > 4) break
             inventory.setStack(
                 extraSlot++,
@@ -99,7 +126,7 @@ object Kits {
         inventory.setStack(
             8,
             enchanted(
-                player, Items.DIAMOND_AXE,
+                player, axe,
                 Enchantments.SHARPNESS to 5,
                 Enchantments.UNBREAKING to 3,
                 Enchantments.MENDING to 1,
@@ -109,7 +136,7 @@ object Kits {
         inventory.setStack(
             9,
             enchanted(
-                player, Items.NETHERITE_PICKAXE,
+                player, pickaxe,
                 Enchantments.EFFICIENCY to 5,
                 Enchantments.UNBREAKING to 3,
                 Enchantments.MENDING to 1,
@@ -135,7 +162,7 @@ object Kits {
         player.currentScreenHandler.sendContentUpdates()
         player.entityWorld.playSound(
             null, player.blockPos, SoundEvents.ITEM_ARMOR_EQUIP_NETHERITE.value(),
-            SoundCategory.PLAYERS, 1.0f, if (set.id == dev.henny.hha.api.set.HhaSets.HELL_ID) 0.8f else 1.2f
+            SoundCategory.PLAYERS, 1.0f, pitch
         )
     }
 

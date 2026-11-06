@@ -63,11 +63,12 @@ object DivineShield {
             player.x, player.y + 1.0, player.z,
             30, 0.5, 0.8, 0.5, 0.08
         )
-        Fx.spawn(world, 
-            dev.henny.hha.HhaParticles.FEATHER,
-            player.x, player.y + 1.6, player.z,
-            14, 0.6, 0.4, 0.6, 0.0
-        )
+        Vfx.shield(world, Vfx.Style.HEAVEN, player, 1.7f, 30)
+        Vfx.nova(world, Vfx.Style.HEAVEN, player.entityPos.add(0.0, 1.0, 0.0), 5f, 16)
+        Vfx.feathers(world, Vfx.Style.HEAVEN, player.entityPos.add(0.0, 1.4, 0.0), 26, 1.3f, 50)
+        Vfx.skyMood(world, Vfx.Style.GOLD, player.entityPos, 0.8f, 70, 32f)
+        Vfx.screenFlash(player, Vfx.Style.HEAVEN, 0.55f, 12)
+        Vfx.shake(world, player.entityPos, 3f, 12, 16f)
         Fx.spawn(world, 
             dev.henny.hha.HhaParticles.LIGHT_MOTE,
             player.x, player.y + 1.0, player.z,

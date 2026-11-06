@@ -1,0 +1,20 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    "FPF",
+    "GDG",
+    "FEF"
+  ],
+  "key": {
+    "F": "minecraft:feather",
+    "P": "minecraft:paper",
+    "G": "minecraft:gold_block",
+    "D": "minecraft:diamond_block",
+    "E": "minecraft:ender_eye"
+  },
+  "result": {
+    "id": "hha:hermes_summons",
+    "count": 1
+  }
+}
