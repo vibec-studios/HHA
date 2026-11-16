@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="de" data-lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>H&amp;H Armors · Heaven &amp; Hell Mod</title>
+<meta name="description" content="H&H Armors: zwei rivalisierende Endgame-Rüstungen, Bosskämpfe gegen Hermes, Hades und Kronos und der Tartaros als neue Dimension. Fabric-Mod für Minecraft 1.21.11.">
+<meta property="og:title" content="H&H Armors · Heaven & Hell">
+<meta property="og:description" content="Zwei Rüstungssets, drei große Bosse, fünf Wächter und eine eigene Unterwelt. Fabric-Mod für Minecraft 1.21.11.">
+<meta property="og:image" content="https://vibec-studios.github.io/HHA/assets/img/palast.webp">
+<meta property="og:url" content="https://vibec-studios.github.io/HHA/">
+<meta name="theme-color" content="#120d12">
+<script>
+  (function () {
+    var l = 'de';
+    try { l = localStorage.getItem('hha-lang') || ''; } catch (e) { l = ''; }
+    if (l !== 'de' && l !== 'en') l = /^de\b/i.test(navigator.language || '') ? 'de' : 'en';
+    document.documentElement.dataset.lang = l;
+    document.documentElement.lang = l;
+  })();
+</script>
+<link rel="icon" href="assets/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;500;600;700&family=VT323&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+
+<header class="nav" id="top">
+  <a class="nav-logo" href="#top"><img src="assets/icon.png" alt="" width="32" height="32"><span>H&amp;H Armors</span></a>
+  <nav class="nav-links">
+    <a href="#sets"><span class="de">Sets</span><span class="en">Sets</span></a>
+    <a href="#weg"><span class="de">Der Weg</span><span class="en">The Path</span></a>
+    <a href="#bosse"><span class="de">Bosse</span><span class="en">Bosses</span></a>
+    <a href="#tartaros">Tartaros</a>
+    <a href="#features">Features</a>
+    <a href="#install"><span class="de">Installation</span><span class="en">Install</span></a>
+  </nav>
+  <div class="lang" role="group" aria-label="Sprache / Language">
+    <button class="mc-btn small" data-set-lang="de">DE</button>
+    <button class="mc-btn small" data-set-lang="en">EN</button>
+  </div>
+</header>
+
+<!-- ============================================================ HERO -->
+<section class="hero">
+  <div class="hero-sky" aria-hidden="true"></div>
+  <div class="hero-grid">
+    <div class="hero-text">
+      <h1 class="logo">
+        <span class="logo-row"><span class="w-heaven">HEAVEN</span></span><span class="logo-row"><span class="w-amp">&amp;</span><span class="w-hell">HELL</span></span>
+        <span class="logo-sub">ARMORS</span>
+        <span class="splash" id="splash">Fang den Boten!</span>
+      </h1>
+      <p class="tagline">
+        <span class="de">Zwei rivalisierende Endgame-Rüstungen, drei große Bosse, fünf Wächter und eine ganze Unterwelt. Wähle deine Seite.</span>
+        <span class="en">Two rival endgame armor sets, three great bosses, five guardians and an entire underworld. Choose your side.</span>
+      </p>
+      <div class="cta">
+        <a class="mc-btn big" href="https://github.com/vibec-studios/HHA/releases" target="_blank" rel="noopener"><span class="de">Herunterladen</span><span class="en">Download</span></a>
+        <a class="mc-btn big" href="#bosse"><span class="de">Bosse ansehen</span><span class="en">Meet the bosses</span></a>
+      </div>
+      <ul class="badges">
+        <li>Minecraft 1.21.11</li><li>Fabric</li><li>Kotlin</li>
+        <li><span class="de">Einzelspieler &amp; Server</span><span class="en">Singleplayer &amp; servers</span></li>
+      </ul>
+    </div>
+    <div class="hero-stage">
+      <canvas id="hero-canvas" aria-label="3D: Heaven- und Hell-Rüstung"></canvas>
+      <div class="stage-label left">Heaven</div>
+      <div class="stage-label right">Hell</div>
+    </div>
+  </div>
+  <a class="scroll-hint" href="#sets" aria-label="Weiter">&#9660;</a>
+</section>
+
+<!-- ============================================================ SETS -->
+<section class="section sets" id="sets">
+  <div class="wrap">
+    <h2 class="sec-title"><span class="de">Wähle deine Seite</span><span class="en">Choose your side</span></h2>
+    <p class="sec-lead">
+      <span class="de">Jedes Teil hat ein eigenes Passiv, das volle Set schaltet weitere frei. Fahr über die Gegenstände, um ihre Fähigkeiten zu sehen.</span>
+      <span class="en">Every piece has its own passive, the full set unlocks more. Hover the items to see their abilities.</span>
+    </p>
+    <div class="sides">
+      <article class="side heaven">
+        <header>
+          <h3>Heaven</h3>
+          <p><span class="de">Weißes Netherite mit Goldverzierung. Licht, Heilung und Höhe.</span><span class="en">White netherite with golden trim. Light, healing and altitude.</span></p>
+        </header>
+        <canvas class="item-canvas" data-side="heaven" aria-label="3D: Heaven's Sword und Heaven's Mace"></canvas>
+        <div class="inventory" data-side="heaven"></div>
+        <ul class="perks">
+          <li><b><span class="de">Halo</span><span class="en">Halo</span></b> <span class="de">Du und Verbündete in der Nähe regenerieren.</span><span class="en">You and nearby allies regenerate.</span></li>
+          <li><b><span class="de">Dreifachsprung</span><span class="en">Triple jump</span></b> <span class="de">Doppelsprung plus ein weiterer in der Luft.</span><span class="en">Double jump plus one more mid-air.</span></li>
+          <li><b><span class="de">Lichtstrahl</span><span class="en">Light beam</span></b> <span class="de">Schadet Gegnern, heilt und entgiftet Verbündete.</span><span class="en">Damages enemies, heals and cleanses allies.</span></li>
+          <li><b><span class="de">Gleiten</span><span class="en">Glide</span></b> <span class="de">In der Luft schleichen, sanft hinabschweben.</span><span class="en">Sneak mid-air to drift down gently.</span></li>
+        </ul>
+      </article>
+      <div class="versus" aria-hidden="true">VS</div>
+      <article class="side hell">
+        <header>
+          <h3>Hell</h3>
+          <p><span class="de">Dunkles Netherite mit blauem Seelenfeuer. Wut, Lava und Ketten.</span><span class="en">Dark netherite with blue soul fire. Rage, lava and chains.</span></p>
+        </header>
+        <canvas class="item-canvas" data-side="hell" aria-label="3D: Hell's Sword und Hell's Mace"></canvas>
+        <div class="inventory" data-side="hell"></div>
+        <ul class="perks">
+          <li><b><span class="de">Lava Jesus</span><span class="en">Lava Jesus</span></b> <span class="de">Über Lava laufen, Stärke solange du brennst.</span><span class="en">Walk on lava, Strength while you burn.</span></li>
+          <li><b><span class="de">Fire Camp</span><span class="en">Fire Camp</span></b> <span class="de">Drei Piglin-Brutes als Leibwache und ein Seelenlager.</span><span class="en">Three Piglin Brute bodyguards and a soul camp.</span></li>
+          <li><b><span class="de">Magma Stomp</span><span class="en">Magma Stomp</span></b> <span class="de">Harte Landungen reißen den Boden zu Lava auf.</span><span class="en">Hard landings crack the ground into lava.</span></li>
+          <li><b><span class="de">Lavastrahl</span><span class="en">Lava beam</span></b> <span class="de">Der Strahl der Hölle, mit dem vollen Set.</span><span class="en">Hell's own beam, with the full set.</span></li>
+        </ul>
+      </article>
+    </div>
+    <div class="set-bonus mc-panel">
+      <img src="assets/hud/ultra.png" alt="" width="32" height="32">
+      <p><span class="de"><b>Volles Set:</b> +10 Herzen, keine Fallschäden und ein Ultra-Modus mit eigenem Cooldown. Eine Leiste über der Hotbar zeigt, was bereit ist.</span>
+      <span class="en"><b>Full set:</b> +10 hearts, no fall damage and an Ultra Mode with its own cooldown. A bar above the hotbar shows what is ready.</span></p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ WEG (Fortschritt) -->
+<section class="section path" id="weg">
+  <div class="wrap">
+    <h2 class="sec-title"><span class="de">Der Weg nach unten</span><span class="en">The way down</span></h2>
+    <p class="sec-lead">
+      <span class="de">Die Rüstungen gibt es nicht geschenkt. Sie werden zugestellt, erbeutet und am Ende von Hades selbst übergeben.</span>
+      <span class="en">The armor is not handed out. It is delivered, looted and finally given by Hades himself.</span>
+    </p>
+    <ol class="adv-tree">
+      <li class="adv" data-color="gold">
+        <span class="adv-icon"><img src="assets/item/hermes_summons.png" alt=""></span>
+        <span class="adv-title"><span class="de">Die letzte Zustellung</span><span class="en">The last delivery</span></span>
+        <span class="adv-desc"><span class="de">Löse das Rätsel im Olymp-Tempel oder öffne den Botenbrief. Hermes landet wie ein Komet.</span><span class="en">Solve the Olympus temple riddle or open the messenger letter. Hermes lands like a comet.</span></span>
+      </li>
+      <li class="adv" data-color="gold">
+        <span class="adv-icon"><img src="assets/item/hermes_feather.png" alt=""></span>
+        <span class="adv-title"><span class="de">Fang den Boten</span><span class="en">Catch the messenger</span></span>
+        <span class="adv-desc"><span class="de">Vier Stages im Himmelsforum. Belohnung: die komplette Heaven-Rüstung.</span><span class="en">Four stages in the sky forum. Reward: the complete Heaven armor.</span></span>
+      </li>
+      <li class="adv" data-color="green">
+        <span class="adv-icon"><img src="assets/item/heavens_sword.png" alt="" class="anim3"></span>
+        <span class="adv-title"><span class="de">Der Obolus</span><span class="en">The obol</span></span>
+        <span class="adv-desc"><span class="de">In der Hades-Halle wartet sein Schatten. Besiegt ihn für Heaven's Sword und Mace.</span><span class="en">His shade waits in the Hall of Hades. Defeat it for Heaven's Sword and Mace.</span></span>
+      </li>
+      <li class="adv" data-color="red">
+        <span class="adv-icon"><img src="assets/item/hades_map.png" alt=""></span>
+        <span class="adv-title"><span class="de">Durch das Tor</span><span class="en">Through the gate</span></span>
+        <span class="adv-desc"><span class="de">Der Tartaros: sechs Biome, vier Bauwerke, fünf Wächter. Und Hermes, der dich aufhalten will.</span><span class="en">Tartarus: six biomes, four structures, five guardians. And Hermes, trying to stop you.</span></span>
+      </li>
+      <li class="adv" data-color="purple">
+        <span class="adv-icon"><img src="assets/item/hell_ingot.png" alt="" class="anim4"></span>
+        <span class="adv-title"><span class="de">Der Thronsaal</span><span class="en">The throne room</span></span>
+        <span class="adv-desc"><span class="de">Hades, dann Kronos. Wer beide übersteht, bekommt die komplette Hell-Rüstung.</span><span class="en">Hades, then Kronos. Survive both and claim the complete Hell armor.</span></span>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ============================================================ BOSSE -->
+<section class="section bestiary" id="bosse">
+  <div class="wrap">
+    <h2 class="sec-title"><span class="de">Bestiarium</span><span class="en">Bestiary</span></h2>
+    <p class="sec-lead">
+      <span class="de">Jeder Boss und jeder Wächter hat ein eigenes Modell mit eigenen Animationen. Das hier sind die echten Modelle und Texturen aus der Mod. Wähle in der Hotbar, dreh mit der Maus und spiel die Angriffe ab.</span>
+      <span class="en">Every boss and guardian has its own model and animations. These are the real models and textures from the mod. Pick one from the hotbar, drag to rotate and play their attacks.</span>
+    </p>
+    <div class="viewer">
+      <div class="stage">
+        <div class="bossbar">
+          <div class="bb-name" id="bb-name">Hermes</div>
+          <div class="bb-bar" id="bb-bar"></div>
+        </div>
+        <canvas id="boss-canvas" aria-label="3D-Modellbetrachter"></canvas>
+        <div class="stage-loading" id="boss-loading"><span class="de">Lade Modelle …</span><span class="en">Loading models …</span></div>
+        <div class="stage-tools">
+          <button class="mc-btn small" id="btn-rotate" aria-pressed="true"><span class="de">Drehen</span><span class="en">Spin</span></button>
+          <button class="mc-btn small" id="btn-reset"><span class="de">Ansicht</span><span class="en">Reset view</span></button>
+        </div>
+        <div class="stage-hint"><span class="de">Ziehen: drehen · Scrollen: zoomen</span><span class="en">Drag: rotate · Scroll: zoom</span></div>
+      </div>
+      <aside class="tooltip boss-info" id="boss-info" aria-live="polite"></aside>
+    </div>
+    <div class="hotbar" id="hotbar" role="tablist" aria-label="Modelle"></div>
+    <p class="hotbar-hint"><span class="de">Tipp: Tasten 1 bis 9 wählen die Slots, wie im Spiel.</span><span class="en">Tip: keys 1 to 9 select slots, just like in game.</span></p>
+  </div>
+</section>
+
+<!-- ============================================================ TARTAROS -->
+<section class="section tartaros" id="tartaros">
+  <div class="wrap">
+    <h2 class="sec-title">Tartaros</h2>
+    <p class="sec-lead">
+      <span class="de">Ein ödes, fast flaches Ödland aus Schwarzstein unter blutrotem Himmel. Keine Berge, keine Lava, nur Wind, Asche und die Bauwerke der Mythologie. Ein eigener Bildfilter färbt die Unterwelt in kalte grüne Schatten.</span>
+      <span class="en">A desolate, almost flat wasteland of blackstone under a blood-red sky. No mountains, no lava, just wind, ash and the structures of myth. A custom screen filter tints the underworld in cold green shadows.</span>
+    </p>
+
+    <h3 class="sub-title"><span class="de">Sechs Biome</span><span class="en">Six biomes</span></h3>
+    <div class="biomes" id="biomes"></div>
+
+    <h3 class="sub-title"><span class="de">Bauwerke</span><span class="en">Structures</span></h3>
+    <p class="note"><span class="de">Renders direkt aus den Bauplänen der Mod, nur aus Vanilla-Blöcken gebaut. Klicken zum Vergrößern.</span><span class="en">Renders straight from the mod's building plans, made of vanilla blocks only. Click to enlarge.</span></p>
+    <div class="gallery" id="gallery"></div>
+
+    <div class="hunter mc-panel dark">
+      <img src="assets/item/hermes_feather.png" alt="" width="40" height="40">
+      <p><span class="de"><b>Hermes will das verhindern.</b> Dass du mit seiner Karte so weit gekommen bist, wäre vor Hades eine Blamage. Je näher du dem Palast kommst, desto öfter taucht er auf: Federsalven, Sturzflüge, Gegenwind und eine erfundene Säule in die falsche Richtung.</span>
+      <span class="en"><b>Hermes wants to stop you.</b> Making it this far with his map would embarrass him in front of Hades. The closer you get to the palace, the more often he shows up: feather volleys, dives, headwinds and a fake pillar pointing the wrong way.</span></p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ FEATURES -->
+<section class="section features" id="features">
+  <div class="wrap">
+    <h2 class="sec-title"><span class="de">Was noch drin ist</span><span class="en">What else is inside</span></h2>
+    <div class="feature-grid">
+      <article class="feature mc-panel">
+        <img src="assets/hud/beam_light.png" alt="" width="48" height="48">
+        <h3><span class="de">Echte 3D-Effekte</span><span class="en">Real 3D effects</span></h3>
+        <p><span class="de">Volumetrische Strahlen, Seraph-Flügel, Schockwellen und echte Ketten statt flacher Partikel.</span><span class="en">Volumetric beams, seraph wings, shockwaves and real chains instead of flat particles.</span></p>
+      </article>
+      <article class="feature mc-panel">
+        <img src="assets/item/hermes_summons.png" alt="" width="48" height="48">
+        <h3><span class="de">Cutscenes mit Stimme</span><span class="en">Voiced cutscenes</span></h3>
+        <p><span class="de">Jede Szene ist vertont, auf Deutsch und Englisch. Alle Mitspieler sehen sie mit, und gemeinsam lässt sie sich überspringen.</span><span class="en">Every scene is voiced in German and English. All players see it together and can skip it together.</span></p>
+      </article>
+      <article class="feature mc-panel">
+        <img src="assets/hud/wave.png" alt="" width="48" height="48">
+        <h3><span class="de">Faire Bosskämpfe</span><span class="en">Fair boss fights</span></h3>
+        <p><span class="de">Jeder Angriff wird am Boden angesagt. Eine goldene Rune zeigt, wann ein Boss offen ist. Wer k.o. geht, behält sein Inventar.</span><span class="en">Every attack is announced on the ground. A golden rune shows when a boss is open. Get knocked out and you keep your inventory.</span></p>
+      </article>
+      <article class="feature mc-panel">
+        <img src="assets/hud/chain.png" alt="" width="48" height="48">
+        <h3><span class="de">Hell's Mace</span><span class="en">Hell's Mace</span></h3>
+        <p><span class="de">Zieht Gegner an einer Kette heran oder wird zum Enterhaken. Sogar an eigene Enderperlen im Flug kann man sich hängen.</span><span class="en">Yanks enemies in on a chain or turns into a grappling hook. You can even latch onto your own ender pearls mid-flight.</span></p>
+      </article>
+      <article class="feature mc-panel">
+        <img src="assets/hud/mace.png" alt="" width="48" height="48">
+        <h3><span class="de">Heaven's Mace</span><span class="en">Heaven's Mace</span></h3>
+        <p><span class="de">Fliegt bis zu 50 Blöcke weit, trifft alles auf dem Weg mit Blitzen und kommt zurück.</span><span class="en">Flies up to 50 blocks, strikes everything on its path with lightning and comes back.</span></p>
+      </article>
+      <article class="feature mc-panel">
+        <img src="assets/hud/camp.png" alt="" width="48" height="48">
+        <h3><span class="de">Alles einstellbar</span><span class="en">Fully configurable</span></h3>
+        <p><span class="de">Jede Fähigkeit, jeder Schadenswert und jeder Cooldown lässt sich live per <code>/hha</code> ändern. Rezepte per Datapack.</span><span class="en">Every ability, damage value and cooldown can be tuned live via <code>/hha</code>. Recipes via datapack.</span></p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ INSTALL -->
+<section class="section install" id="install">
+  <div class="wrap">
+    <h2 class="sec-title"><span class="de">Installation</span><span class="en">Installation</span></h2>
+    <div class="install-grid">
+      <div class="toasts">
+        <div class="toast"><span class="toast-icon"><img src="assets/item/heaven_ingot.png" alt="" class="anim4"></span><span class="toast-text"><b><span class="de">Schritt 1</span><span class="en">Step 1</span></b><span><span class="de">Fabric Loader für Minecraft 1.21.11 installieren</span><span class="en">Install Fabric Loader for Minecraft 1.21.11</span></span></span></div>
+        <div class="toast"><span class="toast-icon"><img src="assets/item/hell_ingot.png" alt="" class="anim4"></span><span class="toast-text"><b><span class="de">Schritt 2</span><span class="en">Step 2</span></b><span><span class="de">Fabric API und Fabric Language Kotlin in den mods-Ordner</span><span class="en">Put Fabric API and Fabric Language Kotlin into mods/</span></span></span></div>
+        <div class="toast"><span class="toast-icon"><img src="assets/item/hermes_summons.png" alt=""></span><span class="toast-text"><b><span class="de">Schritt 3</span><span class="en">Step 3</span></b><span><span class="de">Die HHA-Jar dazu, auf Client und Server</span><span class="en">Add the HHA jar, on client and server</span></span></span></div>
+        <a class="mc-btn big wide" href="https://github.com/vibec-studios/HHA/releases" target="_blank" rel="noopener"><span class="de">Zu den Downloads</span><span class="en">Go to downloads</span></a>
+      </div>
+      <div class="chat" aria-label="Befehle">
+        <div class="chat-title"><span class="de">Nützliche Befehle</span><span class="en">Useful commands</span></div>
+        <div class="chat-line"><code>/hha list</code> <span class="de">alle Schalter und Werte</span><span class="en">all toggles and values</span></div>
+        <div class="chat-line"><code>/hha toggle &lt;key&gt; &lt;bool&gt;</code> <span class="de">Fähigkeit an oder aus</span><span class="en">ability on or off</span></div>
+        <div class="chat-line"><code>/hha set &lt;key&gt; &lt;value&gt;</code> <span class="de">Schaden und Cooldowns</span><span class="en">damage and cooldowns</span></div>
+        <div class="chat-line"><code>/hha kit heaven|hell</code> <span class="de">volles PvP-Kit</span><span class="en">full PvP kit</span></div>
+        <div class="chat-line"><code>/trust &lt;player&gt;</code> <span class="de">deine Fähigkeiten schonen Freunde</span><span class="en">your abilities spare friends</span></div>
+        <div class="chat-line"><code>/locate structure hha:hades_palace</code> <span class="de">Palast des Hades finden</span><span class="en">find the Palace of Hades</span></div>
+        <div class="chat-input">&gt; <span class="caret">_</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="wrap">
+    <p><img src="assets/icon.png" alt="" width="24" height="24"> <b>H&amp;H Armors</b> · <span class="de">von</span><span class="en">by</span> Henny · <a href="https://github.com/vibec-studios/HHA" target="_blank" rel="noopener">GitHub</a> · MIT</p>
+    <p class="small"><span class="de">Stimmen der Cutscenes: ElevenLabs.</span><span class="en">Cutscene voices: ElevenLabs.</span>
+    <span class="de">Kein offizielles Minecraft-Produkt. Nicht von Mojang oder Microsoft genehmigt oder mit ihnen verbunden.</span><span class="en">Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.</span></p>
+  </div>
+</footer>
+
+<div class="mc-tooltip" id="mc-tooltip" hidden></div>
+<div class="lightbox" id="lightbox" hidden>
+  <button class="mc-btn small lb-close" aria-label="Schließen">X</button>
+  <img alt="">
+  <p class="lb-caption"></p>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
