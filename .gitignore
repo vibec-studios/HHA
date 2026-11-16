@@ -28,3 +28,6 @@ tmp/
 
 # Python-Zwischenstaende der Asset-Generatoren
 __pycache__/
+
+# Teilstücke des Modell-Generators (boss_models.py setzt daraus HhaModelData.kt zusammen)
+tools/hha_assets/gen/

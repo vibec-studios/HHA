@@ -11,8 +11,11 @@ import net.minecraft.util.math.Vec3d
 /** Verwaltet alle laufenden 3D-Effekte: nimmt Pakete an, tickt und zeichnet sie. */
 object VfxManager {
 
-    /** Obergrenze, damit ein Spam-Server keinen Client in die Knie zwingt. */
-    private const val MAX_EFFECTS = 256
+    /**
+     * Obergrenze gleichzeitiger Effekte (Plan 3.3). Ist sie erreicht, fällt der älteste Effekt weg, der keine Ansage
+     * ist; Ansagen sind Spielinformation und gehen nur verloren, wenn nichts anderes mehr übrig ist.
+     */
+    const val MAX_EFFECTS = 96
 
     private val effects = ArrayList<VfxEffect>()
     private var seed = 0L
@@ -20,6 +23,7 @@ object VfxManager {
     fun tick(world: ClientWorld) {
         BossGlow.tick(world)
         PortalVfx.tick(world)
+        FarBeacon.tick()
         val iterator = effects.iterator()
         while (iterator.hasNext()) {
             if (!iterator.next().advance(world)) iterator.remove()
@@ -30,11 +34,13 @@ object VfxManager {
         effects.clear()
     }
 
-    /** Kameraschütteln und Blitz laufen immer; 3D-Meshes hängen am Client-Schalter `vfx_3d`. */
+    /** Kameraschütteln, Blitz und Ansagen (Telegraphs) laufen immer; alle übrigen 3D-Meshes hängen am Client-Schalter `vfx_3d`. */
     fun handle(payload: VfxPayload, world: ClientWorld) {
         val kind = Vfx.Kind.entries.getOrNull(payload.kind) ?: return
         val style = Vfx.Style.entries.getOrNull(payload.style) ?: Vfx.Style.GOLD
-        val pal = Palette.of(style)
+        // Effekte eines Gegners tragen seine Gefahrenfarbe (HEAVEN = Himmelblau-Weiß statt Gold-Weiß usw.).
+        val pal = if (payload.flags and Vfx.FLAG_DANGER != 0) Palette.danger(style) else Palette.of(style)
+        val safe = style == Vfx.Style.GOLD
         val pos = Vec3d(payload.x, payload.y, payload.z)
         val dir = Vec3d(payload.dx, payload.dy, payload.dz)
         val life = payload.life.coerceAtLeast(1)
@@ -57,7 +63,13 @@ object VfxManager {
             }
             else -> {}
         }
-        if (!HhaClientConfig.enabled("vfx_3d")) return
+        // Ansagen sind Spielinformation (wo trifft es gleich?) und werden deshalb auch ohne 3D-Effekte gezeichnet.
+        val telegraph = kind == Vfx.Kind.TELEGRAPH_RING || kind == Vfx.Kind.TELEGRAPH_LINE || kind == Vfx.Kind.TELEGRAPH_CONE
+        if (!telegraph && !HhaClientConfig.enabled("vfx_3d")) return
+        if (kind == Vfx.Kind.FAR_BEACON) {
+            FarBeacon.set(pos, life)
+            return
+        }
         if (kind == Vfx.Kind.SKY_MOOD) {
             SkyMood.pulse(style, pos, a, b, life)
             return
@@ -69,8 +81,9 @@ object VfxManager {
             Vfx.Kind.CRESCENT -> CrescentEffect(pos, dir, pal, a, b, life)
             Vfx.Kind.BOLT -> BoltEffect(pos, dir, pal, a.coerceAtLeast(0.1f), life, seed)
             Vfx.Kind.PILLAR -> PillarEffect(pos, pal, a, b, life)
-            Vfx.Kind.TELEGRAPH_RING -> TelegraphRingEffect(pos, pal, a, life)
-            Vfx.Kind.TELEGRAPH_LINE -> TelegraphLineEffect(pos, dir, pal, a, life)
+            Vfx.Kind.TELEGRAPH_RING -> TelegraphRingEffect(pos, pal, a, b, life, safe)
+            Vfx.Kind.TELEGRAPH_LINE -> TelegraphLineEffect(pos, dir, pal, a, life, safe)
+            Vfx.Kind.TELEGRAPH_CONE -> TelegraphConeEffect(pos, dir, pal, a, b, life)
             Vfx.Kind.SHIELD -> ShieldEffect(e1, pos, pal, a, life, seed)
             Vfx.Kind.WINGS -> e1?.let { WingsEffect(it, pal, a, life, style == Vfx.Style.HELL || style == Vfx.Style.FIRE) }
             Vfx.Kind.CHAIN -> ChainEffect(e1, pos, e2, dir, pal, life)
@@ -89,12 +102,18 @@ object VfxManager {
             Vfx.Kind.CLOUDS -> CloudBankEffect(pos, style, a, b, life, e1, seed)
             Vfx.Kind.GOD_RAYS -> GodRaysEffect(pos, pal, a, b, life, seed)
             Vfx.Kind.ZEUS_EYES -> ZeusEyesEffect(pos, pal, a, life, seed)
+            Vfx.Kind.FAR_BEACON -> null
             Vfx.Kind.SHAKE, Vfx.Kind.SCREEN_FLASH, Vfx.Kind.SKY_MOOD -> null
         }
-        if (effect != null) {
-            if (effects.size >= MAX_EFFECTS) effects.removeAt(0)
-            effects.add(effect)
+        if (effect != null) add(effect)
+    }
+
+    private fun add(effect: VfxEffect) {
+        if (effects.size >= MAX_EFFECTS) {
+            val oldest = effects.indexOfFirst { !it.telegraph }
+            effects.removeAt(if (oldest >= 0) oldest else 0)
         }
+        effects.add(effect)
     }
 
     fun render(consumers: VertexConsumerProvider) {
@@ -107,6 +126,7 @@ object VfxManager {
             AmbientVfx.render(draw)
             BossGlow.render(draw)
             PortalVfx.render(draw)
+            FarBeacon.render(draw)
         } else {
             BossGlow.clear()
         }

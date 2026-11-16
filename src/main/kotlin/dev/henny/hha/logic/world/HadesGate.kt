@@ -49,6 +49,10 @@ object HadesGate {
     private const val PULL_TICKS = 30
     private const val GREEN = 0x0A4018
 
+    /** Die Ankunftsplattform steht immer über den Flüssen. */
+    private const val MIN_ARRIVAL_Y = 58
+    private const val MAX_CAUSEWAY = 90
+
     fun inOpening(dx: Int, h: Int): Boolean = hypot(dx.toDouble(), h - OPENING_CENTER) <= OPENING_RADIUS && h >= 1
 
     fun centerFromAltar(altar: BlockPos): BlockPos = BlockPos(altar.x, FLOOR_Y, altar.z - ALTAR_OFFSET_Z)
@@ -58,12 +62,12 @@ object HadesGate {
 
     /**
      * Füllt das Tor von unten nach oben; [row] läuft von 0 bis [GATE_HEIGHT] - 1. Was nicht zur runden Öffnung gehört,
-     * wird zu Torstein, so bekommen auch Hallen aus älteren Spielständen die runde Form.
+     * wird zu Schwarzsteinziegeln, so bekommen auch Hallen aus älteren Spielständen die runde Form.
      */
     fun openRow(world: ServerWorld, center: BlockPos, row: Int) {
         val h = 1 + row
         for (dx in -GATE_HALF_WIDTH..GATE_HALF_WIDTH) {
-            val block = if (inOpening(dx, h)) HhaBlocks.HADES_PORTAL else HhaBlocks.GATE_STONE
+            val block = if (inOpening(dx, h)) HhaBlocks.HADES_PORTAL else Blocks.POLISHED_BLACKSTONE_BRICKS
             world.setBlockState(center.add(dx, h, GATE_OFFSET_Z), block.defaultState, Block.NOTIFY_LISTENERS or Block.FORCE_STATE)
         }
     }
@@ -146,7 +150,7 @@ object HadesGate {
         Vfx.shake(world, player.entityPos, 2.5f, 18, 8f)
         if (world.registryKey == TARTAROS) {
             Cine.title(players, "hha.tartaros.title", "hha.tartaros.title.sub", 70)
-            TartarosGuide.greet(player)
+            TartarosHunter.greet(player)
         }
     }
 
@@ -163,7 +167,7 @@ object HadesGate {
         val centerZ = gateZ + 8
         // Holt den Chunk samt Gelände, sonst läge die Plattform auf einer leeren Höhenkarte.
         world.getChunk(cx shr 4, centerZ shr 4)
-        val floor = world.getTopY(Heightmap.Type.MOTION_BLOCKING, cx, centerZ) + 1
+        val floor = maxOf(world.getTopY(Heightmap.Type.MOTION_BLOCKING, cx, centerZ) + 1, MIN_ARRIVAL_Y)
         fun put(pos: BlockPos, state: BlockState) = world.setBlockState(pos, state, Block.NOTIFY_LISTENERS or Block.FORCE_STATE)
         val radius = 12
         for (dx in -radius..radius) {
@@ -173,14 +177,35 @@ object HadesGate {
                 val column = BlockPos(cx + dx, floor, centerZ + dz)
                 for (dy in 1..14) put(column.up(dy), Blocks.AIR.defaultState)
                 val state = when {
-                    r > radius - 1.5 -> HhaBlocks.PALE_CRYSTAL
+                    r > radius - 1.5 -> Blocks.VERDANT_FROGLIGHT
                     r in 5.0..6.0 -> Blocks.VERDANT_FROGLIGHT
-                    (abs(dx) + abs(dz)) % 2 == 0 -> HhaBlocks.GATE_STONE
-                    else -> HhaBlocks.DEEP_ASH
+                    (abs(dx) + abs(dz)) % 2 == 0 -> Blocks.POLISHED_BLACKSTONE_BRICKS
+                    else -> Blocks.BLACKSTONE
                 }
                 put(column, state.defaultState)
                 // Der Sockel läuft spitz nach unten aus.
-                for (dy in 1..((radius - r) * 0.7).toInt() + 2) put(column.down(dy), HhaBlocks.DEEP_ASH.defaultState)
+                for (dy in 1..((radius - r) * 0.7).toInt() + 2) put(column.down(dy), Blocks.BLACKSTONE.defaultState)
+            }
+        }
+        // Hängt die Plattform über einer Schlucht oder einem Fluss, führen Dammwege zum festen Boden.
+        for ((dirX, dirZ) in listOf(1 to 0, -1 to 0, 0 to 1)) {
+            var step = radius
+            while (step < MAX_CAUSEWAY) {
+                val x = cx + dirX * step
+                val z = centerZ + dirZ * step
+                world.getChunk(x shr 4, z shr 4)
+                if (world.getTopY(Heightmap.Type.WORLD_SURFACE, x, z) >= floor - 1 && world.getBlockState(BlockPos(x, world.getTopY(Heightmap.Type.WORLD_SURFACE, x, z) - 1, z)).fluidState.isEmpty) break
+                step++
+            }
+            if (step >= MAX_CAUSEWAY) continue
+            for (n in radius..step) {
+                for (w in -2..2) {
+                    val x = cx + dirX * n + dirZ * w
+                    val z = centerZ + dirZ * n + dirX * w
+                    put(BlockPos(x, floor, z), (if (kotlin.math.abs(w) == 2) Blocks.POLISHED_BLACKSTONE_BRICKS else Blocks.BLACKSTONE).defaultState)
+                    if (kotlin.math.abs(w) == 2) put(BlockPos(x, floor + 1, z), Blocks.POLISHED_BLACKSTONE_WALL.defaultState)
+                    for (d in 1..3) put(BlockPos(x, floor - d, z), Blocks.BLACKSTONE.defaultState)
+                }
             }
         }
         // Rücktor: dieselbe runde Form wie unten in der Halle.
@@ -188,16 +213,16 @@ object HadesGate {
         for (dx in -half..half) {
             for (h in 0..GATE_HEIGHT + 1) {
                 val pos = BlockPos(cx + dx, floor + h, gateZ)
-                put(pos, if (inOpening(dx, h)) HhaBlocks.HADES_PORTAL.defaultState else HhaBlocks.GATE_STONE.defaultState)
+                put(pos, if (inOpening(dx, h)) HhaBlocks.HADES_PORTAL.defaultState else Blocks.POLISHED_BLACKSTONE_BRICKS.defaultState)
             }
         }
         // Kristallzacken, die das Tor umrahmen, und vier Feuerschalen.
         for ((dx, height) in listOf(-7 to 8, 7 to 8, -9 to 5, 9 to 5)) {
-            for (h in 1..height) put(BlockPos(cx + dx, floor + h, gateZ + 1), HhaBlocks.PALE_CRYSTAL.defaultState)
+            for (h in 1..height) put(BlockPos(cx + dx, floor + h, gateZ + 1), Blocks.VERDANT_FROGLIGHT.defaultState)
         }
         for ((dx, dz) in listOf(-8 to -3, 8 to -3, -8 to 6, 8 to 6)) {
             val bowl = BlockPos(cx + dx, floor + 1, centerZ + dz)
-            put(bowl, HhaBlocks.GATE_STONE.defaultState)
+            put(bowl, Blocks.POLISHED_BLACKSTONE_BRICKS.defaultState)
             put(bowl.up(), HhaBlocks.GREEN_FIRE.defaultState)
         }
         return floor

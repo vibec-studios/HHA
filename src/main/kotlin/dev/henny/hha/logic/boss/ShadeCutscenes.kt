@@ -14,7 +14,8 @@ import net.minecraft.util.math.Vec3d
  * Das Drehbuch zum Kampf gegen den Schatten des Boten in der Halle unter dem Hades-Biom.
  *
  * Hermes hat den schwarzen Brief verbrannt. Die Asche hatte Hände: Was daraus aufstand, sieht aus wie er, arbeitet aber
- * für Hades. Alle Effekte des Kampfes werden über [Vfx.styleOverride] grün, deshalb steht hier überall der Originalstil.
+ * für Hades. Alle Effekte des Kampfes werden über [Vfx.styleOverride] grün; Gold bleibt im Kampf-Scope aber Gold
+ * (Plan 3.1: Gold heißt „gut für dich“), darum trägt seine eigene Macht hier ausdrücklich HADES.
  */
 class ShadeCutscenes(private val fight: HermesFight) {
 
@@ -44,6 +45,7 @@ class ShadeCutscenes(private val fight: HermesFight) {
     }
 
     private fun sound(event: SoundEvent, volume: Float = 2f, pitch: Float = 1f, at: Vec3d = center) {
+        if (Cine.muted) return
         world.playSound(null, at.x, at.y, at.z, event, SoundCategory.HOSTILE, volume, pitch)
     }
 
@@ -77,12 +79,13 @@ class ShadeCutscenes(private val fight: HermesFight) {
         // Der Schatten stürzt durch die Kuppel.
         fight.spawnBoss(center.add(0.0, 30.0, 0.0)).apply { pose = HermesPose.DASH }
         Cine.camera(everyone, center.add(13.0, 2.0, 13.0), center.add(10.0, 1.0, 10.0), center.add(0.0, 26.0, 0.0), center.add(0.0, 1.0, 0.0), 26, 72.0, 58.0)
-        Vfx.trail(world, Vfx.Style.GOLD, boss, 0.9f, 30)
+        Vfx.trail(world, Vfx.Style.HADES, boss, 0.9f, 30)
         sound(HhaSounds.DASH, 3f, 0.6f, center.add(0.0, 26.0, 0.0))
         glide(center.add(0.0, 0.2, 0.0), 16)
-        boss.pose = HermesPose.SLAM
-        Vfx.shockwave(world, Vfx.Style.GOLD, center, 22f, 26, 5f)
-        Vfx.nova(world, Vfx.Style.GOLD, center.add(0.0, 1.0, 0.0), 8f, 16)
+        // Gelandet: ein Knie am Boden, der gebrochene Stab steckt.
+        boss.pose = HermesPose.STUCK
+        Vfx.shockwave(world, Vfx.Style.HADES, center, 22f, 26, 5f)
+        Vfx.nova(world, Vfx.Style.HADES, center.add(0.0, 1.0, 0.0), 8f, 16)
         Vfx.feathers(world, Vfx.Style.SHADOW, center.add(0.0, 1.0, 0.0), 40, 2.4f, 80)
         Vfx.shake(world, center, 7f, 26, 60f)
         sound(HhaSounds.IMPACT, 4f, 0.6f)
@@ -133,7 +136,7 @@ class ShadeCutscenes(private val fight: HermesFight) {
         fight.startStage(3)
     }
 
-    /** Letzte Phase: Der Boden selbst spricht, und der Schatten wird unberührbar. */
+    /** Letzte Phase: Der Boden selbst spricht. Der Schatten bleibt verwundbar, wird aber nach jedem Muster müde. */
     fun last(): Sequence<Unit> = sequence {
         val everyone = players
         Cine.start(everyone)
@@ -149,8 +152,7 @@ class ShadeCutscenes(private val fight: HermesFight) {
         wait(16)
         say(Cine.SPEAKER_NARRATOR, "voice", 74)
         boss.pose = HermesPose.ASCEND
-        Vfx.pillar(world, Vfx.Style.GOLD, center, 2.6f, 30f, 50)
-        Vfx.orbitRings(world, Vfx.Style.GOLD, boss, 2f, 20 * 900)
+        Vfx.pillar(world, Vfx.Style.HADES, center, 2.6f, 30f, 50)
         Cine.orbit(everyone, center, 11.0, 1.0, 240.0, 280.0, 70, 60.0, 72.0, boss, 2.0)
         glide(center.add(0.0, 10.0, 0.0), 50)
         say(Cine.SPEAKER_SHADE, "breath", 56)
@@ -158,7 +160,8 @@ class ShadeCutscenes(private val fight: HermesFight) {
         sound(HhaSounds.STING, 3f, 0.8f)
         Cine.end(players)
         boss.pose = HermesPose.IDLE
-        boss.vulnerable = false
+        // Plan 4.3: immer verwundbar, keine Unverwundbarkeitsphase.
+        boss.vulnerable = true
         fight.startStage(4)
     }
 

@@ -1,0 +1,14 @@
+{
+  "placement": {
+    "type": "minecraft:random_spread",
+    "salt": 13370001,
+    "separation": 44,
+    "spacing": 96
+  },
+  "structures": [
+    {
+      "structure": "hha:hades_palace",
+      "weight": 1
+    }
+  ]
+}

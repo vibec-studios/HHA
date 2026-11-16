@@ -51,6 +51,16 @@ CAST = {
         'settings': {'stability': 0.62, 'similarity_boost': 0.82, 'style': 0.2, 'use_speaker_boost': True},
         'filter': 'asetrate=44100*0.88,aresample=44100,atempo=1.04,aecho=0.8:0.6:45|120:0.35|0.22,lowpass=f=6500,alimiter=limit=0.95',
     },
+    'hades': {
+        'voice': 'nPczCjzI2devNBz1zQrb',  # Brian, "Deep, Resonant and Comforting"; ruhig, und genau das ist das Unheimliche.
+        'settings': {'stability': 0.68, 'similarity_boost': 0.8, 'style': 0.18, 'use_speaker_boost': True},
+        'filter': 'asetrate=44100*0.87,aresample=44100,atempo=1.03,aecho=0.8:0.7:70|160:0.3|0.18,bass=g=4,alimiter=limit=0.95',
+    },
+    'kronos': {
+        'voice': 'pNInz6obpgDQGcFmaJgB',  # Adam, tief heruntergezogen: ein Titan, der aus der ganzen Halle spricht.
+        'settings': {'stability': 0.6, 'similarity_boost': 0.8, 'style': 0.3, 'use_speaker_boost': True},
+        'filter': 'asetrate=44100*0.78,aresample=44100,atempo=1.08,aecho=0.8:0.8:120|260|420:0.5|0.35|0.22,bass=g=7,alimiter=limit=0.95',
+    },
     'narrator': {
         'voice': 'JBFqnCBsd6RMkjVDRZzb',  # George, "Warm, Captivating Storyteller"
         'settings': {'stability': 0.6, 'similarity_boost': 0.75, 'style': 0.15, 'use_speaker_boost': True},
@@ -60,7 +70,7 @@ CAST = {
 
 NARRATOR_KEYS = {
     'prologue.seal', 'prologue.pull', 'prologue.altar', 'feather.falls', 'zeus.feather', 'finale.catch', 'finale.stinger',
-    'shade.coin', 'shade.voice', 'shade.open',
+    'shade.coin', 'shade.voice', 'shade.open', 'hades.enter',
 }
 
 
@@ -69,6 +79,12 @@ def speaker_of(key):
         return 'narrator'
     if key.startswith('shade.'):
         return 'shade'
+    if key.startswith('kronos.'):
+        return 'kronos'
+    if key == 'hades.pact':
+        return 'shade'
+    if key.startswith('hades.') and key not in ('hades.excuse', 'hades.sign', 'hades.never'):
+        return 'hades'
     if key in ('zeus.name', 'zeus.end_it'):
         return 'zeus'
     return 'hermes'

@@ -23,7 +23,8 @@ import net.minecraft.sound.SoundEvents
  * auch aus Addon-Sets: die vier Rüstungsteile voll verzaubert, dazu die
  * Set-Waffen nach Rollen-Konvention (`weapons[0]` = Schwert-Verzauberungen,
  * `weapons[1]` = Mace-Verzauberungen) und die Standard-Ausrüstung mit
- * Stärke-II- und Weaving-Wurftränken.
+ * Stärke-II- und Weaving-Wurftränken. Die Vanilla-Kits (Diamond, Netherite) tragen statt Weaving je drei
+ * Wurftränke Feuerresistenz und Schnelligkeit mit 8 Minuten.
  */
 object Kits {
 
@@ -49,16 +50,16 @@ object Kits {
     fun give(player: ServerPlayerEntity, set: ArmorSet) {
         equip(
             player, { slot -> set.piece(slot) }, set.weapons, Items.DIAMOND_AXE, Items.NETHERITE_PICKAXE,
-            if (set.id == dev.henny.hha.api.set.HhaSets.HELL_ID) 0.8f else 1.2f,
+            if (set.id == dev.henny.hha.api.set.HhaSets.HELL_ID) 0.8f else 1.2f, vanilla = false,
         )
     }
 
     fun give(player: ServerPlayerEntity, kit: VanillaKit) {
-        equip(player, { slot -> kit.armor[slot] }, listOf(kit.sword, Items.MACE), kit.axe, kit.pickaxe, 1f)
+        equip(player, { slot -> kit.armor[slot] }, listOf(kit.sword, Items.MACE), kit.axe, kit.pickaxe, 1f, vanilla = true)
     }
 
     private fun equip(
-        player: ServerPlayerEntity, armor: (EquipmentSlot) -> Item?, weapons: List<Item>, axe: Item, pickaxe: Item, pitch: Float,
+        player: ServerPlayerEntity, armor: (EquipmentSlot) -> Item?, weapons: List<Item>, axe: Item, pickaxe: Item, pitch: Float, vanilla: Boolean,
     ) {
         val inventory = player.inventory
         inventory.clear()
@@ -146,8 +147,15 @@ object Kits {
         for (slot in 11..17) inventory.setStack(slot, splashPotion(Potions.STRONG_STRENGTH))
 
         inventory.setStack(18, ItemStack(Items.BREEZE_ROD, 64))
-        for (slot in 19..22) inventory.setStack(slot, splashPotion(Potions.STRONG_STRENGTH))
-        for (slot in 23..26) inventory.setStack(slot, splashPotion(Potions.WEAVING))
+        if (vanilla) {
+            // Diamond- und Netherite-Kit: Feuerresistenz und Schnelligkeit (je 8 Minuten) statt Weaving.
+            for (slot in 19..20) inventory.setStack(slot, splashPotion(Potions.STRONG_STRENGTH))
+            for (slot in 21..23) inventory.setStack(slot, splashPotion(Potions.LONG_FIRE_RESISTANCE))
+            for (slot in 24..26) inventory.setStack(slot, splashPotion(Potions.LONG_SWIFTNESS))
+        } else {
+            for (slot in 19..22) inventory.setStack(slot, splashPotion(Potions.STRONG_STRENGTH))
+            for (slot in 23..26) inventory.setStack(slot, splashPotion(Potions.WEAVING))
+        }
 
         inventory.setStack(27, ItemStack(Items.EXPERIENCE_BOTTLE, 64))
         inventory.setStack(28, ItemStack(Items.GOLDEN_APPLE, 64))

@@ -198,60 +198,43 @@ def zeus_eye():
     save(Image(w, h).fn(f), 'textures/vfx/zeus_eye.png')
 
 
-def wasteland():
-    """Blöcke des Tartaros: Kohlenschwarze Oberseiten mit fast schwarzen Flanken ergeben die Höhenlinien im Ödland."""
-    ash = [hexc('#1d1c20'), hexc('#2a292e'), hexc('#37363c'), hexc('#44434a')]
-    flank = [hexc('#0e0d10'), hexc('#161519'), hexc('#1e1d22')]
-    deep = [hexc('#0a0a0d'), hexc('#121116'), hexc('#1a191f')]
-    rust = [hexc('#3e2412'), hexc('#5a3518'), hexc('#74471f'), hexc('#8a5a2a')]
-    grey = [hexc('#3a3a40'), hexc('#54545c'), hexc('#6e6e76'), hexc('#8a8a92')]
-    pale = [hexc('#5f8f63'), hexc('#7fae80'), hexc('#a3c9a0'), hexc('#c6e2c0'), hexc('#e6f6dc')]
-    lichen = [hexc('#6c9a68'), hexc('#8fb985'), hexc('#a9cf9f'), hexc('#c4e2b6')]
+def markers():
+    """Nur noch die zwei Blöcke mit Funktion; Bauten und Gelände sind Vanilla."""
     gate = [hexc('#08080c'), hexc('#101018'), hexc('#191924')]
 
-    def textured(colors, seed, base=0.1, span=0.85, extra=None):
+    def textured(colors, seed, base, span, extra):
         noise = tile_noise(16, 4, seed, octaves=2)
 
         def paint(x, y):
-            if extra:
-                color = extra(x, y)
-                if color is not None:
-                    return color
-            return ramp(colors, base + noise(x, y) * span)
+            color = extra(x, y)
+            return color if color is not None else ramp(colors, base + noise(x, y) * span)
         return Image(16, 16).fn(paint)
 
-    crack = {(3, 2), (4, 3), (4, 4), (5, 5), (11, 9), (12, 10), (12, 11), (13, 12), (2, 12), (3, 13)}
-    save(textured(ash, 401, 0.05, 0.95, lambda x, y: hexc('#141317') if (x, y) in crack else None), 'textures/block/ash_stone_top.png')
-    save(textured(flank, 402), 'textures/block/ash_stone_side.png')
-    save(textured(deep, 403), 'textures/block/deep_ash.png')
-    save(textured(rust, 404), 'textures/block/rust_soil.png')
-    flecks = {(2, 4), (7, 2), (12, 5), (5, 9), (10, 11), (14, 13), (3, 14)}
-    save(textured(grey, 405, 0.05, 0.9, lambda x, y: hexc('#ffd75a') if (x, y) in flecks else None), 'textures/block/gilded_ash.png')
-    save(textured(lichen, 406), 'textures/block/crystal_moss.png')
-
-    def facet(x, y):
-        # Schräge Schliffkanten: helle Grate, dunklere Flächen dazwischen.
-        band = ((x + y) % 8)
-        if band == 0:
-            return ramp(pale, 0.98)
-        if band == 1:
-            return ramp(pale, 0.82)
-        if (x - y) % 11 == 0:
-            return ramp(pale, 0.2)
+    def glyphs(x, y):
+        if x in (2, 13) or y in (0, 15):
+            return ramp(GREEN, 0.28)
+        if (x % 4 == 1 and y % 3 != 0) or (y % 6 == 3 and 3 < x < 12):
+            return ramp(GREEN, 0.6)
         return None
 
-    save(textured(pale, 407, 0.2, 0.5, facet), 'textures/block/pale_crystal.png')
+    save(textured(gate, 411, 0.1, 0.6, glyphs), 'textures/block/stele.png')
 
-    def veins(x, y):
-        if (x, y) in {(2, 3), (3, 4), (4, 4), (5, 5), (5, 6), (10, 9), (11, 10), (11, 11), (12, 12), (8, 2), (8, 3), (3, 12), (4, 13)}:
-            return ramp(GREEN, 0.7)
+    def seal(x, y):
+        dx, dy = x - 7.5, y - 7.5
+        r = math.hypot(dx, dy)
+        if r < 2.2:
+            return ramp(GREEN, 0.98)
+        if 4.8 < r < 6.2:
+            return ramp(GREEN, 0.72)
+        if abs(dx) < 0.8 or abs(dy) < 0.8:
+            return ramp(GREEN, 0.5)
         return None
 
-    save(textured(gate, 408, 0.1, 0.85, veins), 'textures/block/gate_stone.png')
+    save(textured(gate, 412, 0.1, 0.7, seal), 'textures/block/hades_seal.png')
 
 
 def main():
-    wasteland()
+    markers()
     pedestals()
     altars()
     hades_map()

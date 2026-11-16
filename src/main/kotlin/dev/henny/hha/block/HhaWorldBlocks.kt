@@ -147,5 +147,43 @@ class HadesAltarBlock(settings: Settings) : Block(settings) {
     }
 }
 
+/** Steinerne Tafel an den Bauwerken des Tartaros: Rechtsklick erzählt, wer hier büßt. */
+class SteleBlock(settings: Settings) : Block(settings) {
+
+    init {
+        defaultState = stateManager.defaultState.with(STORY, 0)
+    }
+
+    override fun appendProperties(builder: StateManager.Builder<Block, BlockState>) {
+        builder.add(STORY)
+    }
+
+    override fun getOutlineShape(state: BlockState, world: BlockView, pos: BlockPos, context: ShapeContext): VoxelShape = SHAPE
+
+    override fun getCollisionShape(state: BlockState, world: BlockView, pos: BlockPos, context: ShapeContext): VoxelShape = SHAPE
+
+    override fun onUse(state: BlockState, world: World, pos: BlockPos, player: PlayerEntity, hit: BlockHitResult): ActionResult {
+        if (!world.isClient) player.sendMessage(Text.translatable("hha.tartaros.stele.${state.get(STORY)}").formatted(Formatting.GRAY, Formatting.ITALIC), false)
+        return ActionResult.SUCCESS
+    }
+
+    companion object {
+        val STORY: IntProperty = IntProperty.of("story", 0, 5)
+        private val SHAPE: VoxelShape = createCuboidShape(3.0, 0.0, 3.0, 13.0, 16.0, 13.0)
+    }
+}
+
+/** Das Siegel vor dem Thronsaal. Wer es berührt, klopft bei Hades an. */
+class HadesSealBlock(settings: Settings) : Block(settings) {
+    override fun onUse(state: BlockState, world: World, pos: BlockPos, player: PlayerEntity, hit: BlockHitResult): ActionResult {
+        if (world is ServerWorld && player is ServerPlayerEntity) {
+            val start = world.structureAccessor.getStructureContaining(pos, dev.henny.hha.world.HhaWorldgen.HADES_PALACE_TAG)
+            val piece = if (start.hasChildren()) start.children.firstOrNull() as? dev.henny.hha.world.TartarusPiece else null
+            if (piece != null) dev.henny.hha.logic.boss.HadesFights.start(player, piece.middle)
+        }
+        return ActionResult.SUCCESS
+    }
+}
+
 /** Kurzer Zugriff für Strukturen und Spielregeln. */
 fun pedestalState(slot: Int): BlockState = HhaBlocks.OFFERING_PEDESTAL.defaultState.with(OfferingPedestalBlock.SLOT, slot)

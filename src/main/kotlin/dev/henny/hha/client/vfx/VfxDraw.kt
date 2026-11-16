@@ -23,9 +23,30 @@ class Palette(val core: Int, val main: Int, val edge: Int, val alt: Int) {
             Vfx.Style.STORM to Palette(0xFFFFFFFF.toInt(), 0xFFA8D8FF.toInt(), 0xFF4A88C0.toInt(), 0xFFFFE27A.toInt()),
             Vfx.Style.HADES to Palette(0xFFE8FFD0.toInt(), 0xFF4CFF5A.toInt(), 0xFF0E7A2C.toInt(), 0xFF9CFF3C.toInt()),
             Vfx.Style.SHADOW to Palette(0xFF6A4FA0.toInt(), 0xFF2C2338.toInt(), 0xFF130E19.toInt(), 0xFF3CD6EF.toInt()),
+            // Kronos: Indigo mit sternweißem Kern (Leuchtmaske #6a7cff / #eef2ff).
+            Vfx.Style.AEON to Palette(0xFFEEF2FF.toInt(), 0xFF6A7CFF.toInt(), 0xFF26346C.toInt(), 0xFFB8C4FF.toInt()),
+        )
+
+        /**
+         * Gefahrenfarben (Plan 3.1) für Effekte eines Gegners ([Vfx.FLAG_DANGER]). Nur wo die normale Palette Gold
+         * trägt oder im Additiv-Licht verschwindet; alles andere bleibt wie [BY_STYLE]. Spieler-Fähigkeiten sehen
+         * diese Varianten nie.
+         */
+        private val DANGER = mapOf(
+            // Hermes I/II: Himmelblau-Weiß statt Gold-Weiß.
+            Vfx.Style.HEAVEN to Palette(0xFFFFFFFF.toInt(), 0xFFB8E2FF.toInt(), 0xFF4F8FD0.toInt(), 0xFFE6F4FF.toInt()),
+            // Hermes IV: Weißviolett.
+            Vfx.Style.STORM to Palette(0xFFFFFFFF.toInt(), 0xFFD8C2FF.toInt(), 0xFF7A4FC0.toInt(), 0xFFF0E6FF.toInt()),
+            // Kerkermeister: leuchtendes Violett (die Rauchpalette wäre additiv unsichtbar).
+            Vfx.Style.SHADOW to Palette(0xFFEADCFF.toInt(), 0xFFA27CFF.toInt(), 0xFF4A2C8A.toInt(), 0xFFC8B0FF.toInt()),
+            // Kein Gold im Akzent.
+            Vfx.Style.HELL to Palette(0xFFD8FDFF.toInt(), 0xFF3CD6EF.toInt(), 0xFF0B7690.toInt(), 0xFF8FF2FF.toInt()),
         )
 
         fun of(style: Vfx.Style): Palette = BY_STYLE.getValue(style)
+
+        /** Palette eines Gegner-Effekts: Gefahrenvariante, falls es eine gibt. Gold bleibt Gold. */
+        fun danger(style: Vfx.Style): Palette = DANGER[style] ?: of(style)
     }
 }
 
@@ -136,6 +157,48 @@ class VfxDraw(val consumers: VertexConsumerProvider, val camera: Camera, val tic
             vc.put(center.add(d1.multiply(outer)), u1, 1f, colorOuter)
             vc.put(center.add(d0.multiply(outer)), u0, 1f, colorOuter)
         }
+    }
+
+    /**
+     * Ringausschnitt in der Ebene aus [axisA]/[axisB] von Winkel [from] bis [to] (Bogenmaß, gemessen von [axisA] zu
+     * [axisB]): innen v=0, außen v=1, u läuft über den Bogen (mal [uTile]). [inner] = 0 ergibt einen Fächer.
+     */
+    fun arc(
+        layer: RenderLayer, center: Vec3d, axisA: Vec3d, axisB: Vec3d,
+        inner: Double, outer: Double, from: Double, to: Double, colorInner: Int, colorOuter: Int,
+        segments: Int = 32, uTile: Float = 1f, uOffset: Float = 0f,
+    ) {
+        val vc = buffer(layer)
+        for (i in 0 until segments) {
+            val a0 = from + (to - from) * i / segments
+            val a1 = from + (to - from) * (i + 1) / segments
+            val d0 = axisA.multiply(cos(a0)).add(axisB.multiply(sin(a0)))
+            val d1 = axisA.multiply(cos(a1)).add(axisB.multiply(sin(a1)))
+            val u0 = uOffset + uTile * i / segments
+            val u1 = uOffset + uTile * (i + 1) / segments
+            vc.put(center.add(d0.multiply(inner)), u0, 0f, colorInner)
+            vc.put(center.add(d1.multiply(inner)), u1, 0f, colorInner)
+            vc.put(center.add(d1.multiply(outer)), u1, 1f, colorOuter)
+            vc.put(center.add(d0.multiply(outer)), u0, 1f, colorOuter)
+        }
+    }
+
+    /**
+     * Flaches Band auf dem Boden von [from] nach [to] mit halber Breite [half] quer dazu (in der Ebene aus [across]):
+     * v=0 links, v=1 rechts, u entlang (Blöcke × [uScale]). Mit `uScale = 0` und `uOffset = 0.5` auf `GLOW_ADD`
+     * entsteht eine weiche Lichtlinie.
+     */
+    fun band(
+        layer: RenderLayer, from: Vec3d, to: Vec3d, across: Vec3d, half: Double, colorFrom: Int, colorTo: Int,
+        uScale: Float = 0f, uOffset: Float = 0.5f,
+    ) {
+        val vc = buffer(layer)
+        val side = across.multiply(half)
+        val u1 = uOffset + from.distanceTo(to).toFloat() * uScale
+        vc.put(from.subtract(side), uOffset, 0f, colorFrom)
+        vc.put(from.add(side), uOffset, 1f, colorFrom)
+        vc.put(to.add(side), u1, 1f, colorTo)
+        vc.put(to.subtract(side), u1, 0f, colorTo)
     }
 
     /** Stehender Ring (Zylindermantel): unten v=0, oben v=1. */

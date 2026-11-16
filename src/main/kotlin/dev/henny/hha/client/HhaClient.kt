@@ -83,6 +83,10 @@ class HhaClient : ClientModInitializer {
             )
         }
 
+        dev.henny.hha.client.cine.CinePlayer.skipKey = KeyBindingHelper.registerKeyBinding(
+            KeyBinding("key.hha.skip_cutscene", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_ENTER, category)
+        )
+
         ClientTickEvents.END_CLIENT_TICK.register { client ->
             CooldownHud.clientTick()
             client.world?.let { dev.henny.hha.client.vfx.VfxManager.tick(it) }

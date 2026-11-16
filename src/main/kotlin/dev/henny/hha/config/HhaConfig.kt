@@ -93,6 +93,7 @@ object HhaConfig {
         "hermes_max_hit" to 40.0,
         "hermes_health_per_player" to 0.6,
         "hermes_damage_per_player" to 0.2,
+        "hades_damage" to 1.0,
     )
 
     /** Alle bekannten Toggles (eingebaute + von Addons registrierte). */

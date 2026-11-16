@@ -20,7 +20,7 @@ import net.minecraft.util.Hand
 import net.minecraft.util.math.Vec3d
 import net.minecraft.world.World
 
-/** Animationszustände von Hermes; die Werte gehen über die Leitung. */
+/** Animationszustände von Hermes; die Werte gehen über die Leitung, also nur hinten anfügen. Zeiten: `BossTimings.Hermes`. */
 object HermesPose {
     const val IDLE = 0
     const val DASH = 1
@@ -35,6 +35,33 @@ object HermesPose {
     const val SNAP = 10
     const val FALL = 11
     const val LETTER = 12
+
+    /** Geduckt vor dem Kurierstoß; danach [DASH]. */
+    const val DASH_WINDUP = 13
+
+    /** Bremst nach dem letzten Stoß, rutscht auf ein Knie (offen). */
+    const val SKID = 14
+
+    /** Federfächer: zwei Würfe in einer Pose. */
+    const val FAN = 15
+
+    /** Rammt den Stab in den Boden (Die Zwillinge). */
+    const val PLANT = 16
+
+    /** Im Kurierstoß abgefangen (offen). */
+    const val STUMBLE = 17
+
+    /** Nach dem Sturmschlag: Stab steckt im Boden (offen). */
+    const val STUCK = 18
+
+    /** Stage IV: Sturzflug. */
+    const val DIVE = 19
+
+    /** Schatten: tritt aus der Rauchsäule und schlägt. */
+    const val SMOKE = 20
+
+    /** Schatten: schnippt den Obolus. */
+    const val COIN = 21
 }
 
 /** Hintergrund-Wesen des Bossfights: kein KI-Eigenleben, alles steuert [dev.henny.hha.logic.boss.HermesFight]. */
@@ -86,6 +113,7 @@ class HermesEntity(type: EntityType<out HermesEntity>, world: World) : PuppetEnt
         builder.add(VULNERABLE, true)
         builder.add(CORRUPTED, false)
         builder.add(GUIDE, false)
+        builder.add(LOOT, false)
     }
 
     var pose: Int
@@ -110,12 +138,15 @@ class HermesEntity(type: EntityType<out HermesEntity>, world: World) : PuppetEnt
         get() = dataTracker.get(CORRUPTED)
         set(value) = dataTracker.set(CORRUPTED, value)
 
-    /** Der Geleiter im Tartaros: nur eine Erscheinung, die niemand treffen kann. */
+    /** Hermes im Tartaros: eine Erscheinung, die man nicht töten, aber mit einem Treffer vertreiben kann. */
     var guide: Boolean
         get() = dataTracker.get(GUIDE)
         set(value) = dataTracker.set(GUIDE, value)
 
-    override fun canHit(): Boolean = !guide && super.canHit()
+    /** Diebesgriff: Hält er gerade die Beute-Kugel mit den gestohlenen Effekten in der linken Hand? */
+    var loot: Boolean
+        get() = dataTracker.get(LOOT)
+        set(value) = dataTracker.set(LOOT, value)
 
     private var lastPoseSeen = HermesPose.IDLE
 
@@ -137,7 +168,12 @@ class HermesEntity(type: EntityType<out HermesEntity>, world: World) : PuppetEnt
     }
 
     override fun damage(world: ServerWorld, source: DamageSource, amount: Float): Boolean {
-        if (guide) return false
+        if (guide) {
+            if (dev.henny.hha.logic.boss.HadesFights.of(world)?.onHermesStruck(this) != true) {
+                dev.henny.hha.logic.world.TartarosHunter.onStruck(this, world)
+            }
+            return false
+        }
         val fight = HermesFights.of(world) ?: run {
             discard()
             return false
@@ -154,6 +190,7 @@ class HermesEntity(type: EntityType<out HermesEntity>, world: World) : PuppetEnt
         private val VULNERABLE: TrackedData<Boolean> = DataTracker.registerData(HermesEntity::class.java, TrackedDataHandlerRegistry.BOOLEAN)
         private val CORRUPTED: TrackedData<Boolean> = DataTracker.registerData(HermesEntity::class.java, TrackedDataHandlerRegistry.BOOLEAN)
         private val GUIDE: TrackedData<Boolean> = DataTracker.registerData(HermesEntity::class.java, TrackedDataHandlerRegistry.BOOLEAN)
+        private val LOOT: TrackedData<Boolean> = DataTracker.registerData(HermesEntity::class.java, TrackedDataHandlerRegistry.BOOLEAN)
 
         fun attributes(): DefaultAttributeContainer.Builder = MobEntity.createMobAttributes()
             .add(EntityAttributes.MAX_HEALTH, 1000.0)
@@ -163,7 +200,13 @@ class HermesEntity(type: EntityType<out HermesEntity>, world: World) : PuppetEnt
     }
 }
 
-/** Eine der beiden Caduceus-Schlangen; den Körper rechnet der Client aus der Flugbahn. */
+/**
+ * Eine Caduceus-Schlange mit langem Körper; den Körper rechnet der Client aus der Flugbahn.
+ *
+ * Variante 0 (golden) und 1 (silberblau) gehören zu Hermes, mit [corrupted] zum Schatten. Seit Plan 4.1 sind sie
+ * **eine Attacke** („Die Zwillinge"), kein Gegner: keine Lebensleiste, keine Trefferzonen, nicht anvisierbar, kein
+ * Gift. Die Kampflogik bewegt nur den Kopf; Treffer prüft die Ansage der Attacke.
+ */
 class SerpentEntity(type: EntityType<out SerpentEntity>, world: World) : PuppetEntity(type, world) {
 
     override fun getHurtSound(source: DamageSource): net.minecraft.sound.SoundEvent? = dev.henny.hha.HhaSounds.HIT
@@ -172,7 +215,14 @@ class SerpentEntity(type: EntityType<out SerpentEntity>, world: World) : PuppetE
         super.initDataTracker(builder)
         builder.add(VARIANT, 0)
         builder.add(BITING, false)
+        builder.add(GIRTH, 1f)
+        builder.add(CORRUPTED, false)
     }
+
+    /** Dicke und Länge relativ zur Grundschlange. */
+    var girth: Float
+        get() = dataTracker.get(GIRTH)
+        set(value) = dataTracker.set(GIRTH, value)
 
     var variant: Int
         get() = dataTracker.get(VARIANT)
@@ -182,64 +232,22 @@ class SerpentEntity(type: EntityType<out SerpentEntity>, world: World) : PuppetE
         get() = dataTracker.get(BITING)
         set(value) = dataTracker.set(BITING, value)
 
-    /** Glieder-Positionen (aktuell und Vortick). Der Server rechnet sie mit, weil die Trefferzonen daran hängen. */
+    /** Schlange am Stab des Schattens: verkohlte Schuppen und grünes Licht statt Gold und Silber. */
+    var corrupted: Boolean
+        get() = dataTracker.get(CORRUPTED)
+        set(value) = dataTracker.set(CORRUPTED, value)
+
+    /** Glieder-Positionen (aktuell und Vortick), nur auf dem Client für den Renderer. */
     val body = ArrayList<Vec3d>()
     val bodyPrev = ArrayList<Vec3d>()
 
-    /** Nur auf dem Server: unsichtbare Trefferzonen entlang des Körpers und vor dem Kopf. */
-    private val parts = ArrayList<SerpentPartEntity>()
-
     override fun tick() {
         super.tick()
-        updateBody()
-        val world = entityWorld
-        if (world is ServerWorld) syncParts(world)
+        if (entityWorld !is ServerWorld) updateBody()
     }
 
-    /**
-     * Die Kollisionsbox einer Entität ist ein einziger Quader, der Drache aber fast 16 Blöcke lang. Darum tragen
-     * mitfliegende Teile die Treffer an den Kopf weiter, nach dem Muster der Enderdrachen-Teile.
-     */
-    private fun syncParts(world: ServerWorld) {
-        if (parts.isEmpty() && isAlive) {
-            val count = SEGMENTS / PART_STEP + 1
-            repeat(count + 1) { index ->
-                val part = dev.henny.hha.HhaEntities.SERPENT_PART.create(world, net.minecraft.entity.SpawnReason.EVENT) ?: return
-                part.owner = this
-                // Index 0 ist die Schnauze, dann vom Hals zum Schwanz immer schmaler.
-                val taper = if (index == 0) 1.1f else (1.7f * (1f - (index.toFloat() / count) * 0.62f))
-                part.size = taper
-                part.setPosition(entityPos)
-                world.spawnEntity(part)
-                parts.add(part)
-            }
-        }
-        val radians = Math.toRadians(yaw.toDouble())
-        for ((index, part) in parts.withIndex()) {
-            val anchor = if (index == 0) {
-                entityPos.add(-kotlin.math.sin(radians) * 1.05, 0.64, kotlin.math.cos(radians) * 1.05)
-            } else {
-                val at = ((index - 1) * PART_STEP + PART_STEP / 2).coerceAtMost(body.size - 1)
-                body[at].add(0.0, 0.64, 0.0)
-            }
-            part.setPosition(anchor.x, anchor.y - part.size / 2.0, anchor.z)
-        }
-    }
-
-    private fun clearParts() {
-        for (part in parts) part.discard()
-        parts.clear()
-    }
-
-    override fun remove(reason: RemovalReason) {
-        clearParts()
-        super.remove(reason)
-    }
-
-    override fun onDeath(source: DamageSource) {
-        clearParts()
-        super.onDeath(source)
-    }
+    override fun canHit(): Boolean = false
+    override fun isAttackable(): Boolean = false
 
     private fun updateBody() {
         val head = entityPos
@@ -251,36 +259,40 @@ class SerpentEntity(type: EntityType<out SerpentEntity>, world: World) : PuppetE
         }
         for (i in body.indices) bodyPrev[i] = body[i]
         var previous = head
+        val spacing = SPACING * girth
         for (i in body.indices) {
             val offset = body[i].subtract(previous)
             val distance = offset.length()
-            if (distance > SPACING) {
-                body[i] = previous.add(offset.multiply(SPACING / distance))
+            if (distance > spacing) {
+                body[i] = previous.add(offset.multiply(spacing / distance))
             }
             previous = body[i]
         }
     }
 
     override fun damage(world: ServerWorld, source: DamageSource, amount: Float): Boolean {
-        val fight = HermesFights.of(world) ?: run {
-            discard()
-            return false
-        }
-        if (!fight.canHurtMinions()) return false
-        val result = super.damage(world, source, amount.coerceAtMost(30f))
-        if (result && health <= 0f) fight.onSerpentDied(this)
-        return result
+        // Eine Attacke nimmt keinen Schaden. Ohne laufenden Kampf (z. B. nach einem Absturz) räumt sie sich weg.
+        if (HermesFights.of(world) == null) discard()
+        return false
+    }
+
+    override fun getBaseDimensions(pose: net.minecraft.entity.EntityPose): net.minecraft.entity.EntityDimensions =
+        super.getBaseDimensions(pose).scaled(girth)
+
+    override fun onTrackedDataSet(data: TrackedData<*>) {
+        super.onTrackedDataSet(data)
+        if (data == GIRTH) calculateDimensions()
     }
 
     companion object {
         const val SEGMENTS = 38
         const val SPACING = 0.42
 
-        /** Alle wie viele Glieder eine Trefferzone sitzt. */
-        const val PART_STEP = 3
+        private val GIRTH: TrackedData<Float> = DataTracker.registerData(SerpentEntity::class.java, TrackedDataHandlerRegistry.FLOAT)
 
         private val VARIANT: TrackedData<Int> = DataTracker.registerData(SerpentEntity::class.java, TrackedDataHandlerRegistry.INTEGER)
         private val BITING: TrackedData<Boolean> = DataTracker.registerData(SerpentEntity::class.java, TrackedDataHandlerRegistry.BOOLEAN)
+        private val CORRUPTED: TrackedData<Boolean> = DataTracker.registerData(SerpentEntity::class.java, TrackedDataHandlerRegistry.BOOLEAN)
 
         fun attributes(): DefaultAttributeContainer.Builder = MobEntity.createMobAttributes()
             .add(EntityAttributes.MAX_HEALTH, 120.0)
@@ -288,52 +300,30 @@ class SerpentEntity(type: EntityType<out SerpentEntity>, world: World) : PuppetE
     }
 }
 
-/** Unsichtbare Trefferzone einer Schlange; jeder Schaden geht direkt an den Kopf. */
-class SerpentPartEntity(type: EntityType<out SerpentPartEntity>, world: World) : net.minecraft.entity.Entity(type, world) {
-
-    var owner: SerpentEntity? = null
-
-    init {
-        setNoGravity(true)
-        noClip = true
-    }
+/**
+ * Herma — Grenzstein mit Hermes-Büste für den Herma-Sprung (Plan 4.2): Hermes springt von Stein zu Stein, der Zielstein
+ * glüht ([lit]). Wer ihn vorher zerschlägt, lässt ihn abstürzen. Keine Unverwundbarkeit, keine Strafe.
+ */
+class HermaEntity(type: EntityType<out HermaEntity>, world: World) : PuppetEntity(type, world) {
 
     override fun initDataTracker(builder: DataTracker.Builder) {
-        builder.add(SIZE, 1.4f)
+        super.initDataTracker(builder)
+        builder.add(LIT, false)
     }
 
-    var size: Float
-        get() = dataTracker.get(SIZE)
-        set(value) = dataTracker.set(SIZE, value)
+    /** Herma-Sprung: Dieser Stein ist das nächste Ziel von Hermes; das Caduceus-Relief am Schaft leuchtet. */
+    var lit: Boolean
+        get() = dataTracker.get(LIT)
+        set(value) = dataTracker.set(LIT, value)
+
+    /** Nur auf dem Client: wann [lit] zuletzt gewechselt hat (für Pulsieren und das Herumdrehen der Büste). */
+    var litChangedAge = 0
+        private set
 
     override fun onTrackedDataSet(data: TrackedData<*>) {
         super.onTrackedDataSet(data)
-        if (data == SIZE) calculateDimensions()
+        if (data == LIT && entityWorld.isClient) litChangedAge = age
     }
-
-    override fun getDimensions(pose: net.minecraft.entity.EntityPose): net.minecraft.entity.EntityDimensions =
-        net.minecraft.entity.EntityDimensions.changing(size, size)
-
-    override fun tick() {
-        super.tick()
-        val world = entityWorld
-        if (world is ServerWorld && owner?.isAlive != true) discard()
-    }
-
-    override fun canHit(): Boolean = true
-    override fun isPushable(): Boolean = false
-    override fun damage(world: ServerWorld, source: DamageSource, amount: Float): Boolean = owner?.damage(world, source, amount) ?: false
-    override fun readCustomData(view: ReadView) {}
-    override fun writeCustomData(view: WriteView) {}
-    override fun shouldSave(): Boolean = false
-
-    private companion object {
-        val SIZE: TrackedData<Float> = DataTracker.registerData(SerpentPartEntity::class.java, TrackedDataHandlerRegistry.FLOAT)
-    }
-}
-
-/** Herma — Grenzstein mit Hermes-Büste. Solange Steine stehen, kann Hermes zwischen ihnen springen. */
-class HermaEntity(type: EntityType<out HermaEntity>, world: World) : PuppetEntity(type, world) {
 
     override fun damage(world: ServerWorld, source: DamageSource, amount: Float): Boolean {
         val fight = HermesFights.of(world) ?: run {
@@ -347,6 +337,8 @@ class HermaEntity(type: EntityType<out HermaEntity>, world: World) : PuppetEntit
     }
 
     companion object {
+        private val LIT: TrackedData<Boolean> = DataTracker.registerData(HermaEntity::class.java, TrackedDataHandlerRegistry.BOOLEAN)
+
         fun attributes(): DefaultAttributeContainer.Builder = MobEntity.createMobAttributes()
             .add(EntityAttributes.MAX_HEALTH, 50.0)
             .add(EntityAttributes.KNOCKBACK_RESISTANCE, 1.0)

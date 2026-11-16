@@ -1,0 +1,22 @@
+{
+  "variants": {
+    "story=0": {
+      "model": "hha:block/stele"
+    },
+    "story=1": {
+      "model": "hha:block/stele"
+    },
+    "story=2": {
+      "model": "hha:block/stele"
+    },
+    "story=3": {
+      "model": "hha:block/stele"
+    },
+    "story=4": {
+      "model": "hha:block/stele"
+    },
+    "story=5": {
+      "model": "hha:block/stele"
+    }
+  }
+}

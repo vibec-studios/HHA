@@ -84,6 +84,8 @@ data class VfxPayload(
     val life: Int,
     val entity: Int,
     val entity2: Int,
+    /** Bits aus `Vfx.FLAG_*`, z. B. [dev.henny.hha.logic.Vfx.FLAG_DANGER] = Gefahrenpalette (Effekt eines Gegners). */
+    val flags: Int = 0,
 ) : CustomPayload {
 
     override fun getId(): CustomPayload.Id<out CustomPayload> = ID
@@ -105,6 +107,7 @@ data class VfxPayload(
                 buf.writeVarInt(value.life)
                 buf.writeVarInt(value.entity)
                 buf.writeVarInt(value.entity2)
+                buf.writeVarInt(value.flags)
             },
             { buf ->
                 VfxPayload(
@@ -113,6 +116,7 @@ data class VfxPayload(
                     buf.readDouble(), buf.readDouble(), buf.readDouble(),
                     buf.readFloat(), buf.readFloat(),
                     buf.readVarInt(), buf.readVarInt(), buf.readVarInt(),
+                    buf.readVarInt(),
                 )
             },
         )
@@ -138,10 +142,21 @@ data class CinePayload(val op: Int, val numbers: List<Double>, val texts: List<S
     }
 }
 
+/** C2S-Payload: Der Spieler hat die Überspringen-Taste einer Cutscene lange genug gehalten. */
+// Ein Objekt statt einer Klasse: PacketCodec.unit kodiert nur genau die Instanz, mit der er gebaut wurde.
+object CineSkipPayload : CustomPayload {
+
+    val ID = CustomPayload.Id<CineSkipPayload>(Hha.id("cine_skip"))
+    val CODEC: PacketCodec<RegistryByteBuf, CineSkipPayload> = PacketCodec.unit(CineSkipPayload)
+
+    override fun getId(): CustomPayload.Id<out CustomPayload> = ID
+}
+
 object HhaNetworking {
 
     fun init() {
         PayloadTypeRegistry.playC2S().register(AbilityPayload.ID, AbilityPayload.CODEC)
+        PayloadTypeRegistry.playC2S().register(CineSkipPayload.ID, CineSkipPayload.CODEC)
         PayloadTypeRegistry.playS2C().register(UltraHudPayload.ID, UltraHudPayload.CODEC)
         PayloadTypeRegistry.playS2C().register(ConfigSyncPayload.ID, ConfigSyncPayload.CODEC)
         PayloadTypeRegistry.playS2C().register(VfxPayload.ID, VfxPayload.CODEC)
@@ -149,6 +164,10 @@ object HhaNetworking {
 
         ServerPlayConnectionEvents.JOIN.register { _, sender, _ ->
             sender.sendPacket(ConfigSyncPayload(HhaConfig.numbersSnapshot()))
+        }
+
+        ServerPlayNetworking.registerGlobalReceiver(CineSkipPayload.ID) { _, context ->
+            dev.henny.hha.logic.boss.Cine.requestSkip(context.player())
         }
 
         ServerPlayNetworking.registerGlobalReceiver(AbilityPayload.ID) { payload, context ->

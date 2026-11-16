@@ -92,6 +92,27 @@ object HhaCommands {
                                         0
                                     }
                                 }
+                                // Mit Stil: so, wie der Effekt im Kampf aussieht (Gefahrenfarbe, Effekt-Regeln), z. B. "/hha vfx shockwave aeon".
+                                .then(
+                                    argument("style", StringArgumentType.word())
+                                        .suggests { _, builder -> CommandSource.suggestMatching(dev.henny.hha.logic.VfxDemo.STYLES, builder) }
+                                        .executes { ctx ->
+                                            val name = StringArgumentType.getString(ctx, "name")
+                                            val styleName = StringArgumentType.getString(ctx, "style")
+                                            val style = dev.henny.hha.logic.Vfx.Style.entries.firstOrNull { it.name.equals(styleName, ignoreCase = true) }
+                                            when {
+                                                style == null -> {
+                                                    ctx.source.sendError(Text.literal("Unbekannter Stil: $styleName"))
+                                                    0
+                                                }
+                                                dev.henny.hha.logic.VfxDemo.play(ctx.source.playerOrThrow, name, style) -> 1
+                                                else -> {
+                                                    ctx.source.sendError(Text.literal("Unbekannter Effekt: $name"))
+                                                    0
+                                                }
+                                            }
+                                        }
+                                )
                         )
                     )
                     .then(literal("list").requires(ADMIN).executes { ctx ->

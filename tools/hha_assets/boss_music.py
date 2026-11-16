@@ -481,7 +481,64 @@ def shade():
     return s.render()
 
 
-THEMES = {'messenger': messenger, 'thief': thief, 'guide': guide, 'finale': finale, 'shade': shade}
+def hades():
+    """Hades: 104 bpm und unerschütterlich. Kein Leitmotiv von Hermes, sondern ein eigener, absteigender Viertonschritt."""
+    s = Score(104, 44 * 4)
+    throne = [DM, BB, CMIN, DM, EB, BB, A, DM]
+    descent = [(0, 'D4', 2), (2, 'C4', 2), (4, 'Bb3', 2), (6, 'A3', 2)]
+    reply = [(0, 'F4', 1.5), (1.5, 'E4', .5), (2, 'D4', 2), (4, 'Eb4', 2), (6, 'D4', 2)]
+    high = [(0, 'A5', 3), (3, 'Bb5', 1), (4, 'A5', 2), (6, 'F5', 2), (8, 'E5', 3), (11, 'F5', 1), (12, 'D5', 4)]
+    march = [(0, low, 1.0), (1, mid, 0.4), (2, low, 0.75), (3, mid, 0.5), (3.5, small, 0.35)]
+
+    # Einleitung: eine Glocke, tiefer Chor, dann setzt der Schritt ein.
+    for beat in range(0, 176, 8):
+        s.mix.add(s.at(beat), bell(hz('D2'), 6.0), 0.34, 0.6)
+    s.choir_pad(0, [DM, DM, BB, DM], 4, octave=2, gain=0.3, vowel='u')
+    s.bass(0, [DM, DM, BB, DM], 4, gain=0.32)
+    s.drums(8, 2, march, 0.6)
+    s.rise(16, gain=0.45)
+
+    # A: Blech in der Tiefe, der Abstieg wiederholt sich wie ein Urteil.
+    for start in (16, 48):
+        s.choir_pad(start, throne * 2, 4 if start == 16 else 4, octave=2, gain=0.24, vowel='o')
+        s.pad(start, throne * 2, 4, octave=2, gain=0.15, bright=0.5)
+        s.bass(start, throne * 2, 4, gain=0.34)
+        s.ostinato(start, throne * 2, 4, step=1.0, gain=0.3, pattern=(0, 0, 2, 0))
+        s.drums(start, 8, march)
+        for offset in (0, 16):
+            s.melody(start + offset, descent, brass, 0.36, octave=-1)
+            s.melody(start + offset + 8, reply, brass, 0.34, octave=-1)
+        s.crash(start, 0.4)
+
+    # B: Hoch über allem klagen die Stimmen, die er besitzt.
+    s.choir_pad(80, throne * 2, 4, octave=3, gain=0.2)
+    s.pad(80, throne * 2, 4, gain=0.15, bright=0.8)
+    s.bass(80, throne * 2, 4, gain=0.34)
+    s.ostinato(80, throne * 2, 4, step=0.5, gain=0.24, pattern=(0, 0, 0, 2, 0, 0, 1, 0))
+    s.melody(80, high, lambda f, d: choir(f, d, 'a'), 0.26)
+    s.melody(96, high, lambda f, d: choir(f, d, 'a'), 0.26)
+    s.melody(96, high, brass, 0.2, octave=-1)
+    s.drums(80, 8, march, 1.1)
+
+    # Klimax: alles zugleich, in voller Schwere.
+    s.rise(112, gain=0.55)
+    s.choir_pad(112, throne * 3, 4, octave=3, gain=0.2)
+    s.choir_pad(112, throne * 3, 4, octave=2, gain=0.22, vowel='o')
+    s.pad(112, throne * 3, 4, gain=0.18, bright=1.1)
+    s.bass(112, throne * 3, 4, gain=0.36)
+    s.ostinato(112, throne * 3, 4, step=0.5, gain=0.3, pattern=(0, 0, 2, 0, 0, 1, 2, 0))
+    s.drums(112, 12, march, 1.25)
+    for offset in (112, 128, 144):
+        s.melody(offset, descent, brass, 0.4)
+        s.melody(offset, descent, brass, 0.3, octave=-1)
+        s.melody(offset + 8, reply, brass, 0.38)
+    s.crash(112, 0.6)
+    s.crash(144, 0.55)
+    s.rise(176, gain=0.3)
+    return s.render()
+
+
+THEMES = {'messenger': messenger, 'thief': thief, 'guide': guide, 'finale': finale, 'shade': shade, 'hades': hades}
 
 
 def main():

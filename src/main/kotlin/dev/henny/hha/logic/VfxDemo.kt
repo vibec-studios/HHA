@@ -49,8 +49,25 @@ object VfxDemo {
         "spear" to { w, _, front, _ -> Vfx.spear(w, Vfx.Style.GOLD, front, 40f, 1f, 80) },
         "feathers" to { w, _, front, _ -> Vfx.feathers(w, Vfx.Style.HEAVEN, front.add(0.0, 1.5, 0.0), 40, 1.5f, 60) },
         "telegraph" to { w, p, front, dir ->
-            Vfx.telegraphRing(w, Vfx.Style.GOLD, front, 5f, 60)
-            Vfx.telegraphLine(w, Vfx.Style.HEAVEN, p.entityPos.add(dir.multiply(2.0)).add(3.0, 0.0, 0.0), front.add(dir.multiply(10.0)).add(3.0, 0.0, 0.0), 1.4f, 60)
+            Vfx.telegraphRingRaw(w, Vfx.Style.GOLD, front, 5f, 0f, 60)
+            Vfx.telegraphLineRaw(w, Vfx.Style.HEAVEN, p.entityPos.add(dir.multiply(2.0)).add(3.0, 0.0, 0.0), front.add(dir.multiply(10.0)).add(3.0, 0.0, 0.0), 0.8f, 60)
+        },
+        // Ansagen (Plan 3.2): Rand ab Tick 0, Füllung wächst bis zum Treffer, die letzten 4 Ticks weiß.
+        "telegraph_ring" to { w, _, front, _ -> Vfx.telegraphRingRaw(w, Vfx.Style.HADES, front, 6f, 0f, 40) },
+        "telegraph_wave" to { w, p, _, _ -> Vfx.telegraphRingRaw(w, Vfx.Style.HEAVEN, p.entityPos, 14f, 11f, 40) },
+        "telegraph_line" to { w, p, front, flat ->
+            Vfx.telegraphLineRaw(w, Vfx.Style.SOUL, p.entityPos.add(flat.multiply(2.0)), front.add(flat.multiply(10.0)), 1.1f, 40)
+        },
+        "telegraph_cone" to { w, p, _, flat -> Vfx.telegraphConeRaw(w, Vfx.Style.AEON, p.entityPos.add(flat.multiply(1.5)), flat, 11f, 50f, 50) },
+        "telegraph_safe" to { w, _, front, _ ->
+            Vfx.telegraphRingRaw(w, Vfx.Style.HADES, front, 12f, 3f, 60)
+            Vfx.telegraphRingRaw(w, Vfx.Style.GOLD, front, 3f, 0f, 60, forceStyle = true)
+        },
+        // Kronos' Farbe: Kegel und Kreis als Ansage, daneben ein Einschlag in Äon-Indigo.
+        "aeon" to { w, p, front, flat ->
+            Vfx.telegraphConeRaw(w, Vfx.Style.AEON, p.entityPos.add(flat.multiply(1.5)), flat, 9f, 100f, 40)
+            Vfx.telegraphRingRaw(w, Vfx.Style.AEON, front.add(flat.multiply(6.0)), 4f, 0f, 40)
+            Vfx.shockwave(w, Vfx.Style.AEON, front.add(flat.multiply(6.0)).add(flat.crossProduct(Vec3d(0.0, 1.0, 0.0)).multiply(7.0)), 6f, 24, 2f)
         },
         "rings" to { w, p, _, _ -> Vfx.orbitRings(w, Vfx.Style.GOLD, p, 1.25f, 80) },
         "storm_clouds" to { w, p, _, _ ->
@@ -67,14 +84,37 @@ object VfxDemo {
 
     val NAMES: Set<String> get() = ACTIONS.keys
 
-    /** @return false, wenn es den Effekt nicht gibt. */
-    fun play(player: ServerPlayerEntity, name: String): Boolean {
+    /** Stilnamen für die Vorschau mit Stil, klein geschrieben. */
+    val STYLES: List<String> get() = Vfx.Style.entries.map { it.name.lowercase() }
+
+    /**
+     * Spielt die Vorschau [name] ab.
+     *
+     * Mit [style] läuft sie **wie im Kampf**: alles in diesem Stil, Gefahrenfarben auf dem Client und die
+     * Effekt-Regeln aus Plan 3.3 (ein Flächeneffekt je Treffer, Rütteln und Blitz begrenzt). Ohne [style] sieht man
+     * den Effekt so, wie ihn die Fähigkeiten der Spieler zeigen. Ansagen tragen immer ihre Gefahrenfarbe.
+     * Die Ansage-Vorschauen bekommen die flache Blickrichtung, die anderen den vollen Blick.
+     *
+     * @return false, wenn es den Effekt nicht gibt.
+     */
+    fun play(player: ServerPlayerEntity, name: String, style: Vfx.Style? = null): Boolean {
         val action = ACTIONS[name] ?: return false
         val world = player.entityWorld as? ServerWorld ?: return false
         val rotation = player.getRotationVec(1.0f)
         val flat = Vec3d(rotation.x, 0.0, rotation.z).let { if (it.lengthSquared() < 1e-4) Vec3d(0.0, 0.0, 1.0) else it.normalize() }
         val front = player.entityPos.add(flat.multiply(8.0))
-        action(world, player, front, rotation)
+        val dir = if (name.startsWith("telegraph_") || name == "aeon") flat else rotation
+        if (style == null) {
+            action(world, player, front, dir)
+            return true
+        }
+        val previous = Vfx.styleOverride
+        Vfx.styleOverride = style
+        try {
+            dev.henny.hha.logic.boss.Telegraph.open(world, "vfx", style) { listOf(player) }.during { action(world, player, front, dir) }
+        } finally {
+            Vfx.styleOverride = previous
+        }
         return true
     }
 }

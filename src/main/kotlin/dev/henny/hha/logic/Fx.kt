@@ -12,6 +12,15 @@ import kotlin.math.sin
 /** Gemeinsame Effekt- und Bewegungs-Helfer. */
 object Fx {
 
+    /** Vanilla-Partikel je Stoß im Kampf (Plan 3.3); [spawn] kappt im Kampf-Scope darauf, [burst] immer. */
+    const val BURST_MAX = 24
+
+    /** Dauer-Emitter im Kampf: höchstens so viele Partikel je Tick … (Plan 3.3, vom Kampf selbst einzuhalten) */
+    const val EMITTER_MAX_PER_TICK = 4
+
+    /** … und höchstens so viele Emitter gleichzeitig. */
+    const val EMITTERS_MAX = 2
+
     /**
      * Effekt-Partikel (Fähigkeiten, Treffer, Explosionen): skaliert mit dem
      * Config-Wert `particle_effects` (1 = alles, 0 = aus). Bei Werten unter 1
@@ -30,11 +39,22 @@ object Fx {
         dz: Double,
         speed: Double,
     ) {
-        val scaled = scaledCount(world, count, "particle_effects")
+        if (dev.henny.hha.logic.boss.Cine.muted) return
+        // Im Kampf (Effekte des Gegners) höchstens [BURST_MAX] je Stoß; Cutscenes dürfen mehr.
+        val fight = dev.henny.hha.logic.boss.Telegraph.current
+        val capped = if (fight != null && !fight.inCutscene()) count.coerceAtMost(BURST_MAX) else count
+        val scaled = scaledCount(world, capped, "particle_effects")
         if (scaled > 0) {
             world.spawnParticles(particle, x, y, z, scaled, dx, dy, dz, speed)
         }
     }
+
+    /**
+     * Ein Partikelstoß eines Gegners (Treffer, Schritt, Sog): immer höchstens [BURST_MAX] Partikel, skaliert mit
+     * `particle_effects`. [spread] ist die Streuung in alle Richtungen.
+     */
+    fun burst(world: ServerWorld, particle: ParticleEffect, at: Vec3d, count: Int, spread: Double = 0.4, speed: Double = 0.02) =
+        spawn(world, particle, at.x, at.y, at.z, count.coerceAtMost(BURST_MAX), spread, spread, spread, speed)
 
     /** Idle-Partikel am Spieler (Orbit-Glühen, Rüstungsflammen, Halo …): skaliert mit `particle_player`. */
     fun spawnAmbient(
@@ -86,7 +106,49 @@ object Fx {
      * `velocityDirty` allein schickt das Paket nur an andere Spieler — der
      * eigene Client würde die Bewegung sonst nie erfahren.
      */
+    /**
+     * Spieler, die gerade k.o. aus einem Kampf geworfen wurden: Der tödliche Treffer läuft im selben Aufruf weiter
+     * (Rückstoß, Wither, Slowness …). Das soll sie am Rückkehrort nicht mehr erreichen. Wert: der Server und dessen
+     * Tick-Zähler, bis zu dem das gilt. Ein anderer Server (neue Welt im selben Spiel) oder ein Zähler, der nicht passt,
+     * hebt den Schutz auf; Logout und Server-Stopp leeren die Tabelle ([forget], [clearShields]).
+     */
+    private class Shield(val server: net.minecraft.server.MinecraftServer, val until: Int)
+
+    private val shielded = HashMap<java.util.UUID, Shield>()
+
+    /** Schützt [player] für [ticks] Server-Ticks vor Folge-Effekten von Angriffen (vom Kampf beim K.o. aufgerufen). */
+    fun shield(player: ServerPlayerEntity, ticks: Int = 10) {
+        val server = (player.entityWorld as? ServerWorld)?.server ?: return
+        shielded[player.uuid] = Shield(server, server.ticks + ticks)
+    }
+
+    /** Darf ein Angriff [player] noch Rückstoß oder Statuseffekte geben (lebt, verbunden, nicht gerade k.o. gegangen)? */
+    fun canAffect(player: ServerPlayerEntity): Boolean {
+        if (!player.isAlive || player.isRemoved || player.isDisconnected) return false
+        val shield = shielded[player.uuid] ?: return true
+        val server = (player.entityWorld as? ServerWorld)?.server
+        // Restzeit als Differenz: bleibt auch beim Überlauf des Int-Zählers richtig.
+        val remaining = if (server === shield.server) shield.until - server.ticks else -1
+        if (remaining !in 0..40) {
+            shielded.remove(player.uuid)
+            return true
+        }
+        return false
+    }
+
+    /** Logout: Schutz vergessen. */
+    fun forget(player: ServerPlayerEntity) {
+        shielded.remove(player.uuid)
+    }
+
+    /** Server fährt herunter: alle Schutz-Einträge vergessen. */
+    fun clearShields() {
+        shielded.clear()
+    }
+
     fun launchPlayer(player: ServerPlayerEntity, velocity: Vec3d) {
+        // Gemerkte Ziele können inzwischen tot, ausgeloggt, k.o. oder in einer anderen Welt sein (Abläufe warten oft Ticks).
+        if (!canAffect(player)) return
         player.velocity = velocity
         player.velocityDirty = true
         player.networkHandler.sendPacket(EntityVelocityUpdateS2CPacket(player))

@@ -7,6 +7,7 @@
       "explodes": true
     },
     "minecraft:gameplay/can_start_raid": false,
+    "minecraft:gameplay/piglins_zombify": false,
     "minecraft:gameplay/respawn_anchor_works": false,
     "minecraft:gameplay/snow_golem_melts": true,
     "minecraft:visual/sun_angle": 180.0,

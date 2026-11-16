@@ -81,6 +81,7 @@ object CinePlayer {
         when (payload.op) {
             Cine.OP_START -> begin()
             Cine.OP_END -> finish()
+            Cine.OP_RESET -> reset()
             Cine.OP_CAMERA -> {
                 shot = LineShot(
                     Vec3d(n[0], n[1], n[2]), Vec3d(n[3], n[4], n[5]), Vec3d(n[6], n[7], n[8]), Vec3d(n[9], n[10], n[11]),
@@ -115,6 +116,12 @@ object CinePlayer {
             Cine.OP_WINGS -> messengerWings = n[0] > 0.5
             Cine.OP_MUSIC -> setTheme(payload.texts[0])
             Cine.OP_CLEAR_VFX -> dev.henny.hha.client.vfx.VfxManager.clear()
+            Cine.OP_CUT -> cut()
+            Cine.OP_PHASE_BAR -> PhaseBar.handle(n, payload.texts)
+            Cine.OP_SKIP_VOTES -> {
+                skipVotes = n[0].toInt()
+                skipTotal = n[1].toInt()
+            }
         }
     }
 
@@ -141,12 +148,57 @@ object CinePlayer {
         theme = ThemeSound(event).also { client.soundManager.play(it) }
     }
 
+    /** Die Taste fürs Überspringen, von HhaClient gesetzt. */
+    var skipKey: net.minecraft.client.option.KeyBinding? = null
+    private var skipHeld = 0
+    private var skipSent = false
+    private var skipVotes = 0
+    private var skipTotal = 0
+
+    private fun tickSkip() {
+        val key = skipKey
+        val client = MinecraftClient.getInstance()
+        // Der Tastendruck zählt nur über das Halten. Aufgelaufene Klicks verwerfen, sonst löst ein alter Druck später aus.
+        while (key?.wasPressed() == true) Unit
+        val held = active && key != null && client.currentScreen == null && key.isPressed
+        if (!held) {
+            skipHeld = 0
+            skipSent = false
+            return
+        }
+        if (skipHeld < SKIP_HOLD_TICKS) skipHeld++
+        if (skipHeld >= SKIP_HOLD_TICKS && !skipSent) {
+            skipSent = true
+            net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.send(dev.henny.hha.net.CineSkipPayload)
+        }
+    }
+
+    /** Die Szene wurde übersprungen: alles Laufende aus, und aus Schwarz wieder aufblenden. */
+    private fun cut() {
+        val client = MinecraftClient.getInstance()
+        voice?.let { client.soundManager.stop(it) }
+        voice = null
+        speaking = false
+        line = null
+        title = null
+        skipVotes = 0
+        skipTotal = 0
+        dev.henny.hha.client.vfx.VfxManager.clear()
+        fadeColor = 0
+        fadeFrom = 1.0
+        fadeTo = 0.0
+        fadeTicks = 16
+        fadeAge = 0
+    }
+
     private fun begin() {
         val client = MinecraftClient.getInstance()
         if (!active) previousPerspective = client.options.perspective
         client.options.perspective = Perspective.THIRD_PERSON_BACK
         active = true
         shot = null
+        skipVotes = 0
+        skipTotal = 0
     }
 
     private fun finish() {
@@ -160,6 +212,13 @@ object CinePlayer {
 
     fun reset() {
         finish()
+        // Auch die laufende Sprachzeile und die Effekte der Szene enden (Ausscheiden, Verbindungsende).
+        voice?.let { MinecraftClient.getInstance().soundManager.stop(it) }
+        voice = null
+        speaking = false
+        skipVotes = 0
+        skipTotal = 0
+        dev.henny.hha.client.vfx.VfxManager.clear()
         messengerWings = false
         setTheme("")
         title = null
@@ -167,12 +226,15 @@ object CinePlayer {
         fadeFrom = 0.0
         fadeTo = 0.0
         bars = 0f
+        PhaseBar.reset()
     }
 
     fun tick() {
+        PhaseBar.tick()
         // Vanilla-Musik soll das Bossthema nicht überlagern.
         if (theme != null) MinecraftClient.getInstance().musicTracker.stop()
         bars = (bars + if (active) 0.08f else -0.08f).coerceIn(0f, 1f)
+        tickSkip()
         if (shot != null) shotAge++
         line?.let {
             val before = visibleChars(it)
@@ -222,6 +284,8 @@ object CinePlayer {
             Cine.SPEAKER_HERMES -> 1.05f + (System.nanoTime() % 5L) * 0.03f
             Cine.SPEAKER_ZEUS -> 0.5f + (System.nanoTime() % 3L) * 0.02f
             Cine.SPEAKER_SHADE -> 0.72f + (System.nanoTime() % 4L) * 0.02f
+            Cine.SPEAKER_HADES -> 0.46f + (System.nanoTime() % 3L) * 0.02f
+            Cine.SPEAKER_KRONOS -> 0.36f + (System.nanoTime() % 3L) * 0.02f
             else -> return
         }
         client.soundManager.play(PositionedSoundInstance.ui(HhaSounds.VOICE, pitch, if (speaker == Cine.SPEAKER_ZEUS) 0.9f else 0.45f))
@@ -284,6 +348,7 @@ object CinePlayer {
         }
         line?.let { renderLine(context, it, width, height) }
         title?.let { renderTitle(context, it, width, height, tickDelta) }
+        if (active) renderSkipHint(context, width, height, tickDelta)
         if (fadeTicks > 0) {
             val t = ((fadeAge + tickDelta) / fadeTicks).coerceIn(0f, 1f).toDouble()
             val alpha = MathHelper.lerp(t, fadeFrom, fadeTo).toFloat()
@@ -292,6 +357,25 @@ object CinePlayer {
             }
         }
         if (active) dev.henny.hha.client.vfx.ScreenFx.renderOverlay(context)
+        else PhaseBar.render(context, tickDelta)
+    }
+
+    /** Rechts unten in der Letterbox: welche Taste, wie lange noch, und wer schon überspringen will. */
+    private fun renderSkipHint(context: DrawContext, width: Int, height: Int, tickDelta: Float) {
+        val key = skipKey ?: return
+        if (bars < 0.6f || key.isUnbound) return
+        val client = MinecraftClient.getInstance()
+        val font = client.textRenderer
+        val text = if (skipTotal > 1) Text.translatable("hha.cine.skip.votes", key.boundKeyLocalizedText, skipVotes, skipTotal)
+        else Text.translatable("hha.cine.skip", key.boundKeyLocalizedText)
+        val textWidth = font.getWidth(text)
+        val x = width - textWidth - 10
+        val y = height - 14
+        context.drawTextWithShadow(font, text, x, y, 0xB0F0EAD8.toInt())
+        if (skipHeld > 0) {
+            val progress = ((skipHeld + (if (skipHeld < SKIP_HOLD_TICKS) tickDelta else 0f)) / SKIP_HOLD_TICKS).coerceIn(0f, 1f)
+            context.fill(x, y + 10, x + (textWidth * progress).toInt(), y + 11, 0xFFFFD75A.toInt())
+        }
     }
 
     private fun renderLine(context: DrawContext, l: Line, width: Int, height: Int) {
@@ -312,6 +396,8 @@ object CinePlayer {
             Cine.SPEAKER_HERMES -> Text.translatable("hha.hermes.speaker.hermes") to 0xFFD75A
             Cine.SPEAKER_ZEUS -> Text.translatable("hha.hermes.speaker.zeus") to 0xA8D8FF
             Cine.SPEAKER_SHADE -> Text.translatable("hha.hermes.speaker.shade") to 0x62F27A
+            Cine.SPEAKER_HADES -> Text.translatable("hha.hermes.speaker.hades") to 0x9CFFB0
+            Cine.SPEAKER_KRONOS -> Text.translatable("hha.hermes.speaker.kronos") to 0xFFC86A
             else -> null
         }
         var textY = y + 2
@@ -358,4 +444,7 @@ object CinePlayer {
     }
 
     private const val CHARS_PER_TICK = 1.15f
+
+    /** So lange muss die Taste gehalten werden, damit niemand aus Versehen überspringt. */
+    private const val SKIP_HOLD_TICKS = 12
 }

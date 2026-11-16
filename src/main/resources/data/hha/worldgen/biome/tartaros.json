@@ -26,16 +26,11 @@
           "type": "minecraft:ash"
         },
         "probability": 0.02
-      },
-      {
-        "particle": {
-          "type": "minecraft:white_ash"
-        },
-        "probability": 0.004
       }
     ],
-    "minecraft:visual/fog_color": "#e3101a",
-    "minecraft:visual/sky_color": "#6a0408"
+    "minecraft:visual/fog_color": "#6e3428",
+    "minecraft:visual/fog_end_distance": 170.0,
+    "minecraft:visual/sky_color": "#260b07"
   },
   "carvers": [],
   "downfall": 0.0,
@@ -53,8 +48,9 @@
     [],
     [],
     [
-      "hha:tartaros_spire",
-      "hha:tartaros_green_fire"
+      "hha:tartaros_ruin",
+      "hha:tartaros_carcass",
+      "hha:tartaros_dead_tree"
     ],
     []
   ],

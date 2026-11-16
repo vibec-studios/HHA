@@ -1,6 +1,7 @@
 package dev.henny.hha.logic.boss
 
 import dev.henny.hha.config.HhaConfig
+import net.fabricmc.fabric.api.entity.event.v1.ServerEntityWorldChangeEvents
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents
@@ -35,6 +36,10 @@ object HermesFights {
     fun isProtected(world: net.minecraft.world.World, pos: BlockPos): Boolean {
         val server = world as? ServerWorld ?: return false
         if (active[server.registryKey]?.arena?.contains(pos) == true) return true
+        // Der Palast des Hades lässt sich weder aufbrechen noch umgraben.
+        if (server.registryKey == dev.henny.hha.logic.world.HadesGate.TARTAROS) {
+            return server.structureAccessor.getStructureContaining(pos, dev.henny.hha.world.HhaWorldgen.HADES_PALACE_TAG).hasChildren()
+        }
         if (server.registryKey != World.OVERWORLD) return false
         if (pos.y !in (dev.henny.hha.logic.world.HadesGate.FLOOR_Y - 6)..(dev.henny.hha.logic.world.HadesGate.FLOOR_Y + 40)) return false
         return server.structureAccessor.getStructureContaining(pos, dev.henny.hha.world.HhaWorldgen.HADES_GATE_TAG).hasChildren()
@@ -64,11 +69,17 @@ object HermesFights {
 
     fun init() {
         registerProtection()
+        Cine.onSkip { player -> active[player.entityWorld.registryKey]?.voteSkip(player) == true }
+        HadesFights.init()
+        dev.henny.hha.logic.world.TartarosHunter.init()
         ServerTickEvents.END_SERVER_TICK.register { server ->
-            dev.henny.hha.logic.world.TartarosGuide.tick(server)
+            dev.henny.hha.logic.world.TartarosHunter.tick(server)
+            dev.henny.hha.logic.world.TartarosLife.tick(server)
+            dev.henny.hha.logic.world.TartarosMinibosses.tick(server)
+            HadesFights.tick(server)
             dev.henny.hha.logic.world.HadesGate.tick(server)
             // Kopie, weil ein Kampf sich im Tick selbst beenden darf.
-            for (fight in active.values.toList()) fight.tick()
+            for (fight in active.values.toList()) Cine.within(fight) { fight.tick() }
             if (delayed.isNotEmpty()) {
                 val due = delayed.filter { --it.ticks <= 0 }
                 delayed.removeAll(due)
@@ -96,9 +107,16 @@ object HermesFights {
         ServerPlayConnectionEvents.DISCONNECT.register { handler, _ ->
             val player = handler.player
             active[player.entityWorld.registryKey]?.onPlayerLeft(player)
+            Cine.forget(player)
+            dev.henny.hha.logic.Fx.forget(player)
+        }
+        // Wer per Portal oder Befehl die Dimension wechselt, scheidet aus: Zustand am Client zurücksetzen, nicht zurückholen.
+        ServerEntityWorldChangeEvents.AFTER_PLAYER_CHANGE_WORLD.register { player, origin, _ ->
+            active[origin.registryKey]?.onPlayerChangedWorld(player)
         }
         ServerLifecycleEvents.SERVER_STOPPING.register { _ ->
             for (fight in active.values.toList()) fight.finish(success = false)
+            dev.henny.hha.logic.Fx.clearShields()
         }
     }
 

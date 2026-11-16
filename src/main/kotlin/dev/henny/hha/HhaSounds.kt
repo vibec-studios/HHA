@@ -26,6 +26,7 @@ object HhaSounds {
     val HISS = register("boss.hiss")
     val BITE = register("boss.bite")
     val FLOOD = register("boss.flood")
+    val CHAIN = register("boss.chain")
     val PORTAL_HUM = register("boss.portal_hum")
     val PORTAL_ENTER = register("boss.portal_enter")
     val THEME_MESSENGER = register("music.messenger")
@@ -33,6 +34,7 @@ object HhaSounds {
     val THEME_GUIDE = register("music.guide")
     val THEME_FINALE = register("music.finale")
     val THEME_SHADE = register("music.shade")
+    val THEME_HADES = register("music.hades")
 
     private fun register(path: String): SoundEvent {
         val id = Hha.id(path)

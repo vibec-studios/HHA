@@ -1,0 +1,18 @@
+{
+  "placement": {
+    "type": "minecraft:random_spread",
+    "salt": 13370002,
+    "separation": 16,
+    "spacing": 44,
+    "exclusion_zone": {
+      "chunk_count": 9,
+      "other_set": "hha:hades_palaces"
+    }
+  },
+  "structures": [
+    {
+      "structure": "hha:bronze_fortress",
+      "weight": 1
+    }
+  ]
+}

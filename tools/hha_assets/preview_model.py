@@ -10,7 +10,6 @@ import sys
 import tempfile
 
 from feather_art import texel
-from hermes_model import hermes
 
 POSES = {
     'idle': {
@@ -139,6 +138,7 @@ def render(model, pose, view_yaw, size=520, scale=5.0, center_y=-16):
 def main():
     out = sys.argv[1]
     name = sys.argv[2] if len(sys.argv) > 2 else 'idle'
+    from hermes_model import hermes  # erst hier, damit andere Vorschauen nicht vom Hermes-Modell abhängen
     model = hermes()
     panels = [render(model, POSES[name], yaw) for yaw in (0.0, math.pi, 0.75)]
     size = panels[0][1]

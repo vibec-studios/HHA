@@ -1,0 +1,18 @@
+{
+  "placement": {
+    "type": "minecraft:random_spread",
+    "salt": 13370003,
+    "separation": 20,
+    "spacing": 52,
+    "exclusion_zone": {
+      "chunk_count": 9,
+      "other_set": "hha:hades_palaces"
+    }
+  },
+  "structures": [
+    {
+      "structure": "hha:titan_prison",
+      "weight": 1
+    }
+  ]
+}

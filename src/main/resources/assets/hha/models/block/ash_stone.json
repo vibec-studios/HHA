@@ -1,8 +1,0 @@
-{
-  "parent": "minecraft:block/cube_bottom_top",
-  "textures": {
-    "top": "hha:block/ash_stone_top",
-    "bottom": "hha:block/deep_ash",
-    "side": "hha:block/ash_stone_side"
-  }
-}

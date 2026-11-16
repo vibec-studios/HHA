@@ -2,18 +2,25 @@ package dev.henny.hha.client.vfx
 
 import dev.henny.hha.HhaParticles
 import dev.henny.hha.entity.boss.HermesPose
+import dev.henny.hha.entity.miniboss.KampePose
 import dev.henny.hha.logic.Vfx
+import dev.henny.hha.logic.boss.BossTimings
 import net.minecraft.client.world.ClientWorld
 import net.minecraft.util.math.Vec3d
-import java.util.Random
 import kotlin.math.cos
-import kotlin.math.floor
 import kotlin.math.sin
 
 /**
- * Das Leuchten von Hermes und den Schlangen. Die Renderer lesen Ankerpunkte direkt aus den Knochen und reichen sie
- * pro Bild hierher; gezeichnet wird danach im normalen Effekt-Durchlauf, damit Hermes dieselben Shader und Mischungen
- * nutzt wie alle anderen 3D-Effekte.
+ * Dauerlicht an den Boss-Modellen. Die Renderer lesen Ankerpunkte direkt aus den Knochen und reichen sie pro Bild
+ * hierher; gezeichnet wird danach im normalen Effekt-Durchlauf mit denselben Shadern wie alle 3D-Effekte.
+ *
+ * **Budget (Plan 3.3/3.4): höchstens drei Dauer-Elemente je Boss**, der Rest lebt in der Leuchtmaske der Textur:
+ * - Hermes: Kugel des Stabs, Augen, Halo nur in Stage IV; dazu die Spur nur während Stoß/Sturzflug und die goldene
+ *   Beute-Kugel nur, solange er sie hält.
+ * - Hades: Brustlaterne, Bident-Spitzen, Augen.
+ * - Kronos: Stundenglas im Leib, Schneide der Harpe, Augen (Äon-Indigo, kein Bernstein).
+ * - Kampe: Augen, Stachel (golden, solange er steckt), Maul nur beim Speien.
+ * Gold heißt auch hier „gut für dich“: Sanduhren, steckender Stachel, Beute-Kugel.
  */
 object BossGlow {
 
@@ -36,14 +43,77 @@ object BossGlow {
         var wingL: List<Vec3d> = emptyList()
         var tipR = Vec3d.ZERO
         var tipL = Vec3d.ZERO
+
+        /** Hält er die Beute-Kugel (Diebesgriff)? Dann ist [lootOrb] ihr Mittelpunkt (Knochen `loot_orb`). */
+        var loot = false
+        var lootOrb = Vec3d.ZERO
+    }
+
+    class HadesFrame(
+        val id: Int, val stage: Int, val cloaked: Boolean, val time: Float, val form: Int = 0, val fallen: Boolean = false,
+        val bidentOut: Boolean = false, val staggered: Boolean = false,
+    ) {
+        var hem = Vec3d.ZERO
+        var chest = Vec3d.ZERO
+        var eyeR = Vec3d.ZERO
+        var eyeL = Vec3d.ZERO
+        var crown = Vec3d.ZERO
+        var tipA = Vec3d.ZERO
+        var tipB = Vec3d.ZERO
+        var fork = Vec3d.ZERO
+        var handL = Vec3d.ZERO
+        var handR = Vec3d.ZERO
+
+        /** Aktuelle Pose ([dev.henny.hha.entity.boss.HadesPose]), z. B. für das hochgeschobene Visier im Blick. */
+        var pose = 0
     }
 
     class SerpentFrame(val id: Int, val variant: Int, val biting: Boolean, val time: Float) {
+        /** Schlange am Stab des Schattens: grünes statt himmelblaues Licht. */
+        var corrupted = false
         var eyeR = Vec3d.ZERO
         var eyeL = Vec3d.ZERO
         var mouth = Vec3d.ZERO
         var spine: List<Vec3d> = emptyList()
     }
+
+    /** Kronos: Augen, Glut in der Brust, der Uhrenkranz hinter dem Kopf und die Schneide der Harpe. */
+    class KronosFrame(val id: Int, val time: Float, val form: Int, val pose: Int) {
+        var chest = Vec3d.ZERO
+        var eyeR = Vec3d.ZERO
+        var eyeL = Vec3d.ZERO
+        var halo = Vec3d.ZERO
+        var haloUp = Vec3d(0.0, 0.1, 0.0)
+        var haloSide = Vec3d(0.1, 0.0, 0.0)
+        var blade: List<Vec3d> = emptyList()
+        var mouth = Vec3d.ZERO
+        var handL = Vec3d.ZERO
+
+        /** Fliegt die Harpe? Dann gibt es an der Hand keine Schneide zu zeichnen. */
+        var harpeOut = false
+    }
+
+    /**
+     * Kampe: Stachel (Spitze und Ansatz), Maul, Augen und die Mitte des Leibs (Glied 5). Die Anker liest
+     * `KampeModel.readAnchors`; gezeichnet wird höchstens, was Plan 3.4 erlaubt.
+     */
+    class KampeFrame(val id: Int, val time: Float, val pose: Int) {
+        var stingTip = Vec3d.ZERO
+        var stingBase = Vec3d.ZERO
+        var mouth = Vec3d.ZERO
+        var eyeR = Vec3d.ZERO
+        var eyeL = Vec3d.ZERO
+        var tailMid = Vec3d.ZERO
+
+        /** Ticks seit Beginn der Pose (`poseTime`), falls der Renderer sie setzt; sonst -1. Zeigt „Stachel steckt“. */
+        var poseTime = -1f
+    }
+
+    /** Höllenpforte oder Sanduhr: [health] dimmt das Licht, je näher sie dem Zerbrechen ist. */
+    class CoreFrame(val pos: Vec3d, val kind: Int, val health: Float, val time: Float)
+
+    /** Leuchtkugel eines Geschosses: Gift, Feuer oder Zeitsand. [velocity] zieht den Schweif nach. */
+    class OrbFrame(val pos: Vec3d, val velocity: Vec3d, val kind: Int, val size: Float, val time: Float)
 
     private class Seen<T>(val frame: T) {
         var ticks = 0
@@ -51,9 +121,14 @@ object BossGlow {
 
     private val hermesFrames = ArrayList<HermesFrame>()
     private val serpentFrames = ArrayList<SerpentFrame>()
+    private val hadesFrames = ArrayList<HadesFrame>()
+    private val orbFrames = ArrayList<OrbFrame>()
+    private val kronosFrames = ArrayList<KronosFrame>()
+    private val coreFrames = ArrayList<CoreFrame>()
+    private val kampeFrames = ArrayList<KampeFrame>()
     private val lastHermes = HashMap<Int, Seen<HermesFrame>>()
     private val lastSerpents = HashMap<Int, Seen<SerpentFrame>>()
-    private val trails = HashMap<Int, Array<ArrayDeque<Vec3d>>>()
+    private val trails = HashMap<Int, ArrayDeque<Vec3d>>()
     private val powers = HashMap<Int, Float>()
 
     private val STAGE_PALETTES = mapOf(
@@ -64,16 +139,13 @@ object BossGlow {
     )
 
     private val SHADE_PALETTE = Palette.of(Vfx.Style.HADES)
+    private val GOLD = Palette.of(Vfx.Style.GOLD)
+    private val HADES = Palette.of(Vfx.Style.HADES)
+    private val AEON = Palette.of(Vfx.Style.AEON)
 
-    private val SNAKE_A = Palette(0xFFDFFFF2.toInt(), 0xFF39E0A8.toInt(), 0xFF0F6A52.toInt(), 0xFFFFD75A.toInt())
-    private val SNAKE_B = Palette(0xFFE2F4FF.toInt(), 0xFF62A3F2.toInt(), 0xFF28479E.toInt(), 0xFFFFD75A.toInt())
-    private val SHADE_SNAKE_A = Palette(0xFFE8FFD0.toInt(), 0xFF4CFF5A.toInt(), 0xFF0E7A2C.toInt(), 0xFF9CFF3C.toInt())
-    private val SHADE_SNAKE_B = Palette(0xFFF2FFC0.toInt(), 0xFFB2FF3C.toInt(), 0xFF4A7A0E.toInt(), 0xFF4CFF5A.toInt())
-    private const val SNAKE_EYE = 0xFFFFE27A.toInt()
-    private const val SNAKE_TONGUE = 0xFFFF5A7A.toInt()
-    private const val SNAKE_POINTS = 36
-    private const val SNAKE_LENGTH = 0.58
-    private const val SNAKE_PERIOD = 170.0
+    private val SNAKE_A = Palette(0xFFF4FBFF.toInt(), 0xFFDFF4FF.toInt(), 0xFF5F8FC0.toInt(), 0xFFFFFFFF.toInt())
+    private val SNAKE_B = Palette(0xFFE2F4FF.toInt(), 0xFF62A3F2.toInt(), 0xFF28479E.toInt(), 0xFFB8E2FF.toInt())
+    private val SHADE_SNAKE = Palette(0xFFE8FFE8.toInt(), 0xFF78FF8C.toInt(), 0xFF0E7A2C.toInt(), 0xFFB4FFC0.toInt())
 
     /** Wie stark Hermes gerade strahlt: in der Erschöpfung fast erloschen, beim Zaubern gleißend. */
     fun targetPower(stage: Int, vulnerable: Boolean, pose: Int, illusion: Boolean): Float {
@@ -84,7 +156,8 @@ object BossGlow {
             HermesPose.STAGGER -> 0.45f
             else -> 1f
         }
-        if (stage == 4) power *= if (vulnerable) 0.4f else 1.25f
+        // Stage IV: nur die Erschöpfung (KNEEL) dimmt. Der Schatten ist dort immer verwundbar und soll trotzdem glühen.
+        if (stage == 4) power *= if (pose == HermesPose.KNEEL) 0.4f else 1.25f
         if (illusion) power *= 0.45f
         return power
     }
@@ -101,13 +174,38 @@ object BossGlow {
         hermesFrames.add(frame)
     }
 
+    fun submit(frame: HadesFrame) {
+        hadesFrames.add(frame)
+    }
+
+    fun submit(frame: OrbFrame) {
+        orbFrames.add(frame)
+    }
+
+    fun submit(frame: KronosFrame) {
+        kronosFrames.add(frame)
+    }
+
+    fun submit(frame: CoreFrame) {
+        coreFrames.add(frame)
+    }
+
     fun submit(frame: SerpentFrame) {
         serpentFrames.add(frame)
+    }
+
+    fun submit(frame: KampeFrame) {
+        kampeFrames.add(frame)
     }
 
     fun clear() {
         hermesFrames.clear()
         serpentFrames.clear()
+        hadesFrames.clear()
+        orbFrames.clear()
+        kronosFrames.clear()
+        coreFrames.clear()
+        kampeFrames.clear()
     }
 
     fun render(d: VfxDraw) {
@@ -115,14 +213,22 @@ object BossGlow {
             drawHermes(d, frame)
             lastHermes[frame.id] = Seen(frame)
         }
+        for (frame in hadesFrames) drawHades(d, frame)
+        for (frame in orbFrames) drawOrbBolt(d, frame)
+        for (frame in kronosFrames) drawKronos(d, frame)
+        for (frame in coreFrames) drawCore(d, frame)
         for (frame in serpentFrames) {
             drawSerpent(d, frame)
             lastSerpents[frame.id] = Seen(frame)
         }
+        for (frame in kampeFrames) drawKampe(d, frame)
         clear()
     }
 
-    /** Partikel lassen sich nur im Spieltakt sauber dosieren: wenige Federn und Funken aus den letzten Ankerpunkten. */
+    /**
+     * Partikel lassen sich nur im Spieltakt sauber dosieren. Je Hermes höchstens zwei leise Emitter (Federn von den
+     * Flügeln, Funken an der Kugel), je Schlange einer: weit unter Plan 3.3 (≤ 4 je Tick, ≤ 2 Emitter).
+     */
     fun tick(world: ClientWorld) {
         val random = world.random
         lastHermes.values.removeIf { ++it.ticks > 3 }
@@ -134,6 +240,8 @@ object BossGlow {
         for (seen in lastHermes.values) {
             val f = seen.frame
             if (f.illusion || f.wingR.size < 4) continue
+            // Im Rauchschritt keine Federn oder Funken: Sie würden die echte Rauchsäule verraten.
+            if (f.corrupted && f.pose == HermesPose.SMOKE) continue
             val rate = if (f.speed > 0.3f) 6 else 22
             if (random.nextInt(rate) == 0) {
                 val wing = if (random.nextBoolean()) f.wingR else f.wingL
@@ -142,7 +250,7 @@ object BossGlow {
                 val at = root.lerp(tip, random.nextDouble())
                 world.addParticleClient(HhaParticles.FEATHER, at.x, at.y, at.z, 0.0, 0.0, 0.0)
             }
-            if (!f.corrupted && random.nextInt(3) == 0) {
+            if (!f.corrupted && random.nextInt(4) == 0) {
                 val a = random.nextDouble() * Math.PI * 2.0
                 world.addParticleClient(HhaParticles.HOLY_SPARK, f.orb.x + cos(a) * 0.5, f.orb.y + (random.nextDouble() - 0.5), f.orb.z + sin(a) * 0.5, 0.0, 0.01, 0.0)
             }
@@ -156,135 +264,41 @@ object BossGlow {
         }
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Hermes: Kugel, Augen, Halo nur Stage IV (+ Spur im Stoß, Beute-Kugel solange er sie hält)
+    // ---------------------------------------------------------------------------------------------
+
     private fun drawHermes(d: VfxDraw, f: HermesFrame) {
         val pal = if (f.corrupted) SHADE_PALETTE else STAGE_PALETTES[f.stage] ?: STAGE_PALETTES.getValue(1)
         val t = f.time.toDouble()
         val p = f.power * (0.88f + 0.12f * sin(f.time * 0.19f))
+        // Rauchschritt des Schattens: In der Säule glimmen nur die Augen (der Renderer liefert erst ab SMOKE_EYES
+        // überhaupt einen Frame). Kugel, Halo oder Spur würden die echte Säule verraten.
+        val smoke = f.corrupted && f.pose == HermesPose.SMOKE
 
-        // Weiches Licht um den ganzen Körper.
-        d.billboard(VfxLayers.GLOW_ADD, f.chest, 6.0, withAlpha(pal.main, 0.14f * p))
-        d.billboard(VfxLayers.GLOW_ADD, f.chest, 3.2, withAlpha(pal.core, 0.2f * p))
-
-        drawOrb(d, f, pal, p, t)
-        drawStaff(d, f, pal, p, t)
-        drawHalo(d, f, pal, p, t)
-
-        // Sonne auf dem Panzer, glühende Augen, Licht an Händen und Sandalen.
-        d.billboard(VfxLayers.FLARE_ADD, f.chest, 1.5 + 0.2 * sin(t * 0.16), withAlpha(pal.core, 0.7f * p), t * 0.012)
-        d.billboard(VfxLayers.GLOW_ADD, f.chest, 1.3, withAlpha(pal.main, 0.6f * p))
+        if (!smoke) drawOrb(d, f, pal, p, t)
         for (eye in listOf(f.eyeR, f.eyeL)) {
             d.billboard(VfxLayers.GLOW_ADD, eye, 0.42, withAlpha(pal.main, 0.85f * p))
             d.billboard(VfxLayers.FLARE_ADD, eye, 0.34, withAlpha(pal.core, 0.9f * p), t * 0.03)
         }
-        d.billboard(VfxLayers.GLOW_ADD, f.handL, 0.7, withAlpha(pal.main, 0.35f * p))
-        d.billboard(VfxLayers.GLOW_ADD, f.footR, 0.8, withAlpha(pal.main, 0.32f * p))
-        d.billboard(VfxLayers.GLOW_ADD, f.footL, 0.8, withAlpha(pal.main, 0.32f * p))
-
-        drawWing(d, f.wingR, f.tipR, pal, p)
-        drawWing(d, f.wingL, f.tipL, pal, p)
-
-        when (f.stage) {
-            3 -> drawSoulMotes(d, f, pal, p, t)
-            4 -> if (!f.illusion) drawArcs(d, f, pal, p)
-        }
-        if (!f.illusion) drawTrails(d, f, pal, p)
+        if (smoke) return
+        if (f.stage == 4 && !f.corrupted) drawHalo(d, f, pal, p, t)
+        if (!f.illusion) drawDashTrail(d, f, pal, p)
+        if (f.loot) drawLoot(d, f, t)
     }
 
+    /** Die Kugel des Caduceus: weiches Licht, heller Kern und ein schräger Lichtring. */
     private fun drawOrb(d: VfxDraw, f: HermesFrame, pal: Palette, p: Float, t: Double) {
         d.billboard(VfxLayers.GLOW_ADD, f.orb, 1.9, withAlpha(pal.main, 0.6f * p))
         d.billboard(VfxLayers.GLOW_ADD, f.orb, 0.9, withAlpha(pal.core, 0.95f * p))
-        d.billboard(VfxLayers.FLARE_ADD, f.orb, 2.2, withAlpha(pal.core, 0.85f * p), t * 0.02)
-        d.billboard(VfxLayers.FLARE_ADD, f.orb, 1.4, withAlpha(pal.main, 0.6f * p), -t * 0.035)
-
-        // Zwei schräge Lichtringe und kreisende Funken.
-        val (a, b) = basisOf(f.staffTop.subtract(f.staffBottom))
-        for (i in 0..1) {
-            val angle = t * (0.05 + i * 0.03) + i * 1.9
-            val tiltA = a.multiply(cos(angle)).add(b.multiply(sin(angle)))
-            val up = f.staffTop.subtract(f.staffBottom).normalize()
-            val tiltB = up.multiply(0.55).add(a.multiply(-sin(angle)).add(b.multiply(cos(angle))).multiply(0.83))
-            val radius = 0.62 + i * 0.16
-            d.ring(VfxLayers.ENERGY, f.orb, tiltA, tiltB, radius - 0.035, radius + 0.035, withAlpha(pal.core, 0.95f * p), withAlpha(pal.main, 0.8f * p), 32)
-        }
-        for (i in 0 until 5) {
-            val angle = t * 0.11 + i * 1.2566
-            val spark = f.orb.add(a.multiply(cos(angle) * 0.85)).add(b.multiply(sin(angle) * 0.85)).add(f.staffTop.subtract(f.staffBottom).normalize().multiply(sin(angle * 2.0) * 0.25))
-            d.billboard(VfxLayers.GLOW_ADD, spark, 0.26, withAlpha(pal.core, 0.9f * p))
-        }
-    }
-
-    private fun drawStaff(d: VfxDraw, f: HermesFrame, pal: Palette, p: Float, t: Double) {
-        d.ribbon(VfxLayers.GLOW_ADD, listOf(f.staffTop, f.staffBottom), { 0.2 }, { withAlpha(pal.main, 0.22f * p) }, 0f, 0.5f)
-        drawSerpent(d, f, p, t, 0, if (f.corrupted) SHADE_SNAKE_A else SNAKE_A)
-        drawSerpent(d, f, p, t, 1, if (f.corrupted) SHADE_SNAKE_B else SNAKE_B)
-    }
-
-    /**
-     * Eine Lichtschlange am Caduceus. Sie klettert in langen Windungen den Schaft hinauf und wieder hinab; durch die
-     * laufende Drehung und eine Welle im Radius scheint sich der Körper wirklich zu winden. Oben löst sich der Kopf vom
-     * Stab, bäumt sich auf und züngelt. Die beiden Schlangen klettern gegenläufig, begegnen sich also in der Mitte.
-     */
-    private fun drawSerpent(d: VfxDraw, f: HermesFrame, p: Float, t: Double, strand: Int, pal: Palette) {
-        val axis = f.staffBottom.subtract(f.staffTop)
-        val (sideA, sideB) = basisOf(axis)
-        val climb = ((t / SNAKE_PERIOD + strand * 0.5) % 1.0) * Math.PI * 2.0
-        val headAt = 0.05 + 0.62 * (0.5 + 0.5 * cos(climb))
-        val rearing = smoothstep(0.24, 0.07, headAt)
-        val hurry = (p - 1f).coerceIn(0f, 0.6f).toDouble()
-        val path = List(SNAKE_POINTS) { i ->
-            val s = i.toDouble() / (SNAKE_POINTS - 1)
-            val k = (headAt + SNAKE_LENGTH * s).coerceAtMost(1.02)
-            val phase = k * 24.0 + t * (0.15 + hurry * 0.2) + strand * Math.PI
-            val radius = 0.125 + hurry * 0.12 + sin(k * 27.0 - t * 0.31) * 0.035
-            val out = sideA.multiply(cos(phase)).add(sideB.multiply(sin(phase)))
-            var point = f.staffTop.add(axis.multiply(k)).add(out.multiply(radius))
-            if (s < 0.24 && rearing > 0.0) {
-                // Der vordere Teil des Körpers löst sich vom Stab und richtet sich auf.
-                val lift = (1.0 - s / 0.24).let { it * it } * rearing
-                val sway = sin(t * 0.12 + strand * 2.0) * 0.1
-                val away = if (strand == 0) sideA else sideA.multiply(-1.0)
-                point = point.add(away.multiply(lift * (0.38 + sway))).subtract(axis.normalize().multiply(lift * 0.3))
-            }
-            point
-        }
-        fun thickness(s: Float): Double = (if (s < 0.08f) 0.72 + s * 3.5 else 1.0) * (1.0 - s * s * s * 0.86)
-
-        d.ribbon(VfxLayers.GLOW_ADD, path, { 0.15 * thickness(it) }, { withAlpha(pal.main, (0.6f - it * 0.35f) * p) }, 0f, 0.5f)
-        d.ribbon(VfxLayers.ENERGY, path, { 0.052 * thickness(it) }, { withAlpha(pal.core, (1f - it * 0.5f) * p) }, 0.45f, (t * -0.06).toFloat())
-
-        // Schuppenlichter wandern als Wellen vom Schwanz zum Kopf.
-        for (i in 2 until SNAKE_POINTS step 2) {
-            val s = i.toFloat() / (SNAKE_POINTS - 1)
-            val wave = sin(i * 0.8 - t * 0.42).toFloat().coerceAtLeast(0f)
-            val glint = wave * wave * wave
-            if (glint > 0.05f) d.billboard(VfxLayers.GLOW_ADD, path[i], 0.17 * thickness(s), withAlpha(pal.core, glint * (1f - s * 0.5f) * p))
-        }
-
-        // Kopf: spitz zulaufend, mit Augen und Zunge.
-        val head = path[0]
-        val forward = head.subtract(path[2]).let { if (it.lengthSquared() < 1e-6) axis.normalize().multiply(-1.0) else it.normalize() }
-        val across = forward.crossProduct(d.cam.subtract(head)).let { if (it.lengthSquared() < 1e-6) sideA else it.normalize() }
-        val snout = head.add(forward.multiply(0.15))
-        d.ribbon(VfxLayers.ENERGY, listOf(head.subtract(forward.multiply(0.1)), head, head.add(forward.multiply(0.07)), snout), { k -> if (k < 0.5f) 0.06 + k * 0.07 else 0.095 - (k - 0.5) * 0.17 }, { withAlpha(pal.core, p) }, 0.3f)
-        d.billboard(VfxLayers.GLOW_ADD, head, 0.46, withAlpha(pal.main, 0.75f * p))
-        for (side in intArrayOf(-1, 1)) {
-            val eye = head.add(forward.multiply(0.02)).add(across.multiply(side * 0.05))
-            d.billboard(VfxLayers.FLARE_ADD, eye, 0.16, withAlpha(SNAKE_EYE, p), t * 0.05)
-        }
-        val flick = (t / 38.0 + strand * 0.37) % 1.0
-        if (flick < 0.2) {
-            val reach = sin(flick / 0.2 * Math.PI) * 0.2
-            val root = snout.add(forward.multiply(reach * 0.65))
-            d.ribbon(VfxLayers.ENERGY, listOf(snout, root), { 0.012 }, { withAlpha(SNAKE_TONGUE, p) }, 0.3f)
-            for (side in intArrayOf(-1, 1)) {
-                d.ribbon(VfxLayers.ENERGY, listOf(root, root.add(forward.multiply(reach * 0.35)).add(across.multiply(side * reach * 0.22))), { 0.009 }, { withAlpha(SNAKE_TONGUE, p) }, 0.3f)
-            }
-        }
-    }
-
-    private fun smoothstep(from: Double, to: Double, value: Double): Double {
-        val k = ((value - from) / (to - from)).coerceIn(0.0, 1.0)
-        return k * k * (3.0 - 2.0 * k)
+        d.billboard(VfxLayers.FLARE_ADD, f.orb, 2.0, withAlpha(pal.core, 0.8f * p), t * 0.02)
+        val axis = f.staffTop.subtract(f.staffBottom)
+        val up = if (axis.lengthSquared() < 1e-6) Vec3d(0.0, 1.0, 0.0) else axis.normalize()
+        val (a, b) = basisOf(up)
+        val angle = t * 0.05
+        val tiltA = a.multiply(cos(angle)).add(b.multiply(sin(angle)))
+        val tiltB = up.multiply(0.55).add(a.multiply(-sin(angle)).add(b.multiply(cos(angle))).multiply(0.83))
+        d.ring(VfxLayers.ENERGY, f.orb, tiltA, tiltB, 0.6, 0.67, withAlpha(pal.core, 0.9f * p), withAlpha(pal.main, 0.75f * p), 32)
     }
 
     private fun drawHalo(d: VfxDraw, f: HermesFrame, pal: Palette, p: Float, t: Double) {
@@ -293,87 +307,180 @@ object BossGlow {
         d.ring(VfxLayers.ENERGY, f.halo, f.haloRight, f.haloUp, 0.6, 0.67, withAlpha(pal.core, 0.9f * p), withAlpha(pal.main, 0.75f * p), 40)
     }
 
-    private fun drawWing(d: VfxDraw, bone: List<Vec3d>, tip: Vec3d, pal: Palette, p: Float) {
-        if (bone.size < 2) return
-        d.ribbon(VfxLayers.GLOW_ADD, bone, { k -> 0.2 - 0.11 * k }, { withAlpha(pal.core, 0.55f * p) }, 0f, 0.5f)
-        d.ribbon(VfxLayers.GLOW_ADD, listOf(bone.last(), tip), { k -> 0.12 - 0.08 * k }, { withAlpha(pal.main, 0.45f * p) }, 0f, 0.5f)
-        d.billboard(VfxLayers.GLOW_ADD, tip, 0.7, withAlpha(pal.main, 0.5f * p))
-        d.billboard(VfxLayers.FLARE_ADD, tip, 0.65, withAlpha(pal.core, 0.6f * p))
-    }
-
-    /** Stage 3: Seelenlichter steigen in einer Spirale um ihn auf. */
-    private fun drawSoulMotes(d: VfxDraw, f: HermesFrame, pal: Palette, p: Float, t: Double) {
-        for (i in 0 until 10) {
-            val cycle = (t * 0.012 + i * 0.1) % 1.0
-            val angle = i * 2.4 + t * 0.03 + cycle * 3.0
-            val radius = 1.1 + 0.35 * sin(i * 1.3)
-            val at = f.chest.add(cos(angle) * radius, -1.3 + cycle * 3.6, sin(angle) * radius)
-            d.billboard(VfxLayers.GLOW_ADD, at, 0.34, withAlpha(pal.main, 0.8f * p * sin(cycle * Math.PI).toFloat()))
+    /** Eine Lichtbahn hinter dem Körper, nur im Kurierstoß und im Sturzflug. Danach verglimmt sie. */
+    private fun drawDashTrail(d: VfxDraw, f: HermesFrame, pal: Palette, p: Float) {
+        val slot = trails.getOrPut(f.id) { ArrayDeque() }
+        val dashing = f.pose == HermesPose.DASH || f.pose == HermesPose.DIVE
+        if (dashing && f.speed > 0.25f) {
+            if (slot.isEmpty() || slot.last().squaredDistanceTo(f.chest) > 0.09) slot.addLast(f.chest)
+            while (slot.size > 24) slot.removeFirst()
+        } else if (slot.isNotEmpty()) {
+            slot.removeFirst()
+        }
+        if (slot.size >= 3) {
+            val path = slot.toList() + f.chest
+            d.ribbon(VfxLayers.GLOW_ADD, path, { k -> 0.42 * k }, { k -> withAlpha(pal.main, k * 0.6f * p) }, 0f, 0.5f)
+            d.ribbon(VfxLayers.ENERGY, path, { k -> 0.1 * k }, { k -> withAlpha(pal.core, k * 0.9f * p) }, 0.2f)
         }
     }
 
-    /** Stage 4: Blitze springen vom Stab auf Flügel und Hände und wechseln alle paar Ticks. */
-    private fun drawArcs(d: VfxDraw, f: HermesFrame, pal: Palette, p: Float) {
-        val targets = listOf(f.tipR, f.tipL, f.handL, f.footR, f.footL)
-        val seed = floor(f.time / 2.5f).toLong() * 31L + f.id
-        val random = Random(seed)
-        repeat(3) {
-            val end = targets[random.nextInt(targets.size)]
-            val path = ArrayList<Vec3d>()
-            val steps = 9
-            for (i in 0..steps) {
-                val k = i.toDouble() / steps
-                val jitter = if (i == 0 || i == steps) 0.0 else 0.38
-                path.add(f.orb.lerp(end, k).add((random.nextDouble() - 0.5) * jitter * 2.0, (random.nextDouble() - 0.5) * jitter * 2.0, (random.nextDouble() - 0.5) * jitter * 2.0))
-            }
-            d.ribbon(VfxLayers.GLOW_ADD, path, { 0.2 }, { withAlpha(pal.main, 0.5f * p) }, 0f, 0.5f)
-            d.ribbon(VfxLayers.ENERGY, path, { 0.045 }, { withAlpha(pal.core, 1f * p) }, 0.4f)
+    /** Die Beute-Kugel in seiner Linken: golden, denn wer ihn jetzt trifft, holt sich seine Effekte zurück. */
+    private fun drawLoot(d: VfxDraw, f: HermesFrame, t: Double) {
+        val pulse = 0.85 + 0.15 * sin(t * 0.3)
+        d.billboard(VfxLayers.GLOW_ADD, f.lootOrb, 1.2 * pulse, withAlpha(GOLD.main, 0.7f))
+        d.billboard(VfxLayers.FLARE_ADD, f.lootOrb, 0.8, withAlpha(GOLD.core, 0.9f), t * 0.04)
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Hades: Brustlaterne, Bident-Spitzen, Augen
+    // ---------------------------------------------------------------------------------------------
+
+    private fun drawHades(d: VfxDraw, f: HadesFrame) {
+        val pal = HADES
+        val t = f.time.toDouble()
+        // Am Boden erlischt alles. Das gehört zum Köder.
+        if (f.fallen) return
+        for (eye in listOf(f.eyeR, f.eyeL)) {
+            d.billboard(VfxLayers.GLOW_ADD, eye, 0.6, withAlpha(pal.main, 0.95f))
+            d.billboard(VfxLayers.FLARE_ADD, eye, 0.5, withAlpha(pal.core, 0.95f), t * 0.03)
+        }
+        if (f.cloaked) return
+        val grown = 1.0 + f.form * 0.2
+        // Beim Taumeln flackert die Laterne: Das ist das Zeichen zum Zuschlagen.
+        val weak = if (f.staggered) (0.55f + 0.45f * sin(t * 1.1).toFloat()) else 1f
+        d.billboard(VfxLayers.GLOW_ADD, f.chest, 2.4 * grown, withAlpha(pal.main, 0.5f * weak))
+        d.billboard(VfxLayers.FLARE_ADD, f.chest, 1.6 * grown, withAlpha(pal.core, 0.6f * weak), t * 0.012)
+        // Fliegt der Bident, gibt es an der Hand nichts zu leuchten.
+        if (f.bidentOut) return
+        for (tip in listOf(f.tipA, f.tipB)) {
+            d.billboard(VfxLayers.GLOW_ADD, tip, 0.9, withAlpha(pal.main, 0.75f))
+            d.billboard(VfxLayers.FLARE_ADD, tip, 0.75, withAlpha(pal.core, 0.75f), t * 0.05)
         }
     }
 
-    /** Lichtbahnen hinter Stab und Flügelspitzen, sobald er Tempo aufnimmt. */
-    private fun drawTrails(d: VfxDraw, f: HermesFrame, pal: Palette, p: Float) {
-        val slots = trails.getOrPut(f.id) { Array(3) { ArrayDeque() } }
-        val points = arrayOf(f.orb, f.tipR, f.tipL)
-        for (i in slots.indices) {
-            val slot = slots[i]
-            if (f.speed > 0.25f) {
-                if (slot.isEmpty() || slot.last().squaredDistanceTo(points[i]) > 0.09) slot.addLast(points[i])
-                while (slot.size > 26) slot.removeFirst()
-            } else if (slot.isNotEmpty()) {
-                slot.removeFirst()
-            }
-            if (slot.size >= 3) {
-                val path = slot.toList() + points[i]
-                d.ribbon(VfxLayers.GLOW_ADD, path, { k -> 0.2 * k }, { k -> withAlpha(pal.main, k * 0.65f * p) }, 0f, 0.5f)
-                d.ribbon(VfxLayers.ENERGY, path, { k -> 0.05 * k }, { k -> withAlpha(pal.core, k * 0.9f * p) }, 0.2f)
-            }
+    // ---------------------------------------------------------------------------------------------
+    // Kronos: Stundenglas im Leib, Schneide, Augen (Äon-Indigo)
+    // ---------------------------------------------------------------------------------------------
+
+    private fun drawKronos(d: VfxDraw, f: KronosFrame) {
+        val pal = AEON
+        val t = f.time.toDouble()
+        val power = if (f.form > 0) 1.3f else 1f
+        val dead = f.pose == dev.henny.hha.entity.boss.KronosPose.BOUND
+        val p = power * (if (dead) 0.45f else 1f) * (0.9f + 0.1f * sin(f.time * 0.13f))
+        for (eye in listOf(f.eyeR, f.eyeL)) {
+            d.billboard(VfxLayers.GLOW_ADD, eye, 0.9, withAlpha(pal.main, 0.9f * p))
+            d.billboard(VfxLayers.FLARE_ADD, eye, 0.8, withAlpha(pal.core, 0.9f * p), t * 0.03)
+        }
+        // Der Sand im Stundenglas: ein ruhiges Pulsieren, in der zweiten Gestalt rinnt die Zeit schneller.
+        val unit = f.haloUp.length().takeIf { it > 1e-4 } ?: 0.06
+        val sand = 0.82f + 0.18f * sin(t * (if (f.form > 0) 0.5 else 0.22)).toFloat()
+        d.billboard(VfxLayers.GLOW_ADD, f.chest, (unit * 16.0).coerceIn(0.6, 2.6), withAlpha(pal.main, 0.5f * p * sand))
+        d.billboard(VfxLayers.FLARE_ADD, f.chest, (unit * 7.0).coerceIn(0.35, 1.3), withAlpha(pal.core, 0.85f * p * sand), t * 0.02)
+        // Die Schneide der Harpe, solange sie in der Hand ist.
+        if (!f.harpeOut && f.blade.size >= 2) {
+            d.ribbon(VfxLayers.ENERGY, f.blade, { k -> 0.22 * (1.0 - k * 0.6) }, { k -> withAlpha(pal.core, (0.9f - 0.3f * k) * p) }, 0.35f, (-t * 0.06).toFloat())
+            d.billboard(VfxLayers.GLOW_ADD, f.blade.last(), 1.1, withAlpha(pal.main, 0.55f * p))
         }
     }
 
-    private fun drawSerpent(d: VfxDraw, f: SerpentFrame) {
-        val pal = if (f.variant == 0) {
-            Palette(0xFFDFFFF2.toInt(), 0xFF39E0A8.toInt(), 0xFF0F6A52.toInt(), 0xFFFFD75A.toInt())
+    // ---------------------------------------------------------------------------------------------
+    // Kampe: Augen, Stachel, Maul beim Speien
+    // ---------------------------------------------------------------------------------------------
+
+    private fun drawKampe(d: VfxDraw, f: KampeFrame) {
+        val pal = HADES
+        val t = f.time.toDouble()
+        if (f.pose == KampePose.DEATH) return
+        for (eye in listOf(f.eyeR, f.eyeL)) {
+            d.billboard(VfxLayers.GLOW_ADD, eye, 0.5, withAlpha(pal.main, 0.9f))
+            d.billboard(VfxLayers.FLARE_ADD, eye, 0.4, withAlpha(pal.core, 0.9f), t * 0.03)
+        }
+        // Der Stachel: grün, beim Ausholen heller. Steckt er im Boden (offen, Treffer × 1,5), glüht er golden.
+        val stung = f.pose == KampePose.STING
+        val stuckFrom = (BossTimings.Kampe.STING_WINDUP + BossTimings.Kampe.STING_STRIKE).toFloat()
+        val stuck = stung && f.poseTime >= stuckFrom && f.poseTime <= BossTimings.Kampe.STING_STUCK_END
+        val sting = if (stuck) GOLD else pal
+        val strength = when {
+            stuck -> 0.85f
+            stung -> 0.95f
+            else -> 0.45f
+        }
+        d.billboard(VfxLayers.GLOW_ADD, f.stingTip, if (stung) 1.3 else 0.8, withAlpha(sting.main, strength))
+        d.billboard(VfxLayers.FLARE_ADD, f.stingTip, if (stung) 0.9 else 0.5, withAlpha(sting.core, strength), t * 0.05)
+        if (f.pose == KampePose.SPIT) {
+            d.billboard(VfxLayers.GLOW_ADD, f.mouth, 1.3, withAlpha(pal.main, 0.7f))
+            d.billboard(VfxLayers.FLARE_ADD, f.mouth, 0.9, withAlpha(pal.core, 0.7f), t * 0.07)
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Requisiten
+    // ---------------------------------------------------------------------------------------------
+
+    private fun drawCore(d: VfxDraw, f: CoreFrame) {
+        val t = f.time.toDouble()
+        val center = f.pos.add(0.0, 1.3, 0.0)
+        val life = 0.45f + 0.55f * f.health
+        if (f.kind == dev.henny.hha.entity.boss.CoreEntity.HOURGLASS) {
+            // Die Sanduhren der Rückspulung sind ein lohnendes Ziel: Gold (Plan 3.1).
+            val pal = GOLD
+            val up = Vec3d(0.0, 1.0, 0.0)
+            val a = Vec3d(1.0, 0.0, 0.0)
+            val b = Vec3d(0.0, 0.0, 1.0)
+            // Zwei gläserne Kegel, Spitze an Spitze, und dazwischen rinnt der Sand.
+            d.wall(VfxLayers.FLOW_ADD, center.add(0.0, -1.2, 0.0), a, b, up, 0.95, 0.08, 1.2, withAlpha(pal.main, 0.55f * life), withAlpha(pal.core, 0.8f * life), 24, 2f, (t * 0.02).toFloat())
+            d.wall(VfxLayers.FLOW_ADD, center, a, b, up, 0.08, 0.95, 1.2, withAlpha(pal.core, 0.8f * life), withAlpha(pal.main, 0.55f * life), 24, 2f, (t * 0.02).toFloat())
+            d.ribbon(VfxLayers.ENERGY, listOf(center.add(0.0, 0.9, 0.0), center, center.add(0.0, -1.0, 0.0)), { 0.06 }, { withAlpha(pal.core, 0.95f) }, 0.6f, (-t * 0.2).toFloat())
+            d.billboard(VfxLayers.GLOW_ADD, center, 2.8, withAlpha(pal.main, 0.35f * life))
+            d.billboard(VfxLayers.FLARE_ADD, center, 1.2, withAlpha(pal.core, 0.9f * life), t * 0.04)
         } else {
-            Palette(0xFFE2F4FF.toInt(), 0xFF62A3F2.toInt(), 0xFF28479E.toInt(), 0xFFFFD75A.toInt())
+            val pal = HADES
+            // Eine Pforte in die Tiefe: dunkles Auge, darum ein wirbelnder Ring und grünes Feuer.
+            d.billboard(VfxLayers.SMOKE_ALPHA, center, 1.7, 0xF0020604.toInt(), t * 0.03)
+            d.billboard(VfxLayers.GLOW_ADD, center, 3.4, withAlpha(pal.main, 0.4f * life))
+            d.ring(VfxLayers.RING_ADD, center, d.camRight, d.camUp, 1.1, 1.6, withAlpha(pal.main, 0.7f * life), withAlpha(pal.edge, 0f), 40, 2f, (t * 0.03).toFloat())
+            d.billboard(VfxLayers.FLARE_ADD, center, 2.2, withAlpha(pal.core, 0.55f * life), -t * 0.05)
+        }
+    }
+
+    /** Leuchtkugel eines Geschosses in der Gefahrenfarbe seines Werfers (nie Gold). */
+    private fun drawOrbBolt(d: VfxDraw, f: OrbFrame) {
+        val pal = when (f.kind) {
+            dev.henny.hha.entity.boss.HermesBoltEntity.VENOM -> HADES
+            dev.henny.hha.entity.boss.HermesBoltEntity.FIRE, dev.henny.hha.entity.boss.HermesBoltEntity.ROCK -> Palette.of(Vfx.Style.FIRE)
+            dev.henny.hha.entity.boss.HermesBoltEntity.SAND -> AEON
+            else -> Palette.danger(Vfx.Style.HEAVEN)
+        }
+        val s = f.size.toDouble()
+        val pulse = 0.9 + 0.1 * sin(f.time * 0.6)
+        d.billboard(VfxLayers.GLOW_ADD, f.pos, 1.6 * s * pulse, withAlpha(pal.main, 0.55f))
+        d.billboard(VfxLayers.FLARE_ADD, f.pos, 0.9 * s, withAlpha(pal.core, 0.95f), f.time * 0.12)
+        d.billboard(VfxLayers.GLOW_ADD, f.pos, 0.45 * s, withAlpha(pal.core, 1f))
+        // Schweif: ein paar kleiner werdende Lichter entgegen der Flugrichtung.
+        val back = if (f.velocity.lengthSquared() < 1e-6) Vec3d.ZERO else f.velocity.normalize().multiply(-0.42 * s)
+        for (i in 1..4) {
+            val k = i / 4f
+            d.billboard(VfxLayers.GLOW_ADD, f.pos.add(back.multiply(i.toDouble())), 1.0 * s * (1.0 - k * 0.75), withAlpha(pal.edge, 0.45f * (1f - k)))
+        }
+    }
+
+    /** Caduceus-Schlange: Augen, Licht im Maul vor dem Biss, ein leuchtender Rückengrat-Streifen. */
+    private fun drawSerpent(d: VfxDraw, f: SerpentFrame) {
+        val pal = when {
+            f.corrupted -> SHADE_SNAKE
+            f.variant == 0 -> SNAKE_A
+            else -> SNAKE_B
         }
         val rage = if (f.biting) 1.4f else 1f
         for (eye in listOf(f.eyeR, f.eyeL)) {
-            d.billboard(VfxLayers.GLOW_ADD, eye, 0.62 * rage, withAlpha(pal.alt, 0.9f))
+            d.billboard(VfxLayers.GLOW_ADD, eye, 0.62 * rage, withAlpha(pal.main, 0.9f))
             d.billboard(VfxLayers.FLARE_ADD, eye, 0.5 * rage, withAlpha(pal.core, 0.9f), f.time * 0.04)
         }
-        // Im Maul sammelt sich vor dem Biss Licht.
         d.billboard(VfxLayers.GLOW_ADD, f.mouth, if (f.biting) 1.9 else 0.8, withAlpha(pal.main, if (f.biting) 0.8f else 0.28f))
         if (f.biting) d.billboard(VfxLayers.FLARE_ADD, f.mouth, 1.7, withAlpha(pal.core, 0.75f), f.time * 0.07)
-
-        // Leuchtender Rückengrat-Streifen und ein schwacher Schein um den Leib.
         if (f.spine.size >= 3) {
-            val flow = f.time * 0.05f
-            d.ribbon(VfxLayers.ENERGY, f.spine, { k -> 0.09 * (1.0 - k * 0.7) }, { k -> withAlpha(pal.core, 0.9f - 0.5f * k) }, 0.3f, -flow)
-            for (i in f.spine.indices step 3) {
-                val k = i.toFloat() / f.spine.size
-                d.billboard(VfxLayers.GLOW_ADD, f.spine[i], 1.5 * (1.0 - k * 0.6), withAlpha(pal.main, 0.1f))
-            }
+            d.ribbon(VfxLayers.ENERGY, f.spine, { k -> 0.09 * (1.0 - k * 0.7) }, { k -> withAlpha(pal.core, 0.9f - 0.5f * k) }, 0.3f, -f.time * 0.05f)
         }
     }
 }

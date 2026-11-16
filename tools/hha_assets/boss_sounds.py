@@ -273,6 +273,22 @@ def flood():
     return room((swell_low + wash + bubbles) * np.sin(np.pi * k) ** 0.5, 1.2, 0.3, 2.4)
 
 
+def chain():
+    """Schwere Ketten: viele kurze, unharmonische Metallschläge, die sich zu einem Rasseln verdichten."""
+    seconds = 1.5
+    out = np.zeros(samples(seconds))
+    gen = np.random.default_rng(52)
+    for _ in range(46):
+        length = samples(gen.uniform(0.04, 0.13))
+        start = int(gen.uniform(0.0, 0.9) ** 1.6 * len(out))
+        n = np.arange(length) / RATE
+        f = gen.uniform(900, 3400)
+        piece = sum(np.sin(2.0 * np.pi * f * r * n) * g for r, g in ((1.0, 1.0), (1.51, 0.6), (2.37, 0.4))) * np.exp(-n * gen.uniform(35, 90))
+        end = min(start + length, len(out))
+        out[start:end] += piece[:end - start] * gen.uniform(0.25, 0.8)
+    return room(out, 0.7, 0.2)
+
+
 def portal_hum():
     """Das Summen des Tors: tiefer Akkord mit langsamem Schweben. Kreisförmig erzeugt, schließt also nahtlos."""
     seconds = 6.0
@@ -304,9 +320,9 @@ EFFECTS = {
     'whoosh': whoosh, 'dash': dash, 'impact': impact, 'thunder': thunder, 'rift': rift, 'soul': soul, 'chime': chime,
     'sting': sting, 'voice': voice, 'charge': charge, 'blink': blink, 'deflect': deflect, 'hit': hit,
     'feather_volley': feather_volley, 'spear': spear, 'roar': roar, 'hiss': hiss, 'bite': bite, 'flood': flood,
-    'portal_hum': portal_hum, 'portal_enter': portal_enter,
+    'portal_hum': portal_hum, 'portal_enter': portal_enter, 'chain': chain,
 }
-THEMES = ('messenger', 'thief', 'guide', 'finale', 'shade')
+THEMES = ('messenger', 'thief', 'guide', 'finale', 'shade', 'hades')
 
 
 def main():

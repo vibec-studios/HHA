@@ -1,0 +1,6 @@
+{
+  "type": "hha:hades_palace",
+  "biomes": "#hha:has_tartarus_structure",
+  "spawn_overrides": {},
+  "step": "surface_structures"
+}

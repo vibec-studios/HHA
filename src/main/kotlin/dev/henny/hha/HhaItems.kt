@@ -215,7 +215,6 @@ object HhaItems {
                     entries.add(HERMES_SUMMONS)
                     entries.add(HERMES_FEATHER)
                     entries.add(HADES_MAP)
-                    HhaBlocks.BUILDING.forEach { entries.add(it) }
                     entries.add(HELL_INGOT)
                     entries.add(HEAVEN_INGOT)
                     entries.add(HELL_BANNER_PATTERN)

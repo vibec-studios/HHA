@@ -25,6 +25,11 @@ import kotlin.math.sin
  */
 class HermesCutscenes(private val fight: HermesFight) {
 
+    private companion object {
+        /** So lange kehren die Schlangen am Ende des Abstiegs in den Stab zurück. */
+        const val RETURN_TICKS = 14
+    }
+
     private val world get() = fight.world
     private val center get() = fight.center
     private val players get() = fight.players()
@@ -53,6 +58,7 @@ class HermesCutscenes(private val fight: HermesFight) {
     }
 
     private fun sound(event: SoundEvent, volume: Float = 2f, pitch: Float = 1f, at: Vec3d = center) {
+        if (Cine.muted) return
         world.playSound(null, at.x, at.y, at.z, event, SoundCategory.HOSTILE, volume, pitch)
     }
 
@@ -129,7 +135,8 @@ class HermesCutscenes(private val fight: HermesFight) {
         Vfx.trail(world, Vfx.Style.GOLD, boss, 0.9f, 40)
         sound(HhaSounds.DASH, 3f, 0.7f, center.add(0.0, 30.0, 0.0))
         glide(center.add(0.0, 0.2, 0.0), 18, smooth = false)
-        boss.pose = HermesPose.SLAM
+        // Gelandet: ein Knie am Boden, der Stab steckt (SLAM ist seit Plan 7 das Ausholen in der Luft).
+        boss.pose = HermesPose.STUCK
         Vfx.shockwave(world, Vfx.Style.GOLD, center, 22f, 26, 5f)
         Vfx.nova(world, Vfx.Style.GOLD, center.add(0.0, 1.0, 0.0), 8f, 16)
         Vfx.bolt(world, Vfx.Style.STORM, center.add(2.0, 40.0, -3.0), center.add(0.0, 0.5, 0.0), 0.9f, 10)
@@ -253,9 +260,9 @@ class HermesCutscenes(private val fight: HermesFight) {
         say(Cine.SPEAKER_HERMES, "descent.every_soul", 80)
 
         // Der Stab schlägt auf den Boden: der Marmor bricht, das Reich der Toten steigt auf.
-        boss.pose = HermesPose.SLAM
+        boss.pose = HermesPose.PLANT
         Cine.orbit(everyone, center, 18.0, 6.0, 40.0, 70.0, 100, 64.0, 74.0, boss, 1.0)
-        wait(8)
+        wait(BossTimings.Hermes.TWINS_PLANT_STRIKE)
         Vfx.shockwave(world, Vfx.Style.SOUL, center, 26f, 40, 6f)
         Vfx.pillar(world, Vfx.Style.SOUL, center, 3f, 34f, 50)
         Vfx.shake(world, center, 6f, 50, 60f)
@@ -269,7 +276,7 @@ class HermesCutscenes(private val fight: HermesFight) {
         Cine.orbit(everyone, boss.entityPos, 4.4, 0.6, 200.0, 230.0, 90, 52.0, 48.0, boss, 2.4)
         say(Cine.SPEAKER_HERMES, "descent.way_short", 62)
 
-        // Die Schlangen lösen sich vom Stab.
+        // Die Schlangen lösen sich vom Stab: ein Vorgeschmack auf „Die Zwillinge“. Danach kehren sie zurück.
         val serpents = fight.spawnSerpents()
         Cine.orbit(everyone, boss.entityPos.add(0.0, 5.0, 0.0), 11.0, 2.0, 230.0, 280.0, 100, 56.0, 52.0, serpents.firstOrNull(), 0.4)
         sound(HhaSounds.ROAR, 2.5f, 1f)
@@ -284,6 +291,18 @@ class HermesCutscenes(private val fight: HermesFight) {
             if (t == 12) Cine.dialog(players, Cine.SPEAKER_HERMES, "hha.hermes.line.descent.serpents", HhaVoiceLengths.ticks("hha.hermes.line.descent.serpents", 70))
             yield(Unit)
         }
+        // Zurück an den Stab: Im Kampf sind sie eine Attacke, kein Gegner.
+        val staff = boss.entityPos.add(0.0, 2.4, 0.0)
+        val starts = serpents.map { it.entityPos }
+        for (step in 1..RETURN_TICKS) {
+            val k = step.toDouble() / RETURN_TICKS
+            for ((i, serpent) in serpents.withIndex()) {
+                serpent.setPosition(starts[i].lerp(staff, k * k))
+                fight.face(serpent, staff)
+            }
+            yield(Unit)
+        }
+        fight.dismissSerpents(serpents)
 
         Cine.title(everyone, "hha.hermes.stage.3", "hha.hermes.stage.3.sub", 60)
         sound(HhaSounds.STING, 2f, 0.84f)
@@ -359,10 +378,9 @@ class HermesCutscenes(private val fight: HermesFight) {
         Cine.wings(players, true)
         sound(HhaSounds.CHIME, 2f, 1.2f)
 
-        // Hermes steigt auf: die letzte Form.
+        // Hermes steigt auf: die letzte Form. Nur für den Moment; im Kampf trägt das Modell den Halo (Plan 3.4).
         boss.pose = HermesPose.ASCEND
-        Vfx.wings(world, Vfx.Style.HEAVEN, boss, 20 * 900, 1.35f)
-        Vfx.orbitRings(world, Vfx.Style.GOLD, boss, 2f, 20 * 900)
+        Vfx.wings(world, Vfx.Style.HEAVEN, boss, 80, 1.35f)
         Cine.orbit(everyone, center, 12.0, 1.0, 10.0, 50.0, 80, 60.0, 76.0, boss, 2.0, 12.0, 0.6)
         Vfx.pillar(world, Vfx.Style.GOLD, center, 2.6f, 60f, 60)
         sound(HhaSounds.RIFT, 3f, 1.3f)
@@ -379,7 +397,6 @@ class HermesCutscenes(private val fight: HermesFight) {
         for (player in fight.targets()) {
             player.addStatusEffect(StatusEffectInstance(StatusEffects.SPEED, 20 * 600, 1, true, false, true))
             player.addStatusEffect(StatusEffectInstance(StatusEffects.JUMP_BOOST, 20 * 600, 1, true, false, true))
-            Vfx.aura(world, Vfx.Style.GOLD, player, 20 * 600, 0.8f)
         }
     }
 
@@ -523,12 +540,18 @@ class HermesCutscenes(private val fight: HermesFight) {
         Cine.fade(players, 0xFFF6D8, 0.0, 1.0, 24)
         wait(26)
         val everyone = players
+        // Szenennummer je Spieler: Der späte Nachklapp entfällt für jeden, der inzwischen eine neue Szene hatte.
+        val scenes = everyone.associate { it.uuid to Cine.sceneOf(it.uuid) }
         fight.finish(success = true)
         Cine.fade(everyone, 0xFFF6D8, 1.0, 0.0, 30)
         // Letzter Nachklapp, sobald alle wieder am Boden stehen.
         val level = world
         HermesFights.after(46) {
-            val alive = everyone.filter { it.isAlive && !it.isRemoved }
+            // Nur wer noch in dieser Welt ist und nicht schon in einer neuen Szene steckt (anderer Kampf), hört den Nachklapp.
+            val alive = everyone.filter {
+                it.isAlive && !it.isRemoved && !it.isDisconnected && it.entityWorld === level && !Cine.isPlaying(it) &&
+                    Cine.sceneOf(it.uuid) == scenes[it.uuid]
+            }
             Cine.dialog(alive, Cine.SPEAKER_NARRATOR, "hha.hermes.line.finale.stinger", HhaVoiceLengths.ticks("hha.hermes.line.finale.stinger", 66))
             for (player in alive) {
                 val feet = player.entityPos

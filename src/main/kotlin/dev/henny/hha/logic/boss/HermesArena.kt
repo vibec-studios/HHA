@@ -116,12 +116,12 @@ class HermesArena(private val world: ServerWorld, val center: BlockPos, private 
                 checker -> Blocks.POLISHED_BLACKSTONE
                 else -> Blocks.BLACKSTONE
             }
+            // Stage IV: heller Marmor, Gold in Ringen und Speichen, Perlmutt-Froschlicht als Lichtpunkte (statt Sandstein).
             4 -> when {
                 edge -> Blocks.GOLD_BLOCK
                 ringGold || onSpoke -> Blocks.GOLD_BLOCK
-                ringLight -> Blocks.SEA_LANTERN
-                checker -> Blocks.SMOOTH_SANDSTONE
-                else -> Blocks.CUT_SANDSTONE
+                ringLight -> Blocks.PEARLESCENT_FROGLIGHT
+                else -> Blocks.SMOOTH_QUARTZ
             }
             else -> when {
                 edge -> Blocks.CHISELED_QUARTZ_BLOCK

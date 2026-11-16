@@ -1,0 +1,18 @@
+{
+  "placement": {
+    "type": "minecraft:random_spread",
+    "salt": 13370004,
+    "separation": 8,
+    "spacing": 22,
+    "exclusion_zone": {
+      "chunk_count": 7,
+      "other_set": "hha:hades_palaces"
+    }
+  },
+  "structures": [
+    {
+      "structure": "hha:punishment_site",
+      "weight": 1
+    }
+  ]
+}

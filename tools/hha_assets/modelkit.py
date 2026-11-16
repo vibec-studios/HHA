@@ -249,43 +249,53 @@ class Model:
         return '\n'.join(lines)
 
 
-def plume_tables(models):
-    """Eine Kotlin-Tabelle je Modell: Knochenpfad plus Vertex-Daten aller Federn dieses Knochens."""
-    helpers, tables = [], []
+def plume_table(model):
+    """Kotlin-Tabelle eines Modells: Knochenpfad plus Vertex-Daten aller Federn dieses Knochens.
+
+    Die Hilfsfunktionen tragen den Modellnamen, damit Teilstücke verschiedener Modelle nie kollidieren."""
+    helpers, entries = [], []
     counter = [0]
 
     def num(v):
         return f'{float(v):.3f}f'
 
-    for model in models:
-        entries = []
+    def visit(part, path):
+        here = path + [part.name]
+        if part.plumes:
+            values = []
+            for plume in part.plumes:
+                for left, right in plume.rows():
+                    values.extend(left)
+                    values.extend(right)
+            idx = counter[0]
+            counter[0] += 1
+            # Eigene Funktion je Knochen, sonst sprengen große Tabellen die Methodengrenze der JVM.
+            helpers.append(f'    private fun plumes_{model.name}_{idx}() = floatArrayOf({", ".join(num(v) for v in values)})')
+            names = ', '.join(f'"{n}"' for n in here)
+            entries.append(f'        FeatherBone(arrayOf({names}), plumes_{model.name}_{idx}()),')
+        for child in part.children:
+            visit(child, here)
 
-        def visit(part, path):
-            here = path + [part.name]
-            if part.plumes:
-                values = []
-                for plume in part.plumes:
-                    for left, right in plume.rows():
-                        values.extend(left)
-                        values.extend(right)
-                idx = counter[0]
-                counter[0] += 1
-                # Eigene Funktion je Knochen, sonst sprengen große Tabellen die Methodengrenze der JVM.
-                helpers.append(f'    private fun plumes{idx}() = floatArrayOf({", ".join(num(v) for v in values)})')
-                names = ', '.join(f'"{n}"' for n in here)
-                entries.append(f'        FeatherBone(arrayOf({names}), plumes{idx}()),')
-            for child in part.children:
-                visit(child, here)
-
-        for part in model.parts:
-            visit(part, [])
-        if entries:
-            tables.append(f'    fun {model.name}Feathers(): List<FeatherBone> = listOf(\n' + '\n'.join(entries) + '\n    )')
-    return '\n\n'.join(tables + helpers)
+    for part in model.parts:
+        visit(part, [])
+    if not entries:
+        return ''
+    table = f'    fun {model.name}Feathers(): List<FeatherBone> = listOf(\n' + '\n'.join(entries) + '\n    )'
+    return '\n\n'.join([table] + helpers)
 
 
-def write_kotlin(models):
-    body = '\n\n'.join(m.kotlin() for m in models) + '\n\n' + plume_tables(models)
+def model_chunk(model):
+    """Der Kotlin-Teil eines einzelnen Modells (TexturedModelData plus Federtabelle)."""
+    parts = [model.kotlin()]
+    feathers = plume_table(model)
+    if feathers:
+        parts.append(feathers)
+    return '\n\n'.join(parts)
+
+
+def assemble_kotlin(chunks, path=None):
+    """Setzt HhaModelData.kt aus den Teilstücken aller Modelle zusammen und schreibt atomar."""
+    body = '\n\n'.join(chunks)
     src = f'''package dev.henny.hha.client.model
 
 import net.minecraft.client.model.Dilation
@@ -303,11 +313,25 @@ object HhaModelData {{
 {body}
 }}
 '''
-    path = os.path.abspath(KOTLIN_OUT)
+    path = os.path.abspath(path or KOTLIN_OUT)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w', encoding='utf8', newline='\n') as f:
+    tmp = f'{path}.{os.getpid()}.tmp'
+    with open(tmp, 'w', encoding='utf8', newline='\n') as f:
         f.write(src)
+    for attempt in range(40):
+        try:
+            os.replace(tmp, path)
+            break
+        except PermissionError:
+            import time
+            time.sleep(0.25)
+    else:
+        raise SystemExit(f'Konnte {path} nicht ersetzen (Datei gesperrt?)')
     print('Kotlin:', path)
+
+
+def write_kotlin(models):
+    assemble_kotlin([model_chunk(m) for m in models])
 
 
 __all__ = [name for name in dir() if not name.startswith('_')]

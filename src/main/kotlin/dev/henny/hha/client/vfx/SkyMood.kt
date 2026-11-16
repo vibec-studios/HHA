@@ -37,6 +37,8 @@ object SkyMood {
         Vfx.Style.HADES to Mood(0xFF04160A.toInt(), 0xFF0E5A22.toInt(), 0xE6123A1C.toInt(), 0, 170f, 0.7f, 0.65f, 0f, 0f, 0f, 0f),
         Vfx.Style.FIRE to Mood(0xFF5A1408.toInt(), 0xFFA83A10.toInt(), 0xE66A2A18.toInt(), 0, 95f, 0f, 0.75f, 0f, 0f, 0f, 0f),
         Vfx.Style.HELL to Mood(0xFF06202A.toInt(), 0xFF0F5A6A.toInt(), 0xE6123A44.toInt(), 0, 170f, 0.7f, 0.65f, 0f, 0f, 0f, 0f),
+        // Kronos: Indigo-Nacht mit hellen Sternen (Phasenwechsel und Cutscenes, nicht pro Attacke).
+        Vfx.Style.AEON to Mood(0xFF080A24.toInt(), 0xFF1C2250.toInt(), 0xCC26346C.toInt(), 0, 175f, 1f, 0.5f, 0f, 0f, 0f, 0f),
     )
 
     private fun mix(a: Mood, b: Mood, t: Float) = Mood(

@@ -70,3 +70,6 @@ Schwert-Verzauberungen (Sharpness V, Knockback, Fire Aspect, Sweeping Edge),
 die **zweite** Mace-Verzauberungen (Wind Burst, Density V). Weitere Waffen
 landen mit Unbreaking/Mending in der Hotbar, der Rest ist das
 Standard-Loadout (Totem, Tränke, Perlen, Gapples …).
+
+`/hha kit diamond` und `/hha kit netherite` (Vanilla-Rüstung, keine Fähigkeiten) tragen statt der Weaving-Tränke und
+zwei der Stärke-II-Tränke je drei Wurftränke **Feuerresistenz** und **Schnelligkeit** mit 8 Minuten.

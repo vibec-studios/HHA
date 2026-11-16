@@ -1,5 +1,6 @@
 package dev.henny.hha.client.vfx
 
+import dev.henny.hha.logic.boss.BossTimings
 import net.minecraft.client.MinecraftClient
 import net.minecraft.client.world.ClientWorld
 import net.minecraft.entity.Entity
@@ -34,6 +35,9 @@ abstract class VfxEffect(val life: Int) {
     protected open fun tick(world: ClientWorld) {}
 
     protected open fun finished(): Boolean = false
+
+    /** Ansagen sind Spielinformation: Bei vollem Effekt-Speicher fallen sie als letzte weg. */
+    open val telegraph: Boolean get() = false
 
     abstract fun render(d: VfxDraw, time: Float)
 
@@ -356,64 +360,148 @@ class PillarEffect(
 }
 
 // -------------------------------------------------------------------------------------------------
-// Telegraphen
+// Ansagen (Telegraphs)
 // -------------------------------------------------------------------------------------------------
 
-/** Warnkreis: Runenkreis mit wachsender Füllung; blitzt kurz vor dem Einschlag auf. */
-class TelegraphRingEffect(
-    private val center: Vec3d, private val pal: Palette, private val radius: Float, life: Int,
-) : VfxEffect(life) {
+private const val WHITE = 0xFFFFFFFF.toInt()
 
-    override fun render(d: VfxDraw, time: Float) {
-        val t = progress(time)
-        val pos = center.add(0.0, 0.09, 0.0)
-        val blink = if (t > 0.75f) 0.75f + 0.25f * sin(time * 2.2f) else 0.75f
-        d.disc(VfxLayers.RUNE_ADD, pos, X, Z, radius.toDouble(), withAlpha(pal.main, blink * easeOut(t * 5f)), time * 0.035)
-        d.ring(VfxLayers.ENERGY, pos, X, Z, 0.0, (radius * easeInOut(t)).toDouble(), withAlpha(pal.main, 0.35f), withAlpha(pal.main, 0.5f), 48, 3f, time * 0.05f)
-        d.ring(VfxLayers.ENERGY, pos, X, Z, radius * 0.97, radius * 1.04, withAlpha(pal.core, blink), withAlpha(pal.core, blink), 64, 6f, time * 0.1f)
-        d.wall(VfxLayers.RAYS_ADD, pos, X, Z, UP, radius.toDouble(), radius.toDouble(), 1.2, withAlpha(pal.main, 0.6f * t), withAlpha(pal.main, 0f), 48, 5f, time * 0.03f)
+/**
+ * Gemeinsamer Takt aller Ansagen (Plan 3.2): Der Rand steht ab Tick 0 voll, die Füllung wächst gleichmäßig bis zum
+ * Treffer, und in den letzten [BossTimings.Min.FLASH] Ticks wird die ganze Form weiß („jetzt“). Gold ([safe]) heißt
+ * „hier bist du sicher“ und bekommt eine höhere Lichtwand, damit man die Stelle von weitem findet.
+ */
+abstract class TelegraphEffect(protected val pal: Palette, protected val safe: Boolean, life: Int) : VfxEffect(life) {
+
+    override val telegraph: Boolean get() = true
+
+    /** 0 → 1 bis zum Treffer, gleichmäßig: So lässt sich die Restzeit am Boden ablesen. */
+    protected fun fill(time: Float): Float = (time / life).coerceIn(0f, 1f)
+
+    /** 0 bis zu den letzten Ticks, dann binnen eines Ticks 1. */
+    protected fun flash(time: Float): Float = (time - (life - BossTimings.Min.FLASH)).coerceIn(0f, 1f)
+
+    protected fun rim(flash: Float, alpha: Float = 1f): Int =
+        withAlpha(lerpColor(lerpColor(pal.main, pal.core, 0.35f), WHITE, flash), alpha)
+
+    protected fun body(flash: Float, alpha: Float): Int = withAlpha(lerpColor(pal.main, WHITE, flash * 0.85f), alpha)
+
+    protected fun front(flash: Float, alpha: Float): Int = withAlpha(lerpColor(pal.core, WHITE, flash), alpha)
+
+    /** Füllung dezent am Anfang, kräftiger kurz vor dem Treffer, im Blitz hell. */
+    protected fun fillAlpha(t: Float, flash: Float): Float = (0.16f + 0.24f * t) * (1f - flash) + 0.62f * flash
+
+    /** Halbe Randstärke: mit der Größe etwas breiter, damit große Formen aus der Ferne lesbar bleiben. */
+    protected fun rimWidth(size: Double): Double = (0.07 + size * 0.008).coerceIn(0.07, 0.2)
+
+    /** Gerade Randlinie auf dem Boden: weicher Schein plus heller Kern. */
+    protected fun rimLine(d: VfxDraw, a: Vec3d, b: Vec3d, w: Double, flash: Float) {
+        val along = b.subtract(a)
+        if (along.lengthSquared() < 1e-6) return
+        val across = along.normalize().crossProduct(UP).let { if (it.lengthSquared() < 1e-6) X else it.normalize() }
+        d.band(VfxLayers.GLOW_ADD, a, b, across, w * 2.6, rim(flash, 0.5f), rim(flash, 0.5f))
+        d.band(VfxLayers.ENERGY, a.add(0.0, 0.005, 0.0), b.add(0.0, 0.005, 0.0), across, w, rim(flash), rim(flash), 0.5f, 0f)
     }
 }
 
-/** Warnlinie: leuchtender Korridor, in dem Pfeile zum Ziel laufen. */
+/** Ansage-Kreis ([inner] = 0) oder -Ring: Füllung wächst von innen zum Rand. Gold = sichere Fläche. */
+class TelegraphRingEffect(
+    private val center: Vec3d, pal: Palette, private val radius: Float, private val inner: Float, life: Int, safe: Boolean,
+) : TelegraphEffect(pal, safe, life) {
+
+    private val segments = (radius * 5f).toInt().coerceIn(32, 128)
+
+    override fun render(d: VfxDraw, time: Float) {
+        val t = fill(time)
+        val fl = flash(time)
+        val pos = center.add(0.0, 0.09, 0.0)
+        val r = radius.toDouble()
+        val ri = inner.toDouble().coerceIn(0.0, r)
+        val w = rimWidth(r)
+        val reach = ri + (r - ri) * t
+        if (reach > ri + 0.02) {
+            val alpha = fillAlpha(t, fl)
+            d.ring(VfxLayers.FLOW_ADD, pos, X, Z, ri, reach, body(fl, alpha), body(fl, alpha), segments, (r * 0.6).toFloat())
+            d.ring(VfxLayers.GLOW_ADD, pos.add(0.0, 0.01, 0.0), X, Z, max(ri, reach - w * 3.0), reach + w * 1.5, front(fl, 0.8f), front(fl, 0.8f), segments, 0f, 0.5f)
+        }
+        rimRing(d, pos, r, w, fl)
+        if (ri > 0.05) rimRing(d, pos, ri, w, fl)
+        // Niedrige Lichtwand am Rand: Auch auf unebenem Boden und aus flachem Winkel bleibt die Grenze lesbar.
+        val wall = if (safe) 1.4 else 0.45
+        d.wall(VfxLayers.RAYS_ADD, pos, X, Z, UP, r, r, wall, rim(fl, if (safe) 0.55f else 0.38f), rim(fl, 0f), segments, (r * 0.5).toFloat(), time * 0.02f)
+    }
+
+    private fun rimRing(d: VfxDraw, pos: Vec3d, r: Double, w: Double, fl: Float) {
+        d.ring(VfxLayers.GLOW_ADD, pos, X, Z, max(0.0, r - w * 2.6), r + w * 2.6, rim(fl, 0.5f), rim(fl, 0.5f), segments, 0f, 0.5f)
+        d.ring(VfxLayers.ENERGY, pos.add(0.0, 0.005, 0.0), X, Z, max(0.0, r - w), r + w, rim(fl), rim(fl), segments, (r * 0.9).toFloat())
+    }
+}
+
+/** Ansage-Linie: Korridor mit vollem Rand; die Füllung läuft vom Anfang zum Ende, wie der Stoß selbst. */
 class TelegraphLineEffect(
-    private val from: Vec3d, private val to: Vec3d, private val pal: Palette, private val width: Float, life: Int,
-) : VfxEffect(life) {
+    private val from: Vec3d, private val to: Vec3d, pal: Palette, private val halfWidth: Float, life: Int, safe: Boolean,
+) : TelegraphEffect(pal, safe, life) {
 
     private val delta = to.subtract(from)
     private val dir = if (delta.lengthSquared() < 1e-6) Z else delta.normalize()
     private val side = dir.crossProduct(UP).let { if (it.lengthSquared() < 1e-4) X else it.normalize() }
 
     override fun render(d: VfxDraw, time: Float) {
-        val t = progress(time)
-        val blink = if (t > 0.7f) 0.7f + 0.3f * sin(time * 2.6f) else 0.7f
-        val len = delta.length()
+        val t = fill(time)
+        val fl = flash(time)
+        val hw = halfWidth.toDouble()
+        val w = rimWidth(hw * 4.0)
         val a = from.add(0.0, 0.1, 0.0)
-        val w = side.multiply(width.toDouble() * easeOut(t * 4f))
-        val vc = d.buffer(VfxLayers.ENERGY)
-        with(d) {
-            val col = withAlpha(pal.main, 0.8f * blink)
-            val steps = (len / 2.0).toInt().coerceIn(1, 40)
-            for (i in 0 until steps) {
-                val f0 = i.toDouble() / steps
-                val f1 = (i + 1.0) / steps
-                val p0 = a.add(dir.multiply(len * f0))
-                val p1 = a.add(dir.multiply(len * f1))
-                vc.put(p0.subtract(w), (f0 * len * 0.2).toFloat() - time * 0.1f, 0f, col)
-                vc.put(p0.add(w), (f0 * len * 0.2).toFloat() - time * 0.1f, 1f, col)
-                vc.put(p1.add(w), (f1 * len * 0.2).toFloat() - time * 0.1f, 1f, col)
-                vc.put(p1.subtract(w), (f1 * len * 0.2).toFloat() - time * 0.1f, 0f, col)
-            }
+        val b = to.add(0.0, 0.1, 0.0)
+        val tip = a.add(delta.multiply(t.toDouble()))
+        if (t > 0.01f) {
+            val alpha = fillAlpha(t, fl)
+            d.band(VfxLayers.FLOW_ADD, a, tip, side, hw, body(fl, alpha), body(fl, alpha), 0.35f, 0f)
+            // Wachstumsfront: ein Querbalken, der zum Ende wandert.
+            val lift = Vec3d(0.0, 0.01, 0.0)
+            d.band(VfxLayers.GLOW_ADD, tip.subtract(side.multiply(hw)).add(lift), tip.add(side.multiply(hw)).add(lift), dir, w * 3.0, front(fl, 0.8f), front(fl, 0.8f))
         }
-        // Pfeile, die mit wachsendem Fortschritt schneller laufen.
-        val arrows = (len / 3.5).toInt().coerceIn(1, 14)
-        for (i in 0 until arrows) {
-            val f = ((i.toFloat() / arrows + time * 0.035f * (1f + t * 2f)) % 1f).toDouble()
-            val tipPos = a.add(dir.multiply(len * f)).add(0.0, 0.02, 0.0)
-            val back = tipPos.subtract(dir.multiply(width * 0.9))
-            val alpha = blink * envelope(f.toFloat(), 0.05f, 0.15f)
-            d.ribbon(VfxLayers.GLOW_ADD, listOf(back.subtract(w), tipPos), { 0.14 }, { withAlpha(pal.core, alpha) })
-            d.ribbon(VfxLayers.GLOW_ADD, listOf(back.add(w), tipPos), { 0.14 }, { withAlpha(pal.core, alpha) })
+        val l = side.multiply(hw)
+        rimLine(d, a.add(l), b.add(l), w, fl)
+        rimLine(d, a.subtract(l), b.subtract(l), w, fl)
+        rimLine(d, a.subtract(l), a.add(l), w, fl)
+        rimLine(d, b.subtract(l), b.add(l), w, fl)
+    }
+}
+
+/**
+ * Ansage-Kegel ab der Spitze [apex] in Richtung [direction]: Fächer bis [radius] mit halbem Öffnungswinkel
+ * `halfAngle` (Grad, 180 = voller Kreis). Die Füllung wächst von der Spitze nach außen.
+ */
+class TelegraphConeEffect(
+    private val apex: Vec3d, direction: Vec3d, pal: Palette, private val radius: Float, halfAngle: Float, life: Int,
+) : TelegraphEffect(pal, false, life) {
+
+    private val forward = Vec3d(direction.x, 0.0, direction.z).let { if (it.lengthSquared() < 1e-6) Z else it.normalize() }
+    private val side = UP.crossProduct(forward).normalize()
+    private val half = Math.toRadians(halfAngle.coerceIn(1f, 180f).toDouble())
+    private val full = halfAngle >= 179.5f
+    private val segments = (radius * half * 3.0).toInt().coerceIn(12, 128)
+
+    override fun render(d: VfxDraw, time: Float) {
+        val t = fill(time)
+        val fl = flash(time)
+        val pos = apex.add(0.0, 0.09, 0.0)
+        val r = radius.toDouble()
+        val w = rimWidth(r)
+        val reach = r * t
+        val arcLength = (r * half).toFloat()
+        if (reach > 0.02) {
+            val alpha = fillAlpha(t, fl)
+            d.arc(VfxLayers.FLOW_ADD, pos, forward, side, 0.0, reach, -half, half, body(fl, alpha), body(fl, alpha), segments, arcLength * 0.6f)
+            d.arc(VfxLayers.GLOW_ADD, pos.add(0.0, 0.01, 0.0), forward, side, max(0.0, reach - w * 3.0), reach + w * 1.5, -half, half, front(fl, 0.8f), front(fl, 0.8f), segments, 0f, 0.5f)
+        }
+        d.arc(VfxLayers.GLOW_ADD, pos, forward, side, max(0.0, r - w * 2.6), r + w * 2.6, -half, half, rim(fl, 0.5f), rim(fl, 0.5f), segments, 0f, 0.5f)
+        d.arc(VfxLayers.ENERGY, pos.add(0.0, 0.005, 0.0), forward, side, max(0.0, r - w), r + w, -half, half, rim(fl), rim(fl), segments, arcLength * 0.9f)
+        if (!full) {
+            for (angle in doubleArrayOf(-half, half)) {
+                val edge = forward.multiply(cos(angle)).add(side.multiply(sin(angle)))
+                rimLine(d, pos, pos.add(edge.multiply(r)), w, fl)
+            }
         }
     }
 }

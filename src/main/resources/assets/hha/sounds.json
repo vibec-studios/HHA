@@ -124,6 +124,12 @@
       "hha:boss/portal_enter"
     ]
   },
+  "boss.chain": {
+    "subtitle": "subtitles.hha.boss.chain",
+    "sounds": [
+      "hha:boss/chain"
+    ]
+  },
   "music.messenger": {
     "sounds": [
       {
@@ -160,6 +166,14 @@
     "sounds": [
       {
         "name": "hha:music/shade",
+        "stream": true
+      }
+    ]
+  },
+  "music.hades": {
+    "sounds": [
+      {
+        "name": "hha:music/hades",
         "stream": true
       }
     ]
@@ -254,24 +268,129 @@
       "hha:voice/de/finale_stinger"
     ]
   },
-  "voice.de.guide_back": {
+  "voice.de.hades_bait": {
     "sounds": [
-      "hha:voice/de/guide_back"
+      "hha:voice/de/hades_bait"
     ]
   },
-  "voice.de.guide_end": {
+  "voice.de.hades_bait2": {
     "sounds": [
-      "hha:voice/de/guide_end"
+      "hha:voice/de/hades_bait2"
     ]
   },
-  "voice.de.guide_follow": {
+  "voice.de.hades_dismiss": {
     "sounds": [
-      "hha:voice/de/guide_follow"
+      "hha:voice/de/hades_dismiss"
     ]
   },
-  "voice.de.guide_slow": {
+  "voice.de.hades_enough": {
     "sounds": [
-      "hha:voice/de/guide_slow"
+      "hha:voice/de/hades_enough"
+    ]
+  },
+  "voice.de.hades_enter": {
+    "sounds": [
+      "hha:voice/de/hades_enter"
+    ]
+  },
+  "voice.de.hades_excuse": {
+    "sounds": [
+      "hha:voice/de/hades_excuse"
+    ]
+  },
+  "voice.de.hades_gift": {
+    "sounds": [
+      "hha:voice/de/hades_gift"
+    ]
+  },
+  "voice.de.hades_helm": {
+    "sounds": [
+      "hha:voice/de/hades_helm"
+    ]
+  },
+  "voice.de.hades_host": {
+    "sounds": [
+      "hha:voice/de/hades_host"
+    ]
+  },
+  "voice.de.hades_never": {
+    "sounds": [
+      "hha:voice/de/hades_never"
+    ]
+  },
+  "voice.de.hades_pact": {
+    "sounds": [
+      "hha:voice/de/hades_pact"
+    ]
+  },
+  "voice.de.hades_rise": {
+    "sounds": [
+      "hha:voice/de/hades_rise"
+    ]
+  },
+  "voice.de.hades_sign": {
+    "sounds": [
+      "hha:voice/de/hades_sign"
+    ]
+  },
+  "voice.de.hades_together": {
+    "sounds": [
+      "hha:voice/de/hades_together"
+    ]
+  },
+  "voice.de.hades_wealth": {
+    "sounds": [
+      "hha:voice/de/hades_wealth"
+    ]
+  },
+  "voice.de.hunter_ambush": {
+    "sounds": [
+      "hha:voice/de/hunter_ambush"
+    ]
+  },
+  "voice.de.hunter_close": {
+    "sounds": [
+      "hha:voice/de/hunter_close"
+    ]
+  },
+  "voice.de.hunter_first": {
+    "sounds": [
+      "hha:voice/de/hunter_first"
+    ]
+  },
+  "voice.de.hunter_last": {
+    "sounds": [
+      "hha:voice/de/hunter_last"
+    ]
+  },
+  "voice.de.hunter_personal": {
+    "sounds": [
+      "hha:voice/de/hunter_personal"
+    ]
+  },
+  "voice.de.hunter_return": {
+    "sounds": [
+      "hha:voice/de/hunter_return"
+    ]
+  },
+  "voice.de.hunter_steal": {
+    "sounds": [
+      "hha:voice/de/hunter_steal"
+    ]
+  },
+  "voice.de.hunter_struck": {
+    "sounds": [
+      "hha:voice/de/hunter_struck"
+    ]
+  },
+  "voice.de.hunter_warn": {
+    "sounds": [
+      "hha:voice/de/hunter_warn"
+    ]
+  },
+  "voice.de.hunter_wrong": {
+    "sounds": [
+      "hha:voice/de/hunter_wrong"
     ]
   },
   "voice.de.prologue_altar": {
@@ -504,24 +623,129 @@
       "hha:voice/en/finale_stinger"
     ]
   },
-  "voice.en.guide_back": {
+  "voice.en.hades_bait": {
     "sounds": [
-      "hha:voice/en/guide_back"
+      "hha:voice/en/hades_bait"
     ]
   },
-  "voice.en.guide_end": {
+  "voice.en.hades_bait2": {
     "sounds": [
-      "hha:voice/en/guide_end"
+      "hha:voice/en/hades_bait2"
     ]
   },
-  "voice.en.guide_follow": {
+  "voice.en.hades_dismiss": {
     "sounds": [
-      "hha:voice/en/guide_follow"
+      "hha:voice/en/hades_dismiss"
     ]
   },
-  "voice.en.guide_slow": {
+  "voice.en.hades_enough": {
     "sounds": [
-      "hha:voice/en/guide_slow"
+      "hha:voice/en/hades_enough"
+    ]
+  },
+  "voice.en.hades_enter": {
+    "sounds": [
+      "hha:voice/en/hades_enter"
+    ]
+  },
+  "voice.en.hades_excuse": {
+    "sounds": [
+      "hha:voice/en/hades_excuse"
+    ]
+  },
+  "voice.en.hades_gift": {
+    "sounds": [
+      "hha:voice/en/hades_gift"
+    ]
+  },
+  "voice.en.hades_helm": {
+    "sounds": [
+      "hha:voice/en/hades_helm"
+    ]
+  },
+  "voice.en.hades_host": {
+    "sounds": [
+      "hha:voice/en/hades_host"
+    ]
+  },
+  "voice.en.hades_never": {
+    "sounds": [
+      "hha:voice/en/hades_never"
+    ]
+  },
+  "voice.en.hades_pact": {
+    "sounds": [
+      "hha:voice/en/hades_pact"
+    ]
+  },
+  "voice.en.hades_rise": {
+    "sounds": [
+      "hha:voice/en/hades_rise"
+    ]
+  },
+  "voice.en.hades_sign": {
+    "sounds": [
+      "hha:voice/en/hades_sign"
+    ]
+  },
+  "voice.en.hades_together": {
+    "sounds": [
+      "hha:voice/en/hades_together"
+    ]
+  },
+  "voice.en.hades_wealth": {
+    "sounds": [
+      "hha:voice/en/hades_wealth"
+    ]
+  },
+  "voice.en.hunter_ambush": {
+    "sounds": [
+      "hha:voice/en/hunter_ambush"
+    ]
+  },
+  "voice.en.hunter_close": {
+    "sounds": [
+      "hha:voice/en/hunter_close"
+    ]
+  },
+  "voice.en.hunter_first": {
+    "sounds": [
+      "hha:voice/en/hunter_first"
+    ]
+  },
+  "voice.en.hunter_last": {
+    "sounds": [
+      "hha:voice/en/hunter_last"
+    ]
+  },
+  "voice.en.hunter_personal": {
+    "sounds": [
+      "hha:voice/en/hunter_personal"
+    ]
+  },
+  "voice.en.hunter_return": {
+    "sounds": [
+      "hha:voice/en/hunter_return"
+    ]
+  },
+  "voice.en.hunter_steal": {
+    "sounds": [
+      "hha:voice/en/hunter_steal"
+    ]
+  },
+  "voice.en.hunter_struck": {
+    "sounds": [
+      "hha:voice/en/hunter_struck"
+    ]
+  },
+  "voice.en.hunter_warn": {
+    "sounds": [
+      "hha:voice/en/hunter_warn"
+    ]
+  },
+  "voice.en.hunter_wrong": {
+    "sounds": [
+      "hha:voice/en/hunter_wrong"
     ]
   },
   "voice.en.prologue_altar": {
