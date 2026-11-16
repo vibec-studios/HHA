@@ -81,6 +81,24 @@ class MyAddonClient : HhaClientAddon {
 - Bereite Fähigkeiten pulsieren in der Akzentfarbe, laufende Cooldowns
   dunkeln ab und zeigen einen Fortschrittsbalken — wie die eingebauten Slots.
 
+## Kontrollzentrum (Taste K)
+
+Alles aus `/hha` und `/hhac` gibt es auch als Menü: Taste **K** (unter *Steuerung* änderbar) oder `/hhac menu`.
+
+| Tab | Inhalt |
+| --- | --- |
+| Übersicht | Spieler in 3D mit Rüstung (ziehen zum Drehen), getragenes Set, Cooldowns live, Ultra-Modus |
+| Fähigkeiten | Alle Server-Schalter in Gruppen; Addon-Schlüssel landen in einer eigenen Gruppe je Addon |
+| Werte | Alle Server-Zahlen als Regler mit Einheit (Sekunden, Herzen, Blöcke), Zurücksetzen per ↺ |
+| Darstellung | Die Client-Einstellungen unten, mit Vorschau der Cooldown-Leiste |
+| Werkzeuge | Trust per Schalter, Kits als Karten, für Admins: Hermes starten/überspringen/abbrechen, Hades abbrechen, Config speichern/laden/zurücksetzen, Rezepte laden |
+
+Server-Einstellungen ändern nur Spieler mit OP-Stufe 2 (wie `/hha`), alle anderen sehen sie schreibgeschützt. Ohne HHA
+auf dem Server bleibt nur der Tab *Darstellung* nutzbar. Beschriftungen kommen aus `hha.gui.cfg.<key>` und
+`hha.gui.cfg.<key>.desc`; Addons können dort eigene Namen für ihre Schlüssel (`<addonid>.<key>`) mitliefern, sonst
+zeigt das Menü den Schlüssel lesbar formatiert. Netzwerk: `GuiRequestPayload`, `GuiActionPayload`, `GuiStatePayload`
+in `net/GuiPayloads.kt`, Serverlogik in `logic/GuiServer.kt`, das Menü in `client/gui/`.
+
 ## Client-Einstellungen (`/hhac`)
 
 Rein clientseitige Darstellungsoptionen — sie werden **nie** vom Server
@@ -101,3 +119,34 @@ Rein clientseitige Darstellungsoptionen — sie werden **nie** vom Server
 
 `/hhac list` zeigt alle aktuellen Werte, `/hhac reset` stellt die Defaults
 wieder her.
+
+Seit der Überarbeitung 2 gibt es dazu den Schalter für das Fenster der Tore (in der Schalterliste des Menüs fehlt er
+noch, `/hhac toggle` geht):
+
+| Befehl | Schlüssel | Standard | Wirkung |
+| --- | --- | --- | --- |
+| `/hhac toggle portal_shader true\|false` | `portal_shader` | `true` | Wolkentor und Höllentor zeigen ein Fenster mit Tiefe (eigener Shader); aus = nur die animierte Blocktextur |
+| `/hhac toggle tartaros_shader true\|false` | `tartaros_shader` | `true` | Bildfilter im Tartaros |
+
+## Neue Server-Schalter und Zahlen (Überarbeitung 2)
+
+Für Bosse, Reliquien und Tore; alle über `/hha toggle` bzw. `/hha set` (OP). Bedeutung und Formeln stehen in
+[Bosse allgemein](bosse-allgemein.md#einstellungen).
+
+| Schlüssel | Art | Standard | Kurz |
+| --- | --- | --- | --- |
+| `olympus_portal` | Schalter | `true` | Wolkentore zünden |
+| `tartaros_chain` | Schalter | `true` | Palastsiegel verlangt 5/5 Glieder |
+| `relic_drops` | Schalter | `true` | Reliquien je Welt einmal |
+| `relic_crafting` | Schalter | `false` | Schmiederezepte der Set-Teile (löst einen Datapack-Reload aus) |
+| `boss_anti_air` | Schalter | `true` | Smash-Folge und Konter |
+| `boss_strength` | Zahl | `1.0` | Leben aller Bosse |
+| `boss_tempo_per_player` | Zahl | `0.05` | kürzere Pausen je weiterem Spieler |
+| `boss_damage_player_cap` | Zahl | `1.75` | Deckel des Schadensfaktors |
+| `boss_smash_decay` | Zahl (Ticks) | `120` | Abbau des Smash-Zählers |
+| `hermes_health_per_player` | Zahl | `0.75` (vorher 0,6) | Leben je weiterem Spieler, für alle Bosse |
+| `hermes_damage_per_player` | Zahl | `0.15` (vorher 0,2) | Schaden je weiterem Spieler, für alle Bosse |
+
+Die neuen Schlüssel stehen noch nicht in den Listen des Kontrollzentrums (`client/gui/ConfigMeta.kt`); bis dahin gehen sie
+über `/hha`. Die Beschriftungen `hha.gui.cfg.relic_drops`, `hha.gui.cfg.relic_crafting` und `hha.gui.client.portal_shader`
+liegen in den Sprachdateien bereit.

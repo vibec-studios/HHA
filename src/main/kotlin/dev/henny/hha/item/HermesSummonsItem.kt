@@ -1,21 +1,21 @@
 package dev.henny.hha.item
 
-import dev.henny.hha.logic.boss.HermesFights
 import net.minecraft.entity.player.PlayerEntity
 import net.minecraft.item.Item
-import net.minecraft.server.network.ServerPlayerEntity
+import net.minecraft.text.Text
 import net.minecraft.util.ActionResult
+import net.minecraft.util.Formatting
 import net.minecraft.util.Hand
 import net.minecraft.world.World
 
-/** Versiegelter Brief: Rechtsklick unter freiem Himmel ruft Hermes zur Zustellung herbei. */
+/**
+ * Der Botenbrief (Überarbeitung 2, PLAN 3): Hermes wird nicht mehr herbeigerufen, er wartet im Olymp. Rechtsklick zeigt
+ * die Bauanleitung des Wolkentors (Glowstone-Rahmen plus Wassereimer). Das Rezept entfällt; das Item bleibt registriert.
+ */
 class HermesSummonsItem(settings: Settings) : Item(settings) {
 
     override fun use(world: World, user: PlayerEntity, hand: Hand): ActionResult {
-        if (user !is ServerPlayerEntity) return ActionResult.SUCCESS
-        if (!HermesFights.start(user)) return ActionResult.FAIL
-        val stack = user.getStackInHand(hand)
-        if (!user.isCreative) stack.decrement(1)
+        if (!world.isClient) user.sendMessage(Text.translatable("hha.olympus.portal_hint").formatted(Formatting.GOLD, Formatting.ITALIC), false)
         return ActionResult.SUCCESS
     }
 }

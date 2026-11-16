@@ -28,7 +28,11 @@ class HhaClient : ClientModInitializer {
 
     override fun onInitializeClient() {
         HhaClientConfig.load()
+        // Kettenphysik des Hells Mace (Item-Modelltyp hha:flail), muss vor dem ersten Laden der Modelle stehen
+        dev.henny.hha.client.model.FlailModelRenderer.register()
         HhaClientCommands.register()
+        // RPG-Modus: Knopf im Hauptmenü, Lobby, Tunnel, Startanimation
+        dev.henny.hha.client.rpg.RpgClient.init()
 
         EntityRendererRegistry.register(HhaEntities.HEAVENS_MACE) { context ->
             HeavensMaceEntityRenderer(context)
@@ -37,6 +41,7 @@ class HhaClient : ClientModInitializer {
         dev.henny.hha.client.particle.HhaParticleFactories.register()
 
         dev.henny.hha.client.vfx.VfxLayers.init()
+        dev.henny.hha.client.vfx.PortalVfx.init()
         dev.henny.hha.client.model.BossClient.register()
         ClientPlayNetworking.registerGlobalReceiver(dev.henny.hha.net.CinePayload.ID) { payload, _ ->
             dev.henny.hha.client.cine.CinePlayer.handle(payload)
@@ -54,6 +59,7 @@ class HhaClient : ClientModInitializer {
 
         CooldownHud.register()
         HhaTooltips.register()
+        dev.henny.hha.client.gui.GuiClient.register()
 
         loadClientAddons()
 
@@ -86,6 +92,10 @@ class HhaClient : ClientModInitializer {
         dev.henny.hha.client.cine.CinePlayer.skipKey = KeyBindingHelper.registerKeyBinding(
             KeyBinding("key.hha.skip_cutscene", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_ENTER, category)
         )
+        val menuKey = KeyBindingHelper.registerKeyBinding(
+            KeyBinding("key.hha.menu", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_K, category)
+        )
+        dev.henny.hha.client.gui.GuiClient.menuKey = menuKey
 
         ClientTickEvents.END_CLIENT_TICK.register { client ->
             CooldownHud.clientTick()
@@ -93,6 +103,10 @@ class HhaClient : ClientModInitializer {
             dev.henny.hha.client.vfx.ScreenFx.tick()
             dev.henny.hha.client.vfx.SkyMood.tick(client.world)
             dev.henny.hha.client.cine.CinePlayer.tick()
+            while (menuKey.wasPressed()) {
+                if (client.currentScreen == null) dev.henny.hha.client.gui.GuiClient.open()
+            }
+            dev.henny.hha.client.gui.GuiClient.tick(client)
 
             val player = client.player ?: run {
                 jumpWasPressed = false

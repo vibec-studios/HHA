@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "boss=0": {
+      "model": "hha:block/boss_altar_0"
+    },
+    "boss=1": {
+      "model": "hha:block/boss_altar_1"
+    },
+    "boss=2": {
+      "model": "hha:block/boss_altar_2"
+    },
+    "boss=3": {
+      "model": "hha:block/boss_altar_3"
+    },
+    "boss=4": {
+      "model": "hha:block/boss_altar"
+    }
+  }
+}

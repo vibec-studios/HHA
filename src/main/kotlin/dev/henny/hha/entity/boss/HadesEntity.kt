@@ -86,6 +86,7 @@ class HadesEntity(type: EntityType<out HadesEntity>, world: World) : PuppetEntit
         builder.add(STAGE, 1)
         builder.add(FORM, 0)
         builder.add(BIDENT_OUT, false)
+        builder.add(ANTI_AIR, false)
     }
 
     var pose: Int
@@ -105,6 +106,14 @@ class HadesEntity(type: EntityType<out HadesEntity>, world: World) : PuppetEntit
     var bidentOut: Boolean
         get() = dataTracker.get(BIDENT_OUT)
         set(value) = dataTracker.set(BIDENT_OUT, value)
+
+    /**
+     * Konter gegen Spieler über ihm (Überarbeitung 2, PLAN 4.3): Mit gesetzter Marke spielt das Modell [HadesPose.SLAM]
+     * rückwärts (der Bident fährt senkrecht nach oben). Keine eigene Pose.
+     */
+    var antiAir: Boolean
+        get() = dataTracker.get(ANTI_AIR)
+        set(value) = dataTracker.set(ANTI_AIR, value)
 
     /** Wie oft er schon aufgestanden ist: Mit jedem Mal wird er größer. */
     var form: Int
@@ -147,7 +156,9 @@ class HadesEntity(type: EntityType<out HadesEntity>, world: World) : PuppetEntit
         }
         val allowed = fight.onDamaged(this, source, amount)
         if (allowed <= 0f) return false
-        return super.damage(world, source, allowed)
+        val hurt = super.damage(world, source, allowed)
+        if (hurt) fight.onHitLanded(this, source)
+        return hurt
     }
 
     companion object {
@@ -159,6 +170,7 @@ class HadesEntity(type: EntityType<out HadesEntity>, world: World) : PuppetEntit
         private val STAGE: TrackedData<Int> = DataTracker.registerData(HadesEntity::class.java, TrackedDataHandlerRegistry.INTEGER)
         private val FORM: TrackedData<Int> = DataTracker.registerData(HadesEntity::class.java, TrackedDataHandlerRegistry.INTEGER)
         private val BIDENT_OUT: TrackedData<Boolean> = DataTracker.registerData(HadesEntity::class.java, TrackedDataHandlerRegistry.BOOLEAN)
+        private val ANTI_AIR: TrackedData<Boolean> = DataTracker.registerData(HadesEntity::class.java, TrackedDataHandlerRegistry.BOOLEAN)
 
         fun attributes(): DefaultAttributeContainer.Builder = MobEntity.createMobAttributes()
             .add(EntityAttributes.MAX_HEALTH, 1000.0)

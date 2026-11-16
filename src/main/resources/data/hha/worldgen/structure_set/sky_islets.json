@@ -1,0 +1,14 @@
+{
+  "placement": {
+    "type": "minecraft:random_spread",
+    "salt": 13370042,
+    "separation": 4,
+    "spacing": 9
+  },
+  "structures": [
+    {
+      "structure": "hha:sky_islet",
+      "weight": 1
+    }
+  ]
+}

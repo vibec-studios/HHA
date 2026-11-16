@@ -1,6 +1,7 @@
 package dev.henny.hha.client.model
 
 import dev.henny.hha.entity.miniboss.SisyphusAction
+import dev.henny.hha.logic.boss.BossDefense
 import dev.henny.hha.logic.boss.BossTimings
 import dev.henny.hha.logic.boss.BossTimings.Sisyphus as S
 import net.minecraft.client.model.ModelPart
@@ -125,6 +126,7 @@ class SisyphusModel(root: ModelPart) : GuardianModel(root) {
         var boulderScale = 1f
         // Ausweichbahn des Felsens zwischen zwei Posen (im Rumpfraum): dy nach oben, dz nach hinten.
         var liftArc = 0f
+        var gaze = 0f
         var backArc = 0f
 
         start(SisyphusPoses.IDLE)
@@ -184,6 +186,18 @@ class SisyphusModel(root: ModelPart) : GuardianModel(root) {
                 pant = 1f - grow
                 if (a < S.REGROW_START) boulderShown = false else boulderScale = max(grow, 0.02f)
             }
+            BossDefense.ANTI_AIR -> {
+                // Konter (Überarbeitung 2, PLAN 4.3): Er stemmt den Fels wie zum Wurf über den Kopf (THROW_LIFT) und stößt
+                // ihn beim Ende der Ansage ein Stück nach oben; der Blick geht hinauf.
+                val g = BossTimings.Guardian
+                val lift = step(a, 0f, g.ANTI_AIR_RAISE.toFloat())
+                val back = step(a, g.ANTI_AIR_END - 8f, g.ANTI_AIR_END.toFloat())
+                blend(SisyphusPoses.THROW_LIFT, lift)
+                blend(SisyphusPoses.IDLE, back)
+                liftArc = 3f * hold(a - (g.ANTI_AIR_HIT - 1f), 2f, 5f, 10f)
+                tremble = lift * (1f - back) * (1f - step(a, g.ANTI_AIR_HIT - 1f, g.ANTI_AIR_HIT + 1f))
+                gaze = lift * (1f - back)
+            }
             SisyphusAction.STAGGER -> {
                 // Vom eigenen Fels getroffen: liegt halb auf der Seite, ein Arm schützt den Kopf; steht am Ende auf.
                 val fall = step(a, 0f, 5f)
@@ -200,6 +214,7 @@ class SisyphusModel(root: ModelPart) : GuardianModel(root) {
         // --- Ausweichbahn des Felsens, damit er nicht durch Kopf oder Rücken wandert ---
         boulder.originY -= liftArc
         boulder.originZ += backArc
+        head.pitch -= 0.4f * gaze
 
         // --- Gang unter Last: kurze, schwere Schritte, bei jedem sackt er ein ---
         val stepSag = abs(sin(p)) * w

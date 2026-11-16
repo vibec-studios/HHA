@@ -299,6 +299,9 @@ class BoltRenderer(context: EntityRendererFactory.Context) : EntityRenderer<Herm
     private val harpe = FlyingWeapon(context, BossLayers.KRONOS, "harpe", "kronos", 0.69f, FlyingWeapon.HARPE)
     private val boulder = FlyingWeapon(context, BossLayers.SISYPHUS, "boulder", "sisyphus", 0.69f, FlyingWeapon.BOULDER)
 
+    /** Requisiten des Olymp (Keraunos, Adler, Rohling, Fackel, Donnerkeil, Klingenbogen): Modell `olymp_props`. */
+    private val olymp = OlympProps(context)
+
     override fun createRenderState() = BoltRenderState()
 
     override fun updateRenderState(entity: HermesBoltEntity, state: BoltRenderState, tickDelta: Float) {
@@ -317,6 +320,11 @@ class BoltRenderer(context: EntityRendererFactory.Context) : EntityRenderer<Herm
     }
 
     override fun render(state: BoltRenderState, matrices: MatrixStack, queue: OrderedRenderCommandQueue, cameraState: CameraRenderState) {
+        if (state.kind in HermesBoltEntity.OLYMP_KINDS) {
+            olymp.submit(state, matrices, queue)
+            super.render(state, matrices, queue, cameraState)
+            return
+        }
         when (state.kind) {
             HermesBoltEntity.ROCK -> {
                 // Ein echter Felsblock, der sich im Flug überschlägt.

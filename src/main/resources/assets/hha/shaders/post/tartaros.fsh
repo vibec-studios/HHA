@@ -2,9 +2,10 @@
 
 #moj_import <minecraft:globals.glsl>
 
-// Die Farbe der Unterwelt: kalte, grünstichige Schatten, warme Glut in den Lichtern, Aschedunst in der Ferne,
-// ein leichtes Flimmern über weiten Strecken und ein weicher Schein um alles, was leuchtet. Bewusst ohne
-// Pixelraster: alle Abtastungen sind bilinear und das Korn liegt unter der Wahrnehmungsschwelle einzelner Pixel.
+// Die Farbe der Unterwelt: kalte, grünstichige Schatten, warme Glut in den Lichtern, Aschedunst in der Ferne.
+// Überarbeitung 2 (ruhiger): Flimmern nur noch ein Hauch in großer Ferne, Schein nur um wirklich Helles und klein,
+// Vignette halb so stark (Werte in post_effect/tartaros.json). Bewusst ohne Pixelraster: alle Abtastungen sind
+// bilinear und das Korn liegt unter der Wahrnehmungsschwelle einzelner Pixel.
 
 uniform sampler2D InSampler;
 uniform sampler2D DepthSampler;
@@ -66,27 +67,29 @@ void main() {
 
     float rawDepth = texture(DepthSampler, texCoord).r;
     float dist = rawDepth >= 1.0 ? FAR : linearDepth(rawDepth);
-    float far = smoothstep(HazeStart * 0.5, HazeEnd, dist);
+    // Erst ab dem Dunst-Anfang, damit Nahes nie wabert.
+    float far = smoothstep(HazeStart, HazeEnd, dist);
 
     // Flimmern wie über heißem Stein, nur in der Ferne und am Himmel, nie direkt vor dem Gesicht.
     vec2 wobble = vec2(
-        smoothNoise(texCoord * vec2(9.0, 14.0) + vec2(0.0, seconds * 0.55)) - 0.5,
-        smoothNoise(texCoord * vec2(13.0, 8.0) - vec2(seconds * 0.4, 0.0)) - 0.5
+        smoothNoise(texCoord * vec2(9.0, 14.0) + vec2(0.0, seconds * 0.3)) - 0.5,
+        smoothNoise(texCoord * vec2(13.0, 8.0) - vec2(seconds * 0.2, 0.0)) - 0.5
     );
     vec2 uv = texCoord + wobble * texel * Shimmer * far;
 
     vec3 color = texture(InSampler, uv).rgb;
 
-    // Weicher Schein: Was hell ist, strahlt in einem breiten Kreis aus. Zwölf bilineare Abtastungen auf zwei Ringen.
+    // Leiser Schein: Nur was sehr hell ist, strahlt in einem kleinen Kreis aus. Zwölf bilineare Abtastungen auf
+    // zwei Ringen.
     vec3 bloom = vec3(0.0);
     float weight = 0.0;
     for (int ring = 1; ring <= 2; ring++) {
-        float radius = float(ring) * 5.5;
+        float radius = float(ring) * 3.5;
         for (int i = 0; i < 6; i++) {
             float a = (float(i) + float(ring) * 0.5) * 1.0471976;
             vec3 s = texture(InSampler, uv + vec2(cos(a), sin(a)) * texel * radius).rgb;
             float w = 1.0 / float(ring);
-            bloom += max(s - 0.62, 0.0) * w;
+            bloom += max(s - 0.74, 0.0) * w;
             weight += w;
         }
     }

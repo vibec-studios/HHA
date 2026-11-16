@@ -345,16 +345,6 @@ def serpent():
     return build()
 
 
-def variants(model, albedo, glow):
-    """Der Schatten des Boten: dieselben Teile und UVs, eigener Maler (verkohlt, Ascherand, Gift-Grün)."""
-    shade = build('shade', 'shade_b', texture='serpent_shade')
-    shade.pack()
-    for a, b in zip(model.cubes(), shade.cubes()):
-        if (a.u, a.v) != (b.u, b.v):
-            raise SystemExit('serpent_shade: UV-Belegung weicht ab')
-    shade.paint()
-
-
 # -------------------------------------------------------------------------------------------------
 # Posen für die Vorschau (dieselben Winkel wie SerpentModel.kt). Die Teile liegen im Modell übereinander; für die
 # Vorschau reihen die Versätze Kopf, ein Glied und Schwanz jeder Variante hintereinander (A rechts, B links).

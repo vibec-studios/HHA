@@ -28,8 +28,9 @@ object AmbientVfx {
             val pos = player.getLerpedPos(d.tickDelta)
             if (head.isOf(HhaItems.HEAVEN_HELMET)) {
                 val center = pos.add(0.0, player.height + 0.32 + sin(time * 0.06) * 0.035, 0.0)
-                d.ring(VfxLayers.GLOW_ADD, center, X, Z, 0.2, 0.62, withAlpha(HEAVEN.main, 0f), withAlpha(HEAVEN.main, 0.45f), 24)
-                d.ring(VfxLayers.ENERGY, center, X, Z, 0.27, 0.40, withAlpha(HEAVEN.core, 0.95f), withAlpha(HEAVEN.main, 0.95f), 28, 2f, time * 0.03f)
+                // P02: Heiligenschein ruhiger (Lichthof schmaler und schwächer, Ring 0,95 → 0,7).
+                d.ring(VfxLayers.GLOW_ADD, center, X, Z, 0.24, 0.5, withAlpha(HEAVEN.main, 0f), withAlpha(HEAVEN.main, 0.25f), 24)
+                d.ring(VfxLayers.ENERGY, center, X, Z, 0.27, 0.40, withAlpha(HEAVEN.core, 0.7f), withAlpha(HEAVEN.main, 0.7f), 28, 2f, time * 0.03f)
             } else if (head.isOf(HhaItems.HELL_HELMET)) {
                 // Seelenfeuer-Krone: fünf züngelnde Flammenzacken.
                 val center = pos.add(0.0, player.height + 0.02, 0.0)
@@ -41,7 +42,7 @@ object AmbientVfx {
                     d.ribbon(
                         VfxLayers.ENERGY,
                         listOf(base, base.add(0.0, h * 0.5, 0.0), base.add(sin(time * 0.2 + i) * 0.03, h, 0.0)),
-                        { 0.09 * (1.0 - it * 0.85) }, { withAlpha(HELL.main, 0.95f * (1f - it * 0.3f)) },
+                        { 0.09 * (1.0 - it * 0.85) }, { withAlpha(HELL.main, 0.7f * (1f - it * 0.3f)) },
                         uScale = 1.2f, uOffset = i * 1.3f,
                     )
                 }

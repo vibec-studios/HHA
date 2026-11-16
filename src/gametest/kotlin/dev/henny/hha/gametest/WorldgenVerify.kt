@@ -184,6 +184,221 @@ class WorldgenVerify : ModInitializer {
         }
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Olymp (Überarbeitung 2, PLAN 8.4)
+    // ---------------------------------------------------------------------------------------------
+
+    /** Leinwand im Speicher für die Olymp-Pläne: weiß, was schon steht (für weiche Blöcke wie Wolken und Gras). */
+    private class SkyMemory(
+        override val minX: Int, override val maxX: Int, override val minZ: Int, override val maxZ: Int, private val floor: Int,
+    ) : dev.henny.hha.world.olymp.SkyCanvas() {
+        val blocks = HashMap<Long, net.minecraft.block.BlockState>()
+
+        private fun key(x: Int, y: Int, z: Int) = net.minecraft.util.math.BlockPos.asLong(x, y, z)
+
+        override fun put(x: Int, y: Int, z: Int, state: net.minecraft.block.BlockState) {
+            if (!inside(x, z)) return
+            val k = key(x, y, z)
+            if (state.isAir) blocks.remove(k) else blocks[k] = state
+        }
+
+        override fun isFree(x: Int, y: Int, z: Int): Boolean = inside(x, z) && key(x, y, z) !in blocks
+        override fun ground(x: Int, z: Int): Int = floor
+        override fun chest(x: Int, y: Int, z: Int) = put(x, y, z, net.minecraft.block.Blocks.CHEST.defaultState)
+        override fun spawner(x: Int, y: Int, z: Int, type: net.minecraft.entity.EntityType<*>) {}
+
+        fun state(x: Int, y: Int, z: Int): net.minecraft.block.BlockState = blocks[key(x, y, z)] ?: net.minecraft.block.Blocks.AIR.defaultState
+
+        fun write(name: String) {
+            val out = java.io.File("plan_$name.txt").bufferedWriter()
+            for ((k, state) in blocks) {
+                val pos = net.minecraft.util.math.BlockPos.fromLong(k)
+                out.write("${pos.x} ${pos.y} ${pos.z} ${net.minecraft.registry.Registries.BLOCK.getId(state.block).path}")
+                out.newLine()
+            }
+            out.close()
+            println("HHA-VERIFY Plan $name: ${blocks.size} Blöcke")
+        }
+    }
+
+    private val olympusAllowed = setOf("olympus_portal", "hades_portal", "boss_altar", "stele", "offering_pedestal", "olympus_altar", "green_fire")
+
+    /** Nur Vanilla-Blöcke außer den Funktionsblöcken (PLAN 8.3). */
+    private fun checkVanilla(name: String, canvas: SkyMemory) {
+        val foreign = canvas.blocks.values.map { net.minecraft.registry.Registries.BLOCK.getId(it.block) }
+            .filter { it.namespace != "minecraft" && it.path !in olympusAllowed }.toSet()
+        require(foreign.isEmpty()) { "Olymp-Plan $name enthält fremde Blöcke: $foreign" }
+    }
+
+    /**
+     * Wolkentor (P03/P13): Selbsttest der Rahmenerkennung (leere Liste = bestanden) und Ankunft auf Insel A: Unter
+     * `ARRIVAL_SPOT` liegt ein fester Block, darüber zwei Blöcke frei, und das Ankunftstor ist im Bauplan gefüllt.
+     */
+    private fun checkPortals() {
+        val failures = dev.henny.hha.logic.world.PortalFramesCheck.run()
+        require(failures.isEmpty()) { "Rahmenprüfung des Wolkentors: $failures" }
+        val layout = dev.henny.hha.world.olymp.OlympusLayout
+        val canvas = drawIsle(layout.A)
+        val spot = net.minecraft.util.math.BlockPos.ofFloored(layout.ARRIVAL_SPOT)
+        require(canvas.state(spot.x, spot.y - 1, spot.z).let { !it.isAir && it.blocksMovement() }) {
+            "Kein fester Boden unter dem Ankunftspunkt $spot"
+        }
+        require(canvas.state(spot.x, spot.y, spot.z).isAir && canvas.state(spot.x, spot.y + 1, spot.z).isAir) { "Ankunftspunkt $spot ist verbaut" }
+        val gate = layout.ARRIVAL_GATE
+        require(canvas.state(gate.x, gate.y, gate.z).isOf(dev.henny.hha.HhaBlocks.OLYMPUS_PORTAL)) { "Ankunftstor $gate ist im Bauplan nicht gefüllt" }
+        println("HHA-VERIFY Wolkentor: Rahmenprüfung bestanden, Ankunft $spot (Blick ${layout.ARRIVAL_YAW}°) frei auf festem Boden")
+    }
+
+    private fun drawIsle(isle: dev.henny.hha.world.olymp.OlympusLayout.Isle): SkyMemory {
+        val box = dev.henny.hha.world.olymp.OlympusPlans.box(isle)
+        val canvas = SkyMemory(box.minX, box.maxX, box.minZ, box.maxZ, isle.floorY - 1)
+        dev.henny.hha.world.olymp.OlympusPlans.draw(canvas, isle)
+        return canvas
+    }
+
+    /**
+     * Jede Kampffläche ist in ihrem Radius eben und frei: Boden ein voller Block, darüber bis 23 hoch nur Luft, außer
+     * Hekataion, Amboss, Sockeln, Pfeilern und dem Altar (PLAN 12.2, Abnahme P04).
+     */
+    private fun checkArena(isle: dev.henny.hha.world.olymp.OlympusLayout.Isle, canvas: SkyMemory) {
+        if (isle.arenaRadius <= 0) return
+        val layout = dev.henny.hha.world.olymp.OlympusLayout
+        val cx = isle.center.x
+        val cz = isle.center.z
+        val fy = isle.floorY
+        fun allowed(x: Int, h: Int, z: Int): Boolean {
+            val altar = isle.altar
+            if (altar != null && x == altar.x && z == altar.z && fy + h == altar.y) return true
+            return when (isle.letter) {
+                'C' -> kotlin.math.abs(x - cx) <= layout.HEKATAION_HALF && kotlin.math.abs(z - cz) <= layout.HEKATAION_HALF && h < layout.HEKATAION_HEIGHT
+                'D' -> kotlin.math.abs(x - layout.ANVIL.x) <= layout.ANVIL_HALF && kotlin.math.abs(z - layout.ANVIL.z) <= layout.ANVIL_HALF && h < layout.ANVIL_HEIGHT
+                'E' -> listOf(layout.PLINTH_LEFT, layout.PLINTH_RIGHT).any { kotlin.math.abs(x - it.x) <= layout.PLINTH_HALF && kotlin.math.abs(z - it.z) <= layout.PLINTH_HALF && h < layout.PLINTH_HEIGHT }
+                'F' -> layout.PILLARS.any { it.x == x && it.z == z && h <= layout.PILLAR_HEIGHT }
+                else -> false
+            }
+        }
+        val problems = ArrayList<String>()
+        var cells = 0
+        for (x in cx - isle.arenaRadius..cx + isle.arenaRadius) for (z in cz - isle.arenaRadius..cz + isle.arenaRadius) {
+            if (kotlin.math.hypot((x - cx).toDouble(), (z - cz).toDouble()) > isle.arenaRadius) continue
+            cells++
+            val floor = canvas.state(x, fy - 1, z)
+            val shape = floor.getCollisionShape(net.minecraft.world.EmptyBlockView.INSTANCE, net.minecraft.util.math.BlockPos.ORIGIN)
+            if (!net.minecraft.block.Block.isShapeFullCube(shape)) problems.add("Boden $x ${fy - 1} $z: ${net.minecraft.registry.Registries.BLOCK.getId(floor.block).path}")
+            for (h in 0 until 24) {
+                val state = canvas.state(x, fy + h, z)
+                if (!state.isAir && !allowed(x, h, z)) problems.add("frei? $x ${fy + h} $z: ${net.minecraft.registry.Registries.BLOCK.getId(state.block).path}")
+            }
+        }
+        require(problems.isEmpty()) { "Kampffläche ${isle.letter} nicht eben/frei (${problems.size}): ${problems.take(12)}" }
+        println("HHA-VERIFY Kampffläche ${isle.letter}: Radius ${isle.arenaRadius}, $cells Felder eben und frei")
+    }
+
+    /** Dimension, Biome, feste Platzierung und Reichweite der Pfad-Teile. */
+    private fun checkOlympus(server: MinecraftServer) {
+        val registries = server.registryManager
+        val key = net.minecraft.registry.RegistryKey.of(RegistryKeys.DIMENSION, Identifier.of("hha", "olympus"))
+        val options = registries.getOrThrow(RegistryKeys.DIMENSION).getOrThrow(key).value()
+        val generator = options.chunkGenerator() as net.minecraft.world.gen.chunk.NoiseChunkGenerator
+        val olympusBiomes = generator.biomeSource.biomes.mapNotNull { it.key.orElse(null) }.toSet()
+        require(HhaBiomes.ELYSIAN_MEADOW in olympusBiomes && HhaBiomes.MARBLE_HEIGHTS in olympusBiomes) { "Biome des Olymp fehlen in der Biomquelle: $olympusBiomes" }
+        net.minecraft.world.gen.feature.util.PlacedFeatureIndexer.collectIndexedFeatures(generator.biomeSource.biomes.toList(), { it.value().generationSettings.features }, true)
+        val config = net.minecraft.world.gen.noise.NoiseConfig.create(generator.settings.value(), registries.getOrThrow(RegistryKeys.NOISE_PARAMETERS), 7L)
+        val view = net.minecraft.world.HeightLimitView.create(0, 384)
+        val ground = generator.getHeightOnGround(0, 0, net.minecraft.world.Heightmap.Type.WORLD_SURFACE_WG, view, config)
+        require(ground <= 1) { "Olymp ist nicht leer: Boden bei $ground" }
+        // Biome nach Höhe: Wiesen unten, Marmorhöhen oben.
+        val low = generator.biomeSource.getBiome(0, 120 shr 2, 0, config.multiNoiseSampler)
+        val high = generator.biomeSource.getBiome(0, 232 shr 2, 0, config.multiNoiseSampler)
+        require(low.matchesKey(HhaBiomes.ELYSIAN_MEADOW) && high.matchesKey(HhaBiomes.MARBLE_HEIGHTS)) { "Biomverteilung im Olymp falsch: $low / $high" }
+        println("HHA-VERIFY Olymp: Leere bis y $ground, Biome ${olympusBiomes.map { it.value.path }}, Feature-Reihenfolge in Ordnung")
+        // Die feste Platzierung muss genau die Start-Chunks der Pfad-Teile nennen.
+        val sets = registries.getOrThrow(RegistryKeys.STRUCTURE_SET)
+        val path = sets.get(Identifier.of("hha", "olympus_path")) ?: error("Struktur-Set olympus_path fehlt")
+        val placement = path.placement() as? dev.henny.hha.world.olymp.FixedStructurePlacement ?: error("olympus_path hat keine feste Platzierung")
+        val want = dev.henny.hha.world.olymp.OlympusStructures.startChunks().map { "${it.x},${it.z}" }.toSet()
+        val have = placement.chunks.map { "${it.x},${it.z}" }.toSet()
+        require(want == have) { "Start-Chunks in structure_set/olympus_path.json passen nicht: Datei $have, Plan $want" }
+        require(want.size == dev.henny.hha.world.olymp.OlympusStructures.ELEMENTS.size) { "Zwei Pfad-Teile teilen einen Start-Chunk" }
+        for (element in dev.henny.hha.world.olymp.OlympusStructures.ELEMENTS) {
+            require(dev.henny.hha.world.olymp.OlympusStructures.fitsReferenceRange(element)) { "Pfad-Teil ${element.id} reicht weiter als 8 Chunks um seinen Start" }
+        }
+        val islets = sets.get(Identifier.of("hha", "sky_islets")) ?: error("Struktur-Set sky_islets fehlt")
+        val spread = islets.placement() as net.minecraft.world.gen.chunk.placement.RandomSpreadStructurePlacement
+        require(spread.spacing == 9 && spread.separation == 4) { "Nebeninseln: random_spread 9/4 erwartet" }
+        // Brücken: Siegellücken wie im Plan.
+        for (bridge in dev.henny.hha.world.olymp.OlympusBridges.ALL) {
+            require((bridge.sealedBy != null) == (bridge.gap != null)) { "Brücke ${bridge.id}: Lücke fehlt oder ist zu viel" }
+            println("HHA-VERIFY Brücke ${bridge.id}: ${bridge.length} Zellen, ${bridge.y1 - bridge.y0} Stufen, Pfeiler ${bridge.piers}, Lücke ${bridge.gap}, Siegel ${bridge.sealedBy}")
+        }
+        println("HHA-VERIFY Olymp-Pfad: ${want.size} Starts ${want.sorted()}, alle in Reichweite")
+    }
+
+    /** Schreibt die Baupläne des Olymp und prüft die Kampfflächen; dazu die Draufsicht des ganzen Pfads. */
+    private fun dumpOlympus() {
+        val layout = dev.henny.hha.world.olymp.OlympusLayout
+        val top = HashMap<Long, Pair<Int, String>>()
+        fun fold(canvas: SkyMemory) {
+            for ((k, state) in canvas.blocks) {
+                val pos = net.minecraft.util.math.BlockPos.fromLong(k)
+                val column = net.minecraft.util.math.ChunkPos.toLong(pos.x, pos.z)
+                val current = top[column]
+                if (current == null || current.first < pos.y) top[column] = pos.y to net.minecraft.registry.Registries.BLOCK.getId(state.block).path
+            }
+        }
+        for (isle in layout.ISLES) {
+            val canvas = drawIsle(isle)
+            checkVanilla("isle_${isle.letter}", canvas)
+            checkArena(isle, canvas)
+            canvas.write("olymp_${isle.letter}")
+            fold(canvas)
+        }
+        for (bridge in dev.henny.hha.world.olymp.OlympusBridges.ALL) {
+            val box = bridge.box
+            val canvas = SkyMemory(box.minX, box.maxX, box.minZ, box.maxZ, bridge.y0)
+            dev.henny.hha.world.olymp.OlympusBridges.draw(canvas, bridge, dev.henny.hha.world.olymp.OlympusBridges.Part.OUTSIDE)
+            checkVanilla("bridge_${bridge.id}", canvas)
+            fold(canvas)
+            if (bridge.id == "ab" || bridge.id == "cd") {
+                val whole = SkyMemory(box.minX, box.maxX, box.minZ, box.maxZ, bridge.y0)
+                dev.henny.hha.world.olymp.OlympusBridges.draw(whole, bridge, dev.henny.hha.world.olymp.OlympusBridges.Part.ALL)
+                whole.write("olymp_bridge_${bridge.id}")
+            }
+            if (bridge.id == "cd") {
+                // Die Siegelbrücke nach dem Nachsetzen: so sieht sie aus, wenn Hermes besiegt ist.
+                val open = SkyMemory(box.minX, box.maxX, box.minZ, box.maxZ, bridge.y0)
+                dev.henny.hha.world.olymp.OlympusBridges.draw(open, bridge, dev.henny.hha.world.olymp.OlympusBridges.Part.ALL, sealed = false)
+                val marker = bridge.marker()!!
+                require(open.state(marker.x, marker.y, marker.z).isOf(net.minecraft.block.Blocks.CHISELED_QUARTZ_BLOCK)) { "Markierblock der Siegelbrücke fehlt" }
+                open.write("olymp_bridge_cd_open")
+            }
+        }
+        for ((i, kind) in dev.henny.hha.world.olymp.SkyIslets.Kind.entries.withIndex()) {
+            val center = net.minecraft.util.math.BlockPos(0, 150, 0)
+            val box = dev.henny.hha.world.olymp.SkyIslets.box(kind, center)
+            val canvas = SkyMemory(box.minX, box.maxX, box.minZ, box.maxZ, center.y)
+            dev.henny.hha.world.olymp.SkyIslets.draw(canvas, kind, center, 4242 + i * 17)
+            checkVanilla("islet_$kind", canvas)
+            canvas.write("olymp_islet_${kind.name.lowercase()}")
+        }
+        val out = java.io.File("olymp_top.txt").bufferedWriter()
+        for ((column, entry) in top) {
+            val x = net.minecraft.util.math.ChunkPos.getPackedX(column)
+            val z = net.minecraft.util.math.ChunkPos.getPackedZ(column)
+            out.write("$x $z ${entry.first} ${entry.second}")
+            out.newLine()
+        }
+        out.close()
+        println("HHA-VERIFY Draufsicht Olymp: ${top.size} Spalten")
+        val posts = dev.henny.hha.world.olymp.OlympusPlans.posts()
+        for (post in posts) {
+            require(post.isle != 'A') { "Posten auf Insel A: $post" }
+            val isle = layout.ISLES.first { it.letter == post.isle }
+            if (isle.arenaRadius > 0) require(kotlin.math.hypot((post.pos.x - isle.center.x).toDouble(), (post.pos.z - isle.center.z).toDouble()) > isle.arenaRadius + 2) { "Posten in der Kampffläche: $post" }
+        }
+        println("HHA-VERIFY Posten: ${posts.size} (${posts.groupingBy { it.kind }.eachCount()})")
+    }
+
     /** Schreibt die Geländehöhen des Tartaros als Bild, um die Form zu prüfen, ohne Chunks zu erzeugen. */
     private fun mapTartaros(server: MinecraftServer) {
         val registries = server.registryManager
@@ -269,22 +484,29 @@ class WorldgenVerify : ModInitializer {
         Class.forName("net.minecraft.world.explosion.ExplosionImpl")
         val registries = server.registryManager
         val biomes = registries.getOrThrow(RegistryKeys.BIOME)
-        for (name in listOf("olympus", "hades", "tartaros", "asphodel", "phlegethon", "kokytos", "erebos", "styx_marsh")) {
+        for (name in listOf("olympus", "hades", "tartaros", "asphodel", "phlegethon", "kokytos", "erebos", "styx_marsh", "elysian_meadow", "marble_heights")) {
             require(biomes.containsId(Identifier.of("hha", name))) { "Biom fehlt: $name" }
         }
         val structures = registries.getOrThrow(RegistryKeys.STRUCTURE)
-        for (name in listOf("olympus_temple", "hades_hall")) {
+        // Altlasten (Typen und JSONs bleiben für alte Welten) und die neuen Strukturen des Olymp.
+        for (name in listOf("olympus_temple", "hades_hall", "olympus_path", "sky_islet")) {
             require(structures.containsId(Identifier.of("hha", name))) { "Struktur fehlt: $name" }
         }
-        require(registries.getOrThrow(RegistryKeys.DIMENSION).containsId(Identifier.of("hha", "tartaros"))) { "Dimension fehlt" }
+        for (name in listOf("tartaros", "olympus")) {
+            require(registries.getOrThrow(RegistryKeys.DIMENSION).containsId(Identifier.of("hha", name))) { "Dimension fehlt: $name" }
+        }
 
-        // Sitzen die neuen Biome wirklich in der Oberwelt-Verteilung?
+        // Überarbeitung 2: Olymp und Hades entstehen in der Oberwelt nicht mehr.
         val lists = registries.getOrThrow(RegistryKeys.MULTI_NOISE_BIOME_SOURCE_PARAMETER_LIST)
         val entries = lists.getOrThrow(MultiNoiseBiomeSourceParameterLists.OVERWORLD).value().entries.entries.map { it.second }
         val keys = entries.mapNotNull { it.key.orElse(null) }.toSet()
-        require(HhaBiomes.OLYMPUS in keys) { "Olymp nicht in der Oberwelt" }
-        require(HhaBiomes.HADES in keys) { "Hades nicht in der Oberwelt" }
-        println("HHA-VERIFY Oberwelt: ${keys.size} Biome, ${entries.count { it.matchesKey(HhaBiomes.OLYMPUS) }} Olymp-Einträge")
+        require(HhaBiomes.OLYMPUS !in keys) { "Olymp steht noch in der Oberwelt" }
+        require(HhaBiomes.HADES !in keys) { "Hades steht noch in der Oberwelt" }
+        val structureSets = registries.getOrThrow(RegistryKeys.STRUCTURE_SET)
+        for (name in listOf("olympus_temples", "hades_halls")) require(!structureSets.containsId(Identifier.of("hha", name))) { "Struktur-Set der Oberwelt noch da: $name" }
+        println("HHA-VERIFY Oberwelt: ${keys.size} Biome, kein Olymp, kein Hades, keine Tempel und Hallen")
+        checkOlympus(server)
+        checkPortals()
 
         // Dieselbe Prüfung wie beim Erzeugen des Chunk-Generators: Widersprüche in der Feature-Reihenfolge wären ein Absturz.
         PlacedFeatureIndexer.collectIndexedFeatures(entries.distinct(), { it.value().generationSettings.features }, true)
@@ -299,5 +521,6 @@ class WorldgenVerify : ModInitializer {
         if (System.getProperty("hha.benchLocate") != null) benchLocate(server)
         if (System.getProperty("hha.mapTartaros") != null) mapTartaros(server)
         dumpPlans()
+        dumpOlympus()
     }
 }

@@ -22,7 +22,10 @@ import net.minecraft.util.math.Vec3d
  * - [shockwave], [nova], [pillar], [crescent]: höchstens einer davon je Treffer (gleicher Tick, ≤ 3 Blöcke Abstand).
  * - Gold wird nie überschrieben ([styleOverride] lässt Gold im Kampf stehen) und Gefahr-Stile bekommen auf dem Client
  *   ihre Gefahrenfarbe ([FLAG_DANGER], z. B. HEAVEN = Himmelblau-Weiß statt Gold-Weiß).
- * Cutscenes ([Cine.isPlaying]) und Spieler-Fähigkeiten (laufen nie in einem Kampf-Scope) bleiben unberührt.
+ * Cutscenes ([Cine.isPlaying]) und Spieler-Fähigkeiten (laufen nie in einem Kampf-Scope) haben eigene, ruhigere
+ * Grenzen (Überarbeitung 2, P02): Rütteln in Cutscenes höchstens [SHAKE_CINE_MAX], außerhalb von Kampf und Cutscene
+ * (Fähigkeiten, Tore, Rätsel) höchstens [SHAKE_FREE_MAX] und [SHAKE_FREE_MAX_TICKS]; Bildschirmblitz überall höchstens
+ * [FLASH_MAX].
  */
 object Vfx {
 
@@ -32,6 +35,15 @@ object Vfx {
 
         /** Kronos: Indigo mit sternweißem Kern (Plan 3.1). Gefahrfarbe des Titanen. */
         AEON,
+
+        /** Zeus: Weiß mit Elektrischblau (Überarbeitung 2, PLAN 9.1). */
+        THUNDER,
+
+        /** Hekate: fahles Violett-Silber. */
+        MOON,
+
+        /** Kratos und Bia: Purpurrot der Macht. */
+        CRIMSON,
     }
 
     /** Effektarten. Ordinal = Wire-ID, deshalb nur hinten anfügen. */
@@ -42,22 +54,37 @@ object Vfx {
 
         /** Kegel am Boden: Spitze = Position, Richtung = dir, a = Radius, b = halber Öffnungswinkel in Grad. */
         TELEGRAPH_CONE,
+
+        /**
+         * Nimmt laufende Ansagen zurück (Angriff abgebrochen): Der Client entfernt die Ansagen, die genau an der
+         * Position begonnen haben (Mitte eines Kreises, Anfang einer Linie, Spitze eines Kegels). Nur [Telegraph].
+         */
+        TELEGRAPH_CLEAR,
     }
 
     /** Bit in [VfxPayload.flags]: Effekt gehört zu einem Gegner; der Client nimmt die Gefahrenpalette des Stils. */
     const val FLAG_DANGER = 1
 
-    /** Kamera-Rütteln im Kampf: höchstens so stark (≤ 4 für Angriffe, ≤ 7 für Saalweites, Plan 3.3) … */
-    const val SHAKE_MAX = 7f
+    /** Kamera-Rütteln im Kampf: höchstens so stark (≤ 3 für Treffer, ≤ 5 für Saalweites, PLAN 9.1) … */
+    const val SHAKE_MAX = 5f
 
     /** … und höchstens so lang. */
-    const val SHAKE_MAX_TICKS = 12
+    const val SHAKE_MAX_TICKS = 8
 
-    /** Rütteln eines normalen Angriffs (Plan 3.3); siehe [Telegraph.Fight.hitShake]. */
-    const val SHAKE_HIT_MAX = 4f
+    /** Rütteln eines normalen Treffers (PLAN 9.1); siehe [Telegraph.Fight.hitShake]. */
+    const val SHAKE_HIT_MAX = 3f
 
-    /** Bildschirmblitz im Kampf außerhalb von Cutscenes (Kronos' Stillstand). */
-    const val FLASH_MAX = 0.35f
+    /** Rütteln während einer Cutscene: Dauer frei, Stärke höchstens so viel. */
+    const val SHAKE_CINE_MAX = 5f
+
+    /** Rütteln außerhalb von Kampf und Cutscene (Fähigkeiten der Spieler, Tore): höchstens so stark … */
+    const val SHAKE_FREE_MAX = 2f
+
+    /** … und höchstens so lang. */
+    const val SHAKE_FREE_MAX_TICKS = 12
+
+    /** Bildschirmblitz, überall (auch Cutscenes und Fähigkeiten): höchstens so stark (PLAN 9.1). */
+    const val FLASH_MAX = 0.25f
 
     private const val RANGE = 160.0
 
@@ -166,6 +193,12 @@ object Vfx {
         emitTelegraph(world, Kind.TELEGRAPH_CONE, style, apex, flat, radius, halfAngle.coerceIn(1f, 180f), life, forceStyle)
     }
 
+    /** Entfernt beim Client die Ansage(n), die an [origin] beginnen ([Kind.TELEGRAPH_CLEAR]). Nur für [Telegraph]. */
+    internal fun telegraphClear(world: ServerWorld, origin: Vec3d) = send(
+        world, origin,
+        VfxPayload(Kind.TELEGRAPH_CLEAR.ordinal, Style.GOLD.ordinal, origin.x, origin.y, origin.z, 0.0, 0.0, 0.0, 0f, 0f, 1, -1, -1, 0),
+    )
+
     /** Ansagen sind immer Gefahr (außer Gold = sicher); [forceStyle] umgeht [styleOverride] (sichere Flächen). */
     private fun emitTelegraph(
         world: ServerWorld, kind: Kind, style: Style, pos: Vec3d, dir: Vec3d, a: Float, b: Float, life: Int, forceStyle: Boolean,
@@ -229,7 +262,8 @@ object Vfx {
      * Kameraschütteln für alle in [radius] Blöcken um [center], weicher zum Rand hin.
      *
      * Im Kampf (siehe Klassenbeschreibung) begrenzt auf [SHAKE_MAX]/[SHAKE_MAX_TICKS] und unterdrückt, solange für den
-     * Empfänger eine Ansage läuft. Wer gerade eine Cutscene sieht, bekommt den Wert unverändert.
+     * Empfänger eine Ansage läuft. Wer gerade eine Cutscene sieht, bekommt höchstens [SHAKE_CINE_MAX]; außerhalb von
+     * Kampf und Cutscene gilt [SHAKE_FREE_MAX]/[SHAKE_FREE_MAX_TICKS].
      */
     fun shake(world: ServerWorld, center: Vec3d, intensity: Float, ticks: Int, radius: Float = 32f) {
         if (Cine.muted) return
@@ -238,10 +272,15 @@ object Vfx {
             if (player.squaredDistanceTo(center) > RANGE * RANGE) continue
             var strength = intensity
             var duration = ticks
-            if (fight != null && !Cine.isPlaying(player)) {
+            if (Cine.isPlaying(player)) {
+                strength = strength.coerceAtMost(SHAKE_CINE_MAX)
+            } else if (fight != null) {
                 if (!fight.allowShake(player, ticks)) continue
                 strength = strength.coerceAtMost(SHAKE_MAX)
                 duration = duration.coerceAtMost(SHAKE_MAX_TICKS)
+            } else {
+                strength = strength.coerceAtMost(SHAKE_FREE_MAX)
+                duration = duration.coerceAtMost(SHAKE_FREE_MAX_TICKS)
             }
             ServerPlayNetworking.send(
                 player,
@@ -250,10 +289,10 @@ object Vfx {
         }
     }
 
-    /** Bildschirmblitz nur für [player]. Im Kampf außerhalb von Cutscenes höchstens [FLASH_MAX]. */
+    /** Bildschirmblitz nur für [player], überall höchstens [FLASH_MAX] (Überarbeitung 2: auch Cutscenes). */
     fun screenFlash(player: ServerPlayerEntity, style: Style, strength: Float, ticks: Int) {
         if (Cine.muted) return
-        val capped = if (Telegraph.current != null && !Cine.isPlaying(player)) strength.coerceAtMost(FLASH_MAX) else strength
+        val capped = strength.coerceAtMost(FLASH_MAX)
         ServerPlayNetworking.send(
             player,
             VfxPayload(
@@ -267,9 +306,17 @@ object Vfx {
     fun orbitRings(world: ServerWorld, style: Style, target: Entity, radius: Float, life: Int) =
         emit(world, Kind.ORBIT_RINGS, style, target.entityPos, a = radius, life = life, entity = target)
 
-    /** Färbt für alle in [radius] Blöcken kurz den echten Himmel; [strength] 0..1. */
-    fun skyMood(world: ServerWorld, style: Style, center: Vec3d, strength: Float, ticks: Int, radius: Float = 48f) =
-        emit(world, Kind.SKY_MOOD, style, center, a = strength, b = radius, life = ticks)
+    /** Himmelsstimmung einer Fähigkeit (kein Kampf, keine Cutscene): so viel der verlangten Stärke (PLAN 9.1). */
+    const val SKY_ABILITY_FACTOR = 0.5f
+
+    /**
+     * Färbt für alle in [radius] Blöcken kurz den echten Himmel; [strength] 0..1. Stimmungen gehören zu Phasenwechseln
+     * und Cutscenes; außerhalb von Kampf und Cutscene (Fähigkeiten) wirkt nur [SKY_ABILITY_FACTOR] der Stärke.
+     */
+    fun skyMood(world: ServerWorld, style: Style, center: Vec3d, strength: Float, ticks: Int, radius: Float = 48f) {
+        val calm = Telegraph.current == null && world.players.none { Cine.isPlaying(it) }
+        emit(world, Kind.SKY_MOOD, style, center, a = if (calm) strength * SKY_ABILITY_FACTOR else strength, b = radius, life = ticks)
+    }
 
     /** Eigene 3D-Wolkenbank, die heranzieht und [height] Blöcke über dem Ort steht; folgt optional einem Wesen. */
     fun clouds(world: ServerWorld, style: Style, center: Vec3d, radius: Float, height: Float, life: Int, follow: Entity? = null) =
@@ -279,11 +326,15 @@ object Vfx {
     fun godRays(world: ServerWorld, style: Style, center: Vec3d, radius: Float, height: Float, life: Int) =
         emit(world, Kind.GOD_RAYS, style, center, a = radius, b = height, life = life)
 
-    /** Die Säule am Horizont, nur für [player]; [fake] heißt: Hermes lügt gerade. */
-    fun farBeacon(player: ServerPlayerEntity, pos: Vec3d, life: Int, fake: Boolean) {
+    /**
+     * Die Säule am Horizont, nur für [player]; [fake] heißt: Hermes lügt gerade. [style] wählt die Farbe: [Style.HADES]
+     * (schwarzgrün, Tartaros), [Style.GOLD] für das nächste Ziel im Olymp (Gold = Ziel). Die Säule steht immer in
+     * ihrer eigenen Palette, nie in der Gefahrenfarbe.
+     */
+    fun farBeacon(player: ServerPlayerEntity, pos: Vec3d, life: Int, fake: Boolean, style: Style = Style.HADES) {
         ServerPlayNetworking.send(
             player,
-            VfxPayload(Kind.FAR_BEACON.ordinal, Style.HADES.ordinal, pos.x, pos.y, pos.z, 0.0, 0.0, 0.0, if (fake) 1f else 0f, 0f, life, -1, -1),
+            VfxPayload(Kind.FAR_BEACON.ordinal, style.ordinal, pos.x, pos.y, pos.z, 0.0, 0.0, 0.0, if (fake) 1f else 0f, 0f, life, -1, -1),
         )
     }
 

@@ -1,16 +1,17 @@
 package dev.henny.hha.entity.miniboss
 
-import dev.henny.hha.HhaItems
 import dev.henny.hha.HhaSounds
 import dev.henny.hha.entity.boss.HermesBoltEntity
 import dev.henny.hha.logic.Fx
 import dev.henny.hha.logic.Vfx
+import dev.henny.hha.logic.boss.BossDefense
+import dev.henny.hha.logic.boss.BossRewards
 import dev.henny.hha.logic.boss.BossTimings
 import dev.henny.hha.logic.boss.Telegraph
+import dev.henny.hha.logic.world.TartarosChain
 import dev.henny.hha.logic.world.TartarosMinibosses
 import net.minecraft.block.Blocks
 import net.minecraft.entity.EntityType
-import net.minecraft.entity.ExperienceOrbEntity
 import net.minecraft.entity.LivingEntity
 import net.minecraft.entity.attribute.DefaultAttributeContainer
 import net.minecraft.entity.attribute.EntityAttributes
@@ -22,8 +23,6 @@ import net.minecraft.entity.data.TrackedData
 import net.minecraft.entity.data.TrackedDataHandlerRegistry
 import net.minecraft.entity.mob.HostileEntity
 import net.minecraft.entity.player.PlayerEntity
-import net.minecraft.item.ItemStack
-import net.minecraft.item.Items
 import net.minecraft.particle.BlockStateParticleEffect
 import net.minecraft.particle.ParticleTypes
 import net.minecraft.server.network.ServerPlayerEntity
@@ -113,7 +112,7 @@ class MiniBossKit(private val mob: HostileEntity, val nameKey: String, color: Bo
     var action = 0
         private set
 
-    /** Zählt auch nach dem Ende einer Bewegung weiter (bis [BossTimings.Guardian.ACTION_MAX]), damit Modelle ausblenden. */
+    /** Zählt auch nach dem Ende einer Bewegung weiter (bis [ACTION_MAX]), damit Modelle ausblenden. */
     var actionAge = 0
         private set
 
@@ -124,6 +123,16 @@ class MiniBossKit(private val mob: HostileEntity, val nameKey: String, color: Bo
         private set
 
     private val world: ServerWorld? get() = mob.entityWorld as? ServerWorld
+
+    /**
+     * Zeigt [tick] die eigene Lebensleiste? Die neuen Bosse nehmen stattdessen die geteilte Phasen-Leiste
+     * (`Cine.phaseBar`), die Gegner des Olymp und Bia haben keine.
+     */
+    var barVisible = true
+        set(value) {
+            field = value
+            if (!value) bar.clearPlayers()
+        }
 
     /**
      * Werte setzen: Leben, Rüstung, Schaden, Tempo. Die Größe bleibt 1: Die Trefferbox kommt aus dem Entity-Typ, das
@@ -146,6 +155,7 @@ class MiniBossKit(private val mob: HostileEntity, val nameKey: String, color: Bo
     fun tick() {
         val world = world ?: return
         age++
+        if (!barVisible) return
         bar.percent = (mob.health / mob.maxHealth).coerceIn(0f, 1f)
         if (age % 10 == 0) {
             for (player in world.players) {
@@ -156,26 +166,29 @@ class MiniBossKit(private val mob: HostileEntity, val nameKey: String, color: Bo
         }
     }
 
-    /** Auftritt: Titel für alle in der Nähe, ein Ton und ein Lichtpfeiler (Plan 3.4). */
-    fun announce() {
+    /**
+     * Auftritt: Titel für alle in der Nähe, ein Ton und ein Lichtpfeiler (Plan 3.4). [subtitle] ersetzt die Unterzeile
+     * (die Tartaros-Wächter nennen dort ihr Glied der Kette, siehe `TartarosMinibosses`).
+     */
+    fun announce(subtitle: Text = Text.translatable("$nameKey.sub")) {
         val world = world ?: return
         Vfx.pillar(world, style, mob.entityPos, 2.2f, 30f, 30)
         world.playSound(null, mob.x, mob.y, mob.z, SoundEvents.ENTITY_WITHER_SPAWN, SoundCategory.HOSTILE, 1.4f, 0.8f)
         for (player in world.players) {
             if (player.squaredDistanceTo(mob) > 60.0 * 60.0) continue
             player.networkHandler.sendPacket(net.minecraft.network.packet.s2c.play.TitleFadeS2CPacket(8, 50, 16))
-            player.networkHandler.sendPacket(net.minecraft.network.packet.s2c.play.SubtitleS2CPacket(Text.translatable("$nameKey.sub")))
+            player.networkHandler.sendPacket(net.minecraft.network.packet.s2c.play.SubtitleS2CPacket(subtitle))
             player.networkHandler.sendPacket(net.minecraft.network.packet.s2c.play.TitleS2CPacket(Text.translatable(nameKey)))
         }
     }
 
     /**
      * Kündigt dem Client eine Sonderbewegung an, damit das Modell ausholt, bevor der Angriff kommt. [kind] reicht von
-     * 1 bis [BossTimings.Guardian.ACTION_KINDS]; 0 beendet die laufende Bewegung. Die Zeit läuft ab diesem Tick.
+     * 1 bis [ACTION_KINDS]; 0 beendet die laufende Bewegung. Die Zeit läuft ab diesem Tick.
      */
     fun act(kind: Int) {
-        if (kind !in 0..BossTimings.Guardian.ACTION_KINDS) {
-            dev.henny.hha.Hha.LOGGER.warn("Wächter-Aktion {} außerhalb 0..{}", kind, BossTimings.Guardian.ACTION_KINDS)
+        if (kind !in 0..ACTION_KINDS) {
+            dev.henny.hha.Hha.LOGGER.warn("Wächter-Aktion {} außerhalb 0..{}", kind, ACTION_KINDS)
             return
         }
         world?.sendEntityStatus(mob, (ACTION_STATUS + kind).toByte())
@@ -183,8 +196,9 @@ class MiniBossKit(private val mob: HostileEntity, val nameKey: String, color: Bo
 
     /** Vom Client aus `handleStatus`: true, wenn der Status eine Sonderbewegung (oder ihr Ende) war. */
     fun onStatus(status: Byte): Boolean {
-        val kind = status - ACTION_STATUS
-        if (kind !in 0..BossTimings.Guardian.ACTION_KINDS) return false
+        // Ohne Vorzeichen lesen: 100 + 40 passt nicht in ein Byte mit Vorzeichen (Vanilla nutzt nur kleine Werte).
+        val kind = (status.toInt() and 0xFF) - ACTION_STATUS
+        if (kind !in 0..ACTION_KINDS) return false
         previousAction = action
         previousActionAge = actionAge
         action = kind
@@ -194,11 +208,11 @@ class MiniBossKit(private val mob: HostileEntity, val nameKey: String, color: Bo
 
     /**
      * Läuft auf beiden Seiten; zählt nur auf dem Client weiter, auch nach dem Ende (Aktion 0), höchstens bis
-     * [BossTimings.Guardian.ACTION_MAX]. Eine Bewegung, die so lange läuft, fällt von selbst auf 0 zurück.
+     * [ACTION_MAX]. Eine Bewegung, die so lange läuft, fällt von selbst auf 0 zurück.
      */
     fun animTick() {
         if (!mob.entityWorld.isClient) return
-        if (actionAge < BossTimings.Guardian.ACTION_MAX) {
+        if (actionAge < ACTION_MAX) {
             actionAge++
             return
         }
@@ -214,21 +228,21 @@ class MiniBossKit(private val mob: HostileEntity, val nameKey: String, color: Bo
         bar.clearPlayers()
     }
 
-    /** Beute, Erfahrung und die Meldung, dass das Bauwerk frei ist. Ein goldener Pfeiler: Hier hast du gewonnen. */
+    /**
+     * Ein Wächter der Kette ist gefallen (Überarbeitung 2, PLAN 5.7/6.1): ein goldener Pfeiler (hier hast du gewonnen),
+     * die Beute über [BossRewards.grant] (die einzige Beute-Stelle; Schlüssel = Glied) an alle, die am Ende mitkämpfen,
+     * dann sprengt [TartarosMinibosses.onDefeated] das Glied und befreit das Bauwerk. Wer kein Glied der Kette ist
+     * (Gegner und Bosse des Olymp), bekommt hier nichts: Die haben ihre eigene Beute.
+     */
     fun defeated() {
         val world = world ?: return
         bar.clearPlayers()
+        val link = (mob as? TartarosGuardian)?.link ?: return
         Vfx.pillar(world, Vfx.Style.GOLD, mob.entityPos, 2f, 26f, 30)
         world.playSound(null, mob.x, mob.y, mob.z, SoundEvents.UI_TOAST_CHALLENGE_COMPLETE, SoundCategory.PLAYERS, 1f, 1f)
-        val random = world.random
-        val drops = listOf(
-            ItemStack(HhaItems.HELL_INGOT, 2 + random.nextInt(2)),
-            ItemStack(Items.DIAMOND, 2 + random.nextInt(3)),
-            ItemStack(Items.GOLDEN_APPLE, 1 + random.nextInt(2)),
-        )
-        for (stack in drops) mob.dropStack(world, stack)
-        ExperienceOrbEntity.spawn(world, mob.entityPos, 180)
-        TartarosMinibosses.onDefeated(world, site)
+        val players = (mob as? GuardianEntity)?.fighters() ?: players(BossTimings.Guardian.FIGHT_RADIUS)
+        BossRewards.grant(link.key, players, mob.entityPos)
+        TartarosMinibosses.onDefeated(world, site, link, mob.entityPos)
     }
 
     // --- Hilfen ------------------------------------------------------------------------------------
@@ -249,6 +263,15 @@ class MiniBossKit(private val mob: HostileEntity, val nameKey: String, color: Bo
 
     companion object {
         const val ACTION_STATUS = 100
+
+        /**
+         * Höchste Aktionsnummer (Überarbeitung 2, PLAN 4.4): 0–40 für alle Wächter, Bosse und Gegner. Die Status-Bytes
+         * 100–140 liest [onStatus] ohne Vorzeichen.
+         */
+        const val ACTION_KINDS = 40
+
+        /** Nach so vielen Ticks fällt eine Aktion auf dem Client von selbst auf 0 zurück (Zeus' Waage dauert 280). */
+        const val ACTION_MAX = 320
     }
 }
 
@@ -259,6 +282,155 @@ interface MiniBoss {
 
 /** Treffer × so viel, solange er offen ist (Laterne, ohne Fels, Taumeln, Kelch weg, Stachel steckt). */
 internal const val OPEN_FACTOR = 1.5f
+
+// =================================================================================================
+// Die Kette zu Hades
+// =================================================================================================
+
+/**
+ * Gemeinsame Basis der fünf Tartaros-Wächter (Überarbeitung 2, PLAN 4.1 und 5.7): Jeder ist ein **Glied der Kette zu
+ * Hades** ([link]); sein Sieg sprengt es ([MiniBossKit.defeated]), das Palastsiegel öffnet erst bei fünf.
+ *
+ * - **Stärke:** Grundleben laut PLAN 4.1 ([baseHealth]), Schaden aller Angriffe × [DAMAGE_FACTOR] ([hit] statt
+ *   `strike`), Pausen × [BossTimings.Guardian.TARTAROS_PAUSE_FACTOR]. Spielerzahl, Deckel und Abwehr macht
+ *   [GuardianEntity] (Stufe `GUARDIAN`, Familie `TARTAROS` = Regler `hades_damage`).
+ * - **Kettenbonus** ([applyChain], beim Erscheinen): je schon gesprengtem Glied + [CHAIN_HEALTH] Leben und
+ *   + [CHAIN_DAMAGE] Schaden; ab [BossTimings.Guardian.CHAIN_PAUSE_FROM] Gliedern Pausen ×
+ *   [BossTimings.Guardian.CHAIN_PAUSE_FACTOR]; ab [BossTimings.Guardian.CHAIN_DOUBLE_FROM] Gliedern folgt nach jedem
+ *   [BossTimings.Guardian.CHAIN_DOUBLE_EVERY]-ten Angriff sofort ein zweiter, anderer (die Erholung kommt danach).
+ * - **Abwehr gegen Sprünge:** der Konter der Basis (Aktion [BossDefense.ANTI_AIR]), Schaden [ANTI_AIR_DAMAGE] mit
+ *   Kettenbonus. Jeder Angriff nennt seine Reichweite ([BossDefense.Reach]).
+ *
+ * Die Unterklassen liefern ihre Angriffe über [guardianMoves]; [createMoves] hängt den Doppelangriff an.
+ */
+abstract class TartarosGuardian(type: EntityType<out TartarosGuardian>, world: World) : GuardianEntity(type, world) {
+
+    /** Das Glied der Kette, das sein Sieg sprengt (zugleich der Beute-Schlüssel für [BossRewards.grant]). */
+    abstract val link: TartarosChain.Link
+
+    /** Grundleben solo vor Kettenbonus und Spielerzahl (PLAN 4.1). */
+    protected abstract val baseHealth: Double
+
+    /** Auftritt als kurze Szene: Kamera fährt heran, der Erzähler sagt, wer hier wacht. */
+    private val cinematics = dev.henny.hha.logic.boss.DuelCinematics(this) { fighters() }
+
+    override fun framedEntrance(): Sequence<Unit> = cinematics.intro(
+        entrance(),
+        listOf(dev.henny.hha.logic.boss.DuelCinematics.Line(dev.henny.hha.logic.boss.Cine.SPEAKER_NARRATOR, "hha.tartaros.scene.${link.key}", 14, 80)),
+        100,
+    )
+
+    override fun acceptsHit(world: net.minecraft.server.world.ServerWorld, source: net.minecraft.entity.damage.DamageSource): Boolean =
+        !cinematics.playing && super.acceptsHit(world, source)
+
+    override fun remove(reason: RemovalReason) {
+        if (!entityWorld.isClient) cinematics.abort()
+        super.remove(reason)
+    }
+
+    /** Wie viele Glieder bei seinem Erscheinen schon gesprengt waren (0–5). */
+    var chainLinks = 0
+        private set
+
+    /** Angriffe seit dem Erscheinen (für den Doppelangriff ab vier Gliedern). */
+    private var attacks = 0
+
+    /**
+     * Kettenbonus beim Erscheinen: Lebensattribut = Grundleben × (1 + [CHAIN_HEALTH] · [links]), volles Leben; Schaden
+     * und Pausen lesen [chainLinks] bei jedem Treffer.
+     */
+    fun applyChain(links: Int) {
+        chainLinks = links.coerceIn(0, TartarosChain.Link.entries.size)
+        // Vanilla deckelt das Lebensattribut bei 1024: Was darüber liegt, trägt die Zähigkeit (Review R1 M2).
+        getAttributeInstance(EntityAttributes.MAX_HEALTH)?.baseValue = intendedHealth().coerceAtMost(MAX_ATTRIBUTE_HEALTH)
+        health = maxHealth
+    }
+
+    /**
+     * Ein anderes Glied ist gesprengt, während er schon steht: Kettenbonus nachziehen, sein Lebensanteil bleibt
+     * (kein Vollheilen, laufende Aktion bleibt). Review R2 m3.
+     */
+    fun raiseChain(links: Int) {
+        val target = links.coerceIn(0, TartarosChain.Link.entries.size)
+        if (target <= chainLinks || !isAlive) return
+        val fraction = (health / maxHealth.coerceAtLeast(1f)).coerceIn(0f, 1f)
+        chainLinks = target
+        getAttributeInstance(EntityAttributes.MAX_HEALTH)?.baseValue = intendedHealth().coerceAtMost(MAX_ATTRIBUTE_HEALTH)
+        health = (maxHealth * fraction).coerceAtLeast(1f)
+    }
+
+    /** Gewolltes Leben solo samt Kettenbonus, ohne Vanillas Obergrenze. */
+    private fun intendedHealth(): Double = baseHealth * (1.0 + CHAIN_HEALTH * chainLinks)
+
+    /** Zähigkeit = gewolltes Leben / Lebensattribut (≥ 1); so stimmen Leiste, Deckel und Kettenbonus auch über 1024. */
+    override fun toughness(): Float = (intendedHealth() / maxHealth.coerceAtLeast(1f)).toFloat().coerceAtLeast(1f)
+
+    /** Schadensfaktor vor Spielerzahl: × [DAMAGE_FACTOR], + [CHAIN_DAMAGE] je gesprengtem Glied. */
+    protected fun power(): Float = DAMAGE_FACTOR * (1f + CHAIN_DAMAGE * chainLinks)
+
+    /** Treffer eines Angriffs: [base] × [power], dann wie `strike` (Spielerzahl, Familie, Höhenregel [reach]). */
+    protected fun hit(
+        player: ServerPlayerEntity, base: Float, reach: BossDefense.Reach = BossDefense.Reach.BODY, floorY: Double = defaultFloor(),
+    ): Boolean = strike(player, base * power(), reach, floorY)
+
+    /** Konter (PLAN 4.3: Wächter 12), mit Kettenbonus. */
+    override val antiAirDamage: Float get() = ANTI_AIR_DAMAGE * (1f + CHAIN_DAMAGE * chainLinks)
+
+    /** Pausen × 0,8, ab zwei Gliedern zusätzlich × 0,85; danach kürzt [dev.henny.hha.logic.boss.BossScaling.pause] nach Spielerzahl. */
+    override fun basePause(): Int {
+        var factor = BossTimings.Guardian.TARTAROS_PAUSE_FACTOR
+        if (chainLinks >= BossTimings.Guardian.CHAIN_PAUSE_FROM) factor *= BossTimings.Guardian.CHAIN_PAUSE_FACTOR
+        return ((BossTimings.Guardian.PAUSE + random.nextInt(8)) * factor).roundToInt()
+    }
+
+    /** Die Angriffe des Wächters (ohne Doppelangriff). */
+    protected abstract fun guardianMoves(): List<Move>
+
+    final override fun createMoves(): List<Move> {
+        val raw = guardianMoves()
+        return raw.map { move -> Move(move.id, move.reach, move.weight, move.ready) { target -> combo(move, raw, target) } }
+    }
+
+    /**
+     * Ein Angriff; ab [BossTimings.Guardian.CHAIN_DOUBLE_FROM] Gliedern hängt er nach jedem dritten sofort einen zweiten,
+     * anderen an (passend zur Entfernung, sonst den, der am wenigsten fehlt). Die Erholung (oder der Konter) kommt erst
+     * nach dem zweiten; die Fenster innerhalb der Angriffe (Beil steckt, Rad kippt …) bleiben, sie sind die Mechanik.
+     */
+    private fun combo(first: Move, all: List<Move>, target: ServerPlayerEntity): Sequence<Unit> = sequence {
+        yieldAll(first.run(target))
+        attacks++
+        if (chainLinks < BossTimings.Guardian.CHAIN_DOUBLE_FROM || attacks % BossTimings.Guardian.CHAIN_DOUBLE_EVERY != 0) return@sequence
+        if (!isAlive || !target.isAlive || target.isRemoved || target.entityWorld !== entityWorld) return@sequence
+        val d = flatDistance(target)
+        val options = all.filter { it.id != first.id && it.id != lastMove && it.ready() }.ifEmpty { all.filter { it.id != first.id && it.ready() } }
+        if (options.isEmpty()) return@sequence
+        val fitting = options.filter { d in it.reach }
+        val second = if (fitting.isNotEmpty()) fitting[random.nextInt(fitting.size)] else options.minBy { gapTo(it.reach, d) }
+        lastMove = second.id
+        yieldAll(second.run(target))
+    }
+
+    private fun gapTo(reach: ClosedFloatingPointRange<Double>, d: Double): Double = when {
+        d < reach.start -> reach.start - d
+        d > reach.endInclusive -> d - reach.endInclusive
+        else -> 0.0
+    }
+
+    companion object {
+        /** Schaden aller Wächter-Angriffe gegenüber der ersten Fassung (PLAN 4.1). */
+        const val DAMAGE_FACTOR = 1.4f
+
+        /** Kettenbonus je schon gesprengtem Glied (PLAN 4.1). */
+        const val CHAIN_HEALTH = 0.12
+        const val CHAIN_DAMAGE = 0.06f
+
+        /** Konter der Wächter vor Skalierung (PLAN 4.3). */
+        const val ANTI_AIR_DAMAGE = 12f
+
+        /** Vanillas Obergrenze für `MAX_HEALTH` (`ClampedEntityAttribute`). */
+        const val MAX_ATTRIBUTE_HEALTH = 1024.0
+    }
+}
 
 // =================================================================================================
 // Der Kerkermeister
@@ -273,11 +445,13 @@ internal const val OPEN_FACTOR = 1.5f
  * - **Rundschlag** (nah, nach dem Heranziehen): Kegel nach vorn.
  * - **Die Laterne** ist die Schwachstelle: Treffer von hinten × 1,5; drei davon bringen ihn ins Taumeln.
  */
-class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: World) : GuardianEntity(type, world) {
+class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: World) : TartarosGuardian(type, world) {
 
     override val kit = MiniBossKit(this, "entity.hha.warden_of_chains", BossBar.Color.WHITE, Vfx.Style.SHADOW)
     override val fightName = "warden"
     override val danger = Vfx.Style.SHADOW
+    override val link get() = TartarosChain.Link.WARDEN
+    override val baseHealth get() = HEALTH
 
     private var enraged = false
     private var lanternHits = 0
@@ -287,7 +461,7 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
         kit.stats(HEALTH, 12.0, 13.0, 0.27)
     }
 
-    override fun createMoves() = listOf(
+    override fun guardianMoves() = listOf(
         Move(WardenAction.CHOP, 0.0..6.0, 3) { chop(it) },
         Move(WardenAction.CHAIN, 6.5..BossTimings.Warden.CHAIN_RANGE.toDouble(), 3) { chain(it) },
         Move(WardenAction.ROUND, 0.0..4.5, 2) { round(it) },
@@ -366,7 +540,7 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
         val tip = ground(entityPos.add(dir.multiply(BossTimings.Warden.CHOP_LENGTH * 0.6)))
         val struck = line.hits(fighters())
         for (player in struck) {
-            strike(player, 16f)
+            hit(player, 16f)
             knock(player, dir, 0.5, 0.35)
         }
         Vfx.shockwave(sw, danger, tip, 2.6f, 12, 1.6f)
@@ -394,7 +568,7 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
         Vfx.chain(sw, danger, self, caught?.entityPos?.add(0.0, 1.0, 0.0) ?: end, caught, taut + 6)
         telegraph.sound(SoundEvents.BLOCK_CHAIN_BREAK, entityPos, 2f, 0.6f)
         if (caught != null) {
-            strike(caught, 6f)
+            hit(caught, 6f)
             wait(taut)
             // Der Ruck: heran vor das Beil, dann sofort der Rundschlag.
             yank(caught)
@@ -441,7 +615,7 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
         wait(cone.ticks)
         val struck = cone.hits(fighters())
         for (player in struck) {
-            strike(player, 14f)
+            hit(player, 14f)
             knock(player, dirTo(player.entityPos), 0.9, 0.4)
         }
         Vfx.crescent(sw, danger, entityPos.add(0.0, 1.4, 0.0), dir, w.ROUND_RADIUS, 4f, 10)
@@ -477,7 +651,8 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
     }
 
     companion object {
-        const val HEALTH = 360.0
+        /** PLAN 4.1: 360 → 800. */
+        const val HEALTH = 800.0
         private const val ENRAGE = 0.4f
 
         fun attributes(): DefaultAttributeContainer.Builder = guardianAttributes()
@@ -497,11 +672,13 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
  * - Ab 40 %: **„Der Stein rollt zurück“**: Drei Felsen rollen nacheinander vom Gipfel auf die Spieler zu, während er
  *   weiterkämpft. Trifft einer Sisyphos selbst: 30 Schaden und Taumeln.
  */
-class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : GuardianEntity(type, world) {
+class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : TartarosGuardian(type, world) {
 
     override val kit = MiniBossKit(this, "entity.hha.sisyphus", BossBar.Color.YELLOW, Vfx.Style.FIRE)
     override val fightName = "sisyphus"
     override val danger = Vfx.Style.FIRE
+    override val link get() = TartarosChain.Link.SISYPHUS
+    override val baseHealth get() = HEALTH
 
     /** Der Gipfel, von dem der Fluch die Felsen schickt (Standard: die Mitte des Platzes). */
     var summit: Vec3d? = null
@@ -515,7 +692,7 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Guard
         kit.stats(HEALTH, 8.0, 12.0, 0.25)
     }
 
-    override fun createMoves() = listOf(
+    override fun guardianMoves() = listOf(
         Move(SisyphusAction.THROW, 7.0..22.0, 3, { hasRock }) { throwRock(it) },
         Move(SisyphusAction.BOWL, 3.5..16.0, 3, { hasRock }) { bowl(it) },
         Move(SisyphusAction.STOMP, 0.0..5.0, 2, { hasRock }) { stomp(it) },
@@ -571,7 +748,8 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Guard
         // Einschlag: genau ein Flächeneffekt, ein kurzes Rütteln.
         val struck = ring.hits(fighters())
         for (player in struck) {
-            strike(player, 14f)
+            // PLAN 4.3: Der Felswurf ist ein Einschlag von oben und trifft auch in der Luft.
+            hit(player, 14f, BossDefense.Reach.SKY, spot.y)
             knock(player, player.entityPos.subtract(spot), 0.4, 0.55)
         }
         Vfx.shockwave(sw, danger, spot, s.THROW_RADIUS, 14, 1.6f)
@@ -624,7 +802,7 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Guard
         wait(ring.ticks)
         val struck = ring.hits(fighters())
         for (player in struck) {
-            strike(player, 12f)
+            hit(player, 12f)
             knock(player, dirTo(player.entityPos), 0.5, 0.8)
         }
         Vfx.shockwave(sw, danger, ground(entityPos), s.STOMP_RADIUS, 14, 2f)
@@ -703,7 +881,7 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Guard
                 if (abs(along(player.entityPos, from, dir) - travelled) > 1.6 || abs(player.y - level) > 2.5) continue
                 if (!Telegraph.inLine(player.entityPos, from, to, s.BOWL_WIDTH.toDouble(), player.width * 0.5)) continue
                 struck.add(player.uuid)
-                strike(player, base)
+                hit(player, base, BossDefense.Reach.BODY, level)
                 knock(player, dir, 1.1, 0.55)
             }
             if (cursedRock && !crushedHim && isAlive && abs(along(entityPos, from, dir) - travelled) < 1.6 &&
@@ -728,7 +906,8 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Guard
     private fun crushed() {
         Vfx.flare(sw, Vfx.Style.GOLD, entityPos.add(0.0, height * 0.6, 0.0), 2.4f, 8)
         telegraph.sound(HhaSounds.IMPACT, entityPos, 2.5f, 0.6f)
-        hurtSelf(SELF_HIT)
+        // 30 × H(n) effektiv: in Leistenpunkten durch die Zähigkeit teilen (Kettenbonus über 1024, Review R2 m2).
+        hurtSelf(SELF_HIT / toughness())
         if (!isAlive || staggering) return
         interrupt(stagger())
     }
@@ -748,8 +927,14 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Guard
     }
 
     companion object {
-        const val HEALTH = 340.0
+        /** PLAN 4.1: 340 → 750. */
+        const val HEALTH = 750.0
         private const val CURSE_AT = 0.4f
+
+        /**
+         * Vom eigenen Fels getroffen: 30 Punkte der Lebensleiste. Weil die Leiste eingehenden Schaden durch `H(n)` teilt,
+         * entspricht das 30 · H(n) Schaden: Die Schwelle wächst mit der Spielerzahl (PLAN 4.1).
+         */
         private const val SELF_HIT = 30f
 
         /** Halber Durchmesser des fliegenden Felsens (Knochen `boulder`, Faktor 0,69). */
@@ -772,11 +957,13 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Guard
  * - **Fesseln:** Jedes genutzte Kipp-Fenster (mindestens ein Treffer) lockert eine Fessel. Nach drei fällt Ixion vom
  *   Rad: 100 Ticks am Boden, Treffer × 2.
  */
-class IxionEntity(type: EntityType<out IxionEntity>, world: World) : GuardianEntity(type, world) {
+class IxionEntity(type: EntityType<out IxionEntity>, world: World) : TartarosGuardian(type, world) {
 
     override val kit = MiniBossKit(this, "entity.hha.ixion", BossBar.Color.RED, Vfx.Style.FIRE)
     override val fightName = "ixion"
     override val danger = Vfx.Style.FIRE
+    override val link get() = TartarosChain.Link.IXION
+    override val baseHealth get() = HEALTH
 
     /** Kampffläche als Ring um [home] (Plattform ohne das Rad in der Mitte); 0 = frei. */
     private var arenaInner = 0.0
@@ -853,7 +1040,7 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : GuardianEnt
         velocity = Vec3d(v.x, velocity.y, v.z)
     }
 
-    override fun createMoves() = listOf(
+    override fun guardianMoves() = listOf(
         Move(IxionAction.ROLL, 5.0..24.0, 3) { roll(it) },
         Move(IxionAction.SPOKES, 0.0..9.0, 2) { spokes(it) },
         Move(IxionAction.SPARKS, 6.0..22.0, 2) { sparks(it) },
@@ -910,7 +1097,7 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : GuardianEnt
                 if (abs(along(player.entityPos, from, dir) - travelled) > 1.8 || abs(player.y - y) > 3.0) continue
                 if (!Telegraph.inLine(player.entityPos, from, to, ix.ROLL_WIDTH.toDouble(), player.width * 0.5)) continue
                 struck.add(player.uuid)
-                strike(player, 14f)
+                hit(player, 14f, BossDefense.Reach.BODY, y)
                 player.setOnFireFor(3f)
                 val side = Vec3d(-dir.z, 0.0, dir.x).multiply(if (along(player.entityPos, from, Vec3d(-dir.z, 0.0, dir.x)) >= 0) 1.0 else -1.0)
                 knock(player, side, 0.9, 0.4)
@@ -975,7 +1162,7 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : GuardianEnt
                 for (player in fighters()) {
                     if (abs(player.y - from.y) > 1.6) continue
                     if (!Telegraph.inLine(player.entityPos, from, to, ix.ROLL_WIDTH.toDouble(), player.width * 0.5)) continue
-                    strike(player, 3f)
+                    hit(player, 3f, BossDefense.Reach.BODY, from.y)
                     player.setOnFireFor(1f)
                 }
             }
@@ -1080,7 +1267,7 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : GuardianEnt
                 }
                 if (!inBeam) continue
                 lastHit[player.uuid] = sw.time
-                strike(player, 8f)
+                hit(player, 8f, BossDefense.Reach.BODY, hub.y)
                 player.setOnFireFor(2f)
             }
             yield(Unit)
@@ -1135,7 +1322,7 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : GuardianEnt
             yield(Unit)
         }
         for (player in ring.hits(fighters())) {
-            strike(player, 9f)
+            hit(player, 9f, BossDefense.Reach.BODY, spot.y)
             player.setOnFireFor(2f)
         }
         Vfx.shockwave(sw, danger, spot, ix.SPARK_RADIUS, 10, 1.2f)
@@ -1143,7 +1330,8 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : GuardianEnt
     }
 
     companion object {
-        const val HEALTH = 300.0
+        /** PLAN 4.1: 300 → 660. */
+        const val HEALTH = 660.0
         private const val FALLEN_FACTOR = 2f
 
         /** Schwebetempo (Blöcke je Tick bei Faktor 1). */
@@ -1170,11 +1358,13 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : GuardianEnt
  * - **Der Durst:** Bei 66 % und 33 % kniet er und trinkt (heilt). 30 Schaden in dieser Zeit schlagen ihm den Kelch aus
  *   der Hand: Das Wasser weicht zurück, er taumelt (× 1,5).
  */
-class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : GuardianEntity(type, world) {
+class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : TartarosGuardian(type, world) {
 
     override val kit = MiniBossKit(this, "entity.hha.tantalus", BossBar.Color.BLUE, Vfx.Style.SOUL)
     override val fightName = "tantalus"
     override val danger = Vfx.Style.SOUL
+    override val link get() = TartarosChain.Link.TANTALUS
+    override val baseHealth get() = HEALTH
 
     private var draughts = 0
     private var drinking = false
@@ -1184,7 +1374,7 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Guard
         kit.stats(HEALTH, 8.0, 11.0, 0.27)
     }
 
-    override fun createMoves() = listOf(
+    override fun guardianMoves() = listOf(
         Move(TantalusAction.THRUST3, 0.0..6.5, 3) { thrust(it) },
         Move(TantalusAction.GEYSER, 5.0..24.0, 2) { geyser(it) },
         Move(TantalusAction.WAVE, 0.0..9.0, 2) { wave(it) },
@@ -1224,7 +1414,7 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Guard
             if (n == 0) telegraph.sound(HhaSounds.CHARGE, entityPos, 1.8f, 0.9f)
             wait(line.ticks)
             for (player in line.hits(fighters())) {
-                strike(player, 12f)
+                hit(player, 12f)
                 knock(player, dir, 0.6, 0.3)
             }
             Vfx.crescent(sw, danger, entityPos.add(0.0, 1.5, 0.0), dir, t.THRUST_LENGTH, 1.6f, 8)
@@ -1260,7 +1450,8 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Guard
     private fun spout(ring: Telegraph.Ring, spot: Vec3d): Sequence<Unit> = sequence {
         wait(ring.remaining)
         for (player in ring.hits(fighters())) {
-            strike(player, 10f)
+            // PLAN 4.3: Geysire sind Säulen und treffen auch in der Luft.
+            if (!hit(player, 10f, BossDefense.Reach.SKY, spot.y)) continue
             Fx.launchPlayer(player, Vec3d(player.velocity.x, 1.25, player.velocity.z))
         }
         Vfx.pillar(sw, danger, spot, BossTimings.Tantalus.GEYSER_RADIUS * 0.7f, 8f, 16)
@@ -1289,8 +1480,9 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Guard
                 if (d > front || d > t.WAVE_RADIUS + player.width * 0.5) continue
                 passed.add(player.uuid)
                 if (airborne(player) || abs(player.y - center.y) > 2.0) continue
+                // Flutwelle: zum Überspringen (LOW), wie die Prüfung darüber.
+                if (!hit(player, 10f, BossDefense.Reach.LOW, center.y)) continue
                 anyHit = true
-                strike(player, 10f)
                 knock(player, player.entityPos.subtract(center), 0.9, 0.4)
             }
             yield(Unit)
@@ -1312,7 +1504,8 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Guard
         spilled = 0f
         var knocked = false
         for (tick in 1..t.DRINK) {
-            if (spilled >= SPILL) {
+            // [spilled] zählt Leistenpunkte; × Zähigkeit = effektiver Schaden (Kettenbonus über 1024, Review R2 m2).
+            if (spilled * toughness() >= SPILL) {
                 knocked = true
                 break
             }
@@ -1338,12 +1531,16 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Guard
     }
 
     companion object {
-        const val HEALTH = 320.0
+        /** PLAN 4.1: 320 → 700. */
+        const val HEALTH = 700.0
 
         /** Bei diesen Lebensanteilen trinkt er. */
         private val THIRST = floatArrayOf(0.66f, 0.33f)
 
-        /** So viel Schaden in der Trinkzeit schlägt ihm den Kelch aus der Hand. */
+        /**
+         * So viel Schaden in der Trinkzeit schlägt ihm den Kelch aus der Hand: 30 Punkte der Lebensleiste. Die Leiste teilt
+         * eingehenden Schaden durch `H(n)`, also braucht es 30 · H(n) Schaden (PLAN 4.1: Schwelle × H(n)).
+         */
         private const val SPILL = 30f
         private const val HEAL_SHARE = 0.02f
 

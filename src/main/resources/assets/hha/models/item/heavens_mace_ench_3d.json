@@ -1,0 +1,7 @@
+{
+  "parent": "hha:item/heavens_mace_3d",
+  "textures": {
+    "0": "hha:item/heavens_mace_ench_3d",
+    "particle": "hha:item/heavens_mace_ench"
+  }
+}

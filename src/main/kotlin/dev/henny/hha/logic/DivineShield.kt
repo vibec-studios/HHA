@@ -65,10 +65,10 @@ object DivineShield {
         )
         Vfx.shield(world, Vfx.Style.HEAVEN, player, 1.7f, 30)
         Vfx.nova(world, Vfx.Style.HEAVEN, player.entityPos.add(0.0, 1.0, 0.0), 5f, 16)
-        Vfx.feathers(world, Vfx.Style.HEAVEN, player.entityPos.add(0.0, 1.4, 0.0), 26, 1.3f, 50)
+        Vfx.feathers(world, Vfx.Style.HEAVEN, player.entityPos.add(0.0, 1.4, 0.0), 12, 1.3f, 50)
         Vfx.skyMood(world, Vfx.Style.GOLD, player.entityPos, 0.8f, 70, 32f)
-        Vfx.screenFlash(player, Vfx.Style.HEAVEN, 0.55f, 12)
-        Vfx.shake(world, player.entityPos, 3f, 12, 16f)
+        // Effekte ruhiger (PLAN 9.1): kein Bildschirmblitz bei Fähigkeiten, Schütteln höchstens Vfx.SHAKE_FREE_MAX.
+        Vfx.shake(world, player.entityPos, Vfx.SHAKE_FREE_MAX, 12, 16f)
         Fx.spawn(world, 
             dev.henny.hha.HhaParticles.LIGHT_MOTE,
             player.x, player.y + 1.0, player.z,

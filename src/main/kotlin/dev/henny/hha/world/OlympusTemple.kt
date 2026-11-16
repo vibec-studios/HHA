@@ -161,7 +161,11 @@ object OlympusTemplePlan {
         for (x in intArrayOf(-3, 3)) for (z in intArrayOf(-14, 14)) add(x to z)
     }
 
-    fun draw(c: BlockCanvas, center: BlockPos) {
+    /**
+     * Zeichnet den Tempel um [center] (Plateau-Block). [stairs] = false lässt die Marmortreppe den Berg hinab weg: Im Olymp
+     * steht der Tempel auf einer ebenen Insel (Überarbeitung 2, Insel B).
+     */
+    fun draw(c: BlockCanvas, center: BlockPos, stairs: Boolean = true) {
         val base = center.y
         // Plateau, Fundament bis in den Fels und alles darüber frei.
         c.disc(center.x, center.z, RADIUS + 0.5) { x, z, r ->
@@ -185,7 +189,7 @@ object OlympusTemplePlan {
                 else -> pal.SMOOTH(x, base, z)
             })
         }
-        stairs(c, center)
+        if (stairs) stairs(c, center)
         krepis(c, center)
         val floor = base + 3
         for ((dx, dz) in COLUMNS) column(c, center.x + dx, floor, center.z + dz)

@@ -12,10 +12,10 @@ import net.minecraft.util.math.Vec3d
 object VfxManager {
 
     /**
-     * Obergrenze gleichzeitiger Effekte (Plan 3.3). Ist sie erreicht, fällt der älteste Effekt weg, der keine Ansage
-     * ist; Ansagen sind Spielinformation und gehen nur verloren, wenn nichts anderes mehr übrig ist.
+     * Obergrenze gleichzeitiger Effekte (PLAN 9.1: 96 → 64). Ist sie erreicht, fällt der älteste Effekt weg, der keine
+     * Ansage ist; Ansagen sind Spielinformation und gehen nur verloren, wenn nichts anderes mehr übrig ist.
      */
-    const val MAX_EFFECTS = 96
+    const val MAX_EFFECTS = 64
 
     private val effects = ArrayList<VfxEffect>()
     private var seed = 0L
@@ -61,13 +61,19 @@ object VfxManager {
                 ScreenFx.flash(pal.main, a, life)
                 return
             }
+            Vfx.Kind.TELEGRAPH_CLEAR -> {
+                // Nur die Ansagen, die genau hier begonnen haben (abgebrochener Angriff); alles andere bleibt.
+                effects.removeIf { e -> e.telegraph && (e.telegraphOrigin?.squaredDistanceTo(pos) ?: Double.MAX_VALUE) < 1.0e-4 }
+                return
+            }
             else -> {}
         }
         // Ansagen sind Spielinformation (wo trifft es gleich?) und werden deshalb auch ohne 3D-Effekte gezeichnet.
         val telegraph = kind == Vfx.Kind.TELEGRAPH_RING || kind == Vfx.Kind.TELEGRAPH_LINE || kind == Vfx.Kind.TELEGRAPH_CONE
         if (!telegraph && !HhaClientConfig.enabled("vfx_3d")) return
         if (kind == Vfx.Kind.FAR_BEACON) {
-            FarBeacon.set(pos, life)
+            // Die Säule steht in der Palette ihres Stils (HADES grün, GOLD = nächstes Ziel im Olymp).
+            FarBeacon.set(pos, life, Palette.of(style))
             return
         }
         if (kind == Vfx.Kind.SKY_MOOD) {
@@ -125,7 +131,6 @@ object VfxManager {
             ArenaClouds.render(draw)
             AmbientVfx.render(draw)
             BossGlow.render(draw)
-            PortalVfx.render(draw)
             FarBeacon.render(draw)
         } else {
             BossGlow.clear()

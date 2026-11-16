@@ -79,6 +79,7 @@ class KronosEntity(type: EntityType<out KronosEntity>, world: World) : PuppetEnt
         builder.add(POSE_ID, KronosPose.IDLE)
         builder.add(FORM, 0)
         builder.add(HARPE_OUT, false)
+        builder.add(ANTI_AIR, false)
     }
 
     var pose: Int
@@ -92,6 +93,14 @@ class KronosEntity(type: EntityType<out KronosEntity>, world: World) : PuppetEnt
             dataTracker.set(FORM, value)
             calculateDimensions()
         }
+
+    /**
+     * Konter gegen Spieler über ihm (Überarbeitung 2, PLAN 4.3): Mit gesetzter Marke wird [KronosPose.SWEEP_L] zum
+     * Aufwärtshieb der Harpe (Zeiten des Konters, Arm und Blick nach oben). Keine eigene Pose.
+     */
+    var antiAir: Boolean
+        get() = dataTracker.get(ANTI_AIR)
+        set(value) = dataTracker.set(ANTI_AIR, value)
 
     /** Fliegt die Harpe gerade (Kette C)? Dann ist die Hand leer und das Modell zeigt sie nicht. */
     var harpeOut: Boolean
@@ -130,7 +139,9 @@ class KronosEntity(type: EntityType<out KronosEntity>, world: World) : PuppetEnt
         }
         val allowed = fight.onKronosDamaged(this, source, amount)
         if (allowed <= 0f) return false
-        return super.damage(world, source, allowed)
+        val hurt = super.damage(world, source, allowed)
+        if (hurt) fight.onHitLanded(this, source)
+        return hurt
     }
 
     companion object {
@@ -139,6 +150,7 @@ class KronosEntity(type: EntityType<out KronosEntity>, world: World) : PuppetEnt
         private val POSE_ID: TrackedData<Int> = DataTracker.registerData(KronosEntity::class.java, TrackedDataHandlerRegistry.INTEGER)
         private val FORM: TrackedData<Int> = DataTracker.registerData(KronosEntity::class.java, TrackedDataHandlerRegistry.INTEGER)
         private val HARPE_OUT: TrackedData<Boolean> = DataTracker.registerData(KronosEntity::class.java, TrackedDataHandlerRegistry.BOOLEAN)
+        private val ANTI_AIR: TrackedData<Boolean> = DataTracker.registerData(KronosEntity::class.java, TrackedDataHandlerRegistry.BOOLEAN)
 
         fun attributes(): DefaultAttributeContainer.Builder = MobEntity.createMobAttributes()
             .add(EntityAttributes.MAX_HEALTH, 1000.0)

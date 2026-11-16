@@ -1,0 +1,7 @@
+{
+  "type": "hha:olympus_path",
+  "biomes": "#hha:has_olympus_path",
+  "spawn_overrides": {},
+  "step": "surface_structures",
+  "terrain_adaptation": "none"
+}

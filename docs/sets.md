@@ -63,7 +63,7 @@ Voll-Set-Wechsel aller registrierten Sets melden sich über das Event
 
 Für jedes registrierte Set generiert HHA automatisch ein SMP-Kit:
 `/hha kit <pfad>` (hha-Sets) bzw. `/hha kit <addonid>.<pfad>` (Addon-Sets),
-sofern `kit_mode` aktiv ist. Die Rüstungsteile werden voll verzaubert
+sofern `kit_mode` aktiv ist oder der Spieler im Kreativmodus ist (`Kits.allowed`). Die Rüstungsteile werden voll verzaubert
 (Protection IV, Unbreaking III, Mending); für Waffen gilt die
 Rollen-Konvention der `weapon(...)`-Reihenfolge: die **erste** Waffe bekommt
 Schwert-Verzauberungen (Sharpness V, Knockback, Fire Aspect, Sweeping Edge),
@@ -73,3 +73,11 @@ Standard-Loadout (Totem, Tränke, Perlen, Gapples …).
 
 `/hha kit diamond` und `/hha kit netherite` (Vanilla-Rüstung, keine Fähigkeiten) tragen statt der Weaving-Tränke und
 zwei der Stärke-II-Tränke je drei Wurftränke **Feuerresistenz** und **Schnelligkeit** mit 8 Minuten.
+
+## Heaven und Hell als Reliquien
+
+Die zwölf Teile der eingebauten Sets (je vier Rüstungsteile, Schwert und Mace) kommen im Überleben nicht mehr aus der
+Schmiede, sondern von den Bossen: Jedes Teil fällt **je Welt genau einmal** bei seinem Boss, ein zweiter Sieg gibt Barren als
+Ersatz (Tabelle in [Bosse allgemein](bosse-allgemein.md#reliquien), Code in `logic/boss/BossRewards.kt`, Register
+`logic/world/RelicLedger.kt`). Die Schmiederezepte tragen die Bedingung `{"condition": "hha:config", "key": "relic_crafting"}`
+und sind standardmäßig aus; Barren und Schmiedevorlage bleiben herstellbar. Addon-Sets sind davon nicht betroffen.

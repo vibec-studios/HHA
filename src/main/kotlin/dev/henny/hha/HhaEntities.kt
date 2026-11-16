@@ -15,6 +15,14 @@ import dev.henny.hha.entity.boss.HermaEntity
 import dev.henny.hha.entity.boss.HermesBoltEntity
 import dev.henny.hha.entity.boss.HermesEntity
 import dev.henny.hha.entity.boss.SerpentEntity
+import dev.henny.hha.entity.boss.olymp.BiaEntity
+import dev.henny.hha.entity.boss.olymp.BrontesEntity
+import dev.henny.hha.entity.boss.olymp.HekateEntity
+import dev.henny.hha.entity.boss.olymp.KratosEntity
+import dev.henny.hha.entity.boss.olymp.ZeusEntity
+import dev.henny.hha.entity.mob.AutomatonEntity
+import dev.henny.hha.entity.mob.GriffinEntity
+import dev.henny.hha.entity.mob.KureteEntity
 import net.fabricmc.fabric.api.`object`.builder.v1.entity.FabricDefaultAttributeRegistry
 import net.minecraft.entity.EntityType
 import net.minecraft.entity.SpawnGroup
@@ -70,6 +78,16 @@ object HhaEntities {
     val KAMPE: EntityType<KampeEntity> = boss("kampe", 2.4f, 4.6f, SpawnGroup.MONSTER, ::KampeEntity)
     val IMP: EntityType<dev.henny.hha.entity.ImpEntity> = boss("imp", 0.6f, 0.95f, SpawnGroup.MONSTER, ::ImpEntity)
 
+    // Überarbeitung 2 (PLAN 10.1/10.3): Bosse und Gegner des Olymp, Trefferboxen laut Plan.
+    val HEKATE: EntityType<dev.henny.hha.entity.boss.olymp.HekateEntity> = boss("hekate", 1.2f, 3.2f, SpawnGroup.MONSTER, ::HekateEntity)
+    val BRONTES: EntityType<dev.henny.hha.entity.boss.olymp.BrontesEntity> = boss("brontes", 2.6f, 5.4f, SpawnGroup.MONSTER, ::BrontesEntity)
+    val KRATOS: EntityType<dev.henny.hha.entity.boss.olymp.KratosEntity> = boss("kratos", 1.8f, 4.4f, SpawnGroup.MONSTER, ::KratosEntity)
+    val BIA: EntityType<dev.henny.hha.entity.boss.olymp.BiaEntity> = boss("bia", 1.4f, 4.0f, SpawnGroup.MONSTER, ::BiaEntity)
+    val ZEUS: EntityType<dev.henny.hha.entity.boss.olymp.ZeusEntity> = boss("zeus", 1.8f, 5.0f, SpawnGroup.MONSTER, ::ZeusEntity)
+    val KURETE: EntityType<dev.henny.hha.entity.mob.KureteEntity> = boss("kurete", 0.7f, 2.1f, SpawnGroup.MONSTER, ::KureteEntity)
+    val GRIFFIN: EntityType<dev.henny.hha.entity.mob.GriffinEntity> = boss("griffin", 1.4f, 1.8f, SpawnGroup.MONSTER, ::GriffinEntity)
+    val AUTOMATON: EntityType<dev.henny.hha.entity.mob.AutomatonEntity> = boss("automaton", 1.1f, 2.8f, SpawnGroup.MONSTER, ::AutomatonEntity)
+
     fun init() {
         FabricDefaultAttributeRegistry.register(HERMES, HermesEntity.attributes())
         FabricDefaultAttributeRegistry.register(SERPENT, SerpentEntity.attributes())
@@ -83,5 +101,13 @@ object HhaEntities {
         FabricDefaultAttributeRegistry.register(TANTALUS, dev.henny.hha.entity.miniboss.TantalusEntity.attributes())
         FabricDefaultAttributeRegistry.register(KAMPE, KampeEntity.attributes())
         FabricDefaultAttributeRegistry.register(IMP, dev.henny.hha.entity.ImpEntity.attributes())
+        FabricDefaultAttributeRegistry.register(HEKATE, dev.henny.hha.entity.boss.olymp.HekateEntity.attributes())
+        FabricDefaultAttributeRegistry.register(BRONTES, dev.henny.hha.entity.boss.olymp.BrontesEntity.attributes())
+        FabricDefaultAttributeRegistry.register(KRATOS, dev.henny.hha.entity.boss.olymp.KratosEntity.attributes())
+        FabricDefaultAttributeRegistry.register(BIA, dev.henny.hha.entity.boss.olymp.BiaEntity.attributes())
+        FabricDefaultAttributeRegistry.register(ZEUS, dev.henny.hha.entity.boss.olymp.ZeusEntity.attributes())
+        FabricDefaultAttributeRegistry.register(KURETE, dev.henny.hha.entity.mob.KureteEntity.attributes())
+        FabricDefaultAttributeRegistry.register(GRIFFIN, dev.henny.hha.entity.mob.GriffinEntity.attributes())
+        FabricDefaultAttributeRegistry.register(AUTOMATON, dev.henny.hha.entity.mob.AutomatonEntity.attributes())
     }
 }

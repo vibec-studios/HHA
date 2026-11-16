@@ -136,6 +136,8 @@ object ArenaClouds {
         Vfx.Style.HEAVEN to Look(0xFFFFCCA4.toInt(), 0xFF8C4C7A.toInt(), 0xFFFFB48C.toInt(), 0xFF5A3A78.toInt(), 0.42f, 0xFFFFB48C.toInt(), 0.12f, 0f),
         Vfx.Style.SOUL to Look(0xFF1E4A58.toInt(), 0xFF04101A.toInt(), 0xFF173440.toInt(), 0xFF030A10.toInt(), 0.65f, 0xFF2A8C9C.toInt(), 0.7f, 0f),
         Vfx.Style.STORM to Look(0xFF565664.toInt(), 0xFF14141C.toInt(), 0xFF6E6E80.toInt(), 0xFF101018.toInt(), 1f, 0xFF3A3A48.toInt(), 0.35f, 1f),
+        // Zeus' Thronhof: Sturmblau statt Graubraun, etwas seltener Wetterleuchten als Hermes' Gewitter.
+        Vfx.Style.THUNDER to Look(0xFF4E5A72.toInt(), 0xFF121826.toInt(), 0xFF66728C.toInt(), 0xFF0E1420.toInt(), 0.9f, 0xFF3A4660.toInt(), 0.3f, 0.7f),
     )
 
     private var active = false
@@ -196,8 +198,9 @@ object ArenaClouds {
         clock++
         flashes.removeAll { ++it.age >= it.life }
         arcs.removeAll { ++it.age >= it.life }
+        // P02: Wetterleuchten seltener (früher alle 14–64 Ticks).
         if (world != null && strength > 0.5f && current().storm > 0.7f && --nextFlash <= 0) {
-            nextFlash = 14 + rnd.nextInt(50)
+            nextFlash = 40 + rnd.nextInt(80)
             lightUp(world)
         }
     }
@@ -208,7 +211,7 @@ object ArenaClouds {
         val a = rnd.nextDouble() * PI * 2.0
         val pos = center.add(cos(a) * pick.radius, pick.y, sin(a) * pick.radius)
         flashes.add(Flash(pos, 34.0 + rnd.nextDouble() * 30.0, 5 + rnd.nextInt(5)))
-        if (rnd.nextFloat() < 0.65f) {
+        if (rnd.nextFloat() < 0.4f) {
             val b = a + (rnd.nextDouble() - 0.5) * 1.1
             val r = (pick.radius + (rnd.nextDouble() - 0.5) * 50.0).coerceAtLeast(16.0)
             arcs.add(CloudArc(jaggedPath(rnd, pos, center.add(cos(b) * r, pick.y - 4.0, sin(b) * r)), 5))
@@ -235,8 +238,8 @@ object ArenaClouds {
         }
         for (arc in arcs) {
             val fade = 1f - arc.age.toFloat() / arc.life
-            d.ribbon(VfxLayers.GLOW_ADD, arc.path, { 0.9 }, { withAlpha(0xFFBFD4FF.toInt(), 0.8f * fade) })
-            d.ribbon(VfxLayers.GLOW_ADD, arc.path, { 0.28 }, { withAlpha(0xFFFFFFFF.toInt(), fade) })
+            d.ribbon(VfxLayers.GLOW_ADD, arc.path, { 0.6 }, { withAlpha(0xFFBFD4FF.toInt(), 0.5f * fade) })
+            d.ribbon(VfxLayers.GLOW_ADD, arc.path, { 0.24 }, { withAlpha(0xFFFFFFFF.toInt(), 0.8f * fade) })
         }
     }
 }
@@ -274,7 +277,7 @@ class CloudBankEffect(
         flashes.removeAll { ++it.age >= it.life }
         arcs.removeAll { ++it.age >= it.life }
         if (stormy && age > 30 && --nextFlash <= 0) {
-            nextFlash = 10 + rnd.nextInt(35)
+            nextFlash = 30 + rnd.nextInt(60)
             val p = puffs[rnd.nextInt(puffs.size)]
             val a = rnd.nextDouble() * PI * 2.0
             val base = origin(1f)
@@ -293,7 +296,7 @@ class CloudBankEffect(
         }
         for (arc in arcs) {
             val fade = 1f - arc.age.toFloat() / arc.life
-            d.ribbon(VfxLayers.GLOW_ADD, arc.path, { 0.5 }, { withAlpha(0xFFBFD4FF.toInt(), 0.8f * fade) })
+            d.ribbon(VfxLayers.GLOW_ADD, arc.path, { 0.4 }, { withAlpha(0xFFBFD4FF.toInt(), 0.5f * fade) })
         }
     }
 }
@@ -315,10 +318,11 @@ class GodRaysEffect(
         val slant = Vec3d(0.32, 1.0, 0.18).normalize().multiply(height.toDouble())
         for (ray in rays) {
             val base = center.add(cos(ray.angle) * ray.dist, 0.1, sin(ray.angle) * ray.dist)
-            val shimmer = 0.75f + 0.25f * sin(time * 0.05f + ray.phase.toFloat())
+            // P02: kaum noch Schimmern, etwas schwächer.
+            val shimmer = 0.92f + 0.08f * sin(time * 0.05f + ray.phase.toFloat())
             d.ribbon(
                 VfxLayers.ENERGY, listOf(base, base.add(slant.multiply(0.5)), base.add(slant)),
-                { ray.width * (0.6 + it) }, { withAlpha(pal.main, alpha * 0.34f * shimmer * (1f - it * 0.5f)) },
+                { ray.width * (0.6 + it) }, { withAlpha(pal.main, alpha * 0.26f * shimmer * (1f - it * 0.5f)) },
                 uScale = 0.02f, uOffset = ray.phase.toFloat(),
             )
         }
@@ -378,12 +382,13 @@ class ZeusEyesEffect(
         }
 
         // Schein hinter den Augen.
-        val pulse = 0.82f + 0.18f * sin(time * 0.31f)
-        d.billboard(VfxLayers.SKY_GLOW, anchor, 120.0, withAlpha(pal.main, 0.3f * fade * pulse))
+        // P02: kein Dauer-Pulsieren mehr (früher ± 18 %), großer Schein schwächer.
+        val pulse = 0.96f + 0.04f * sin(time * 0.31f)
+        d.billboard(VfxLayers.SKY_GLOW, anchor, 100.0, withAlpha(pal.main, 0.2f * fade * pulse))
 
         for (side in intArrayOf(-1, 1)) {
             val eye = anchor.add(right.multiply(side * 18.0))
-            d.billboard(VfxLayers.SKY_GLOW, eye, 54.0, withAlpha(pal.main, 0.62f * lid * pulse))
+            d.billboard(VfxLayers.SKY_GLOW, eye, 44.0, withAlpha(pal.main, 0.45f * lid * pulse))
             d.billboard(VfxLayers.SKY_GLOW, eye, 24.0, withAlpha(pal.core, 0.8f * lid))
             // Das Auge selbst: mandelförmig, außen nach oben gezogen, damit es zornig wirkt.
             val tilt = side * 0.24
@@ -401,9 +406,9 @@ class ZeusEyesEffect(
             d.billboard(VfxLayers.SKY_FLARE, eye, 18.0 * lid, withAlpha(pal.alt, 0.5f * lid), -time * 0.02 * side)
         }
 
-        // Entladungen laufen über das Gesicht und wechseln alle paar Ticks.
-        val rnd = Random(kotlin.math.floor(time / 3f).toLong())
-        repeat(3) {
+        // Entladungen laufen über das Gesicht und wechseln alle paar Ticks (P02: zwei statt drei, langsamer).
+        val rnd = Random(kotlin.math.floor(time / 5f).toLong())
+        repeat(2) {
             val side = if (rnd.nextBoolean()) 1 else -1
             val from = anchor.add(right.multiply(side * 18.0))
             val to = anchor.add(right.multiply(side * (10.0 + rnd.nextDouble() * 36.0))).add(up.multiply(-10.0 - rnd.nextDouble() * 34.0))

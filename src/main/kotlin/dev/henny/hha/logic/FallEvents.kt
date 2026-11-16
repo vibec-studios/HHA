@@ -53,13 +53,16 @@ object FallEvents {
         val damage = (HhaConfig.num("shockwave_base_damage") + fallDistance * 1.5)
             .coerceAtMost(HhaConfig.num("shockwave_max_damage")).toFloat()
         val box = Box.of(player.entityPos, 8.0, 3.0, 8.0)
-        for (entity in world.getEntitiesByClass(LivingEntity::class.java, box, { it.isAlive && it != player })) {
-            if (!Targeting.shouldHarm(player, entity)) continue
-            entity.damage(world, world.damageSources.playerAttack(player), damage)
-            val away = entity.entityPos.subtract(player.entityPos)
-            val horizontal = away.horizontalLength().coerceAtLeast(0.1)
-            entity.velocity = Vec3d(away.x / horizontal * 0.9, 0.45, away.z / horizontal * 0.9)
-            entity.velocityDirty = true
+        // Aufprall-Flächenschaden zählt bei Bossen als Sturztreffer (Überarbeitung 2, BossDefense).
+        dev.henny.hha.logic.boss.BossDefense.fallStrike(player) {
+            for (entity in world.getEntitiesByClass(LivingEntity::class.java, box, { it.isAlive && it != player })) {
+                if (!Targeting.shouldHarm(player, entity)) continue
+                entity.damage(world, world.damageSources.playerAttack(player), damage)
+                val away = entity.entityPos.subtract(player.entityPos)
+                val horizontal = away.horizontalLength().coerceAtLeast(0.1)
+                entity.velocity = Vec3d(away.x / horizontal * 0.9, 0.45, away.z / horizontal * 0.9)
+                entity.velocityDirty = true
+            }
         }
 
         world.playSound(
@@ -97,10 +100,13 @@ object FallEvents {
         }
 
         val box = Box.of(player.entityPos, 7.0, 3.0, 7.0)
-        for (entity in world.getEntitiesByClass(LivingEntity::class.java, box, { it.isAlive && it != player })) {
-            if (!Targeting.shouldHarm(player, entity)) continue
-            entity.damage(world, world.damageSources.playerAttack(player), HhaConfig.numF("stomp_damage"))
-            entity.setOnFireFor(5.0f)
+        // Aufprall-Flächenschaden zählt bei Bossen als Sturztreffer (Überarbeitung 2, BossDefense).
+        dev.henny.hha.logic.boss.BossDefense.fallStrike(player) {
+            for (entity in world.getEntitiesByClass(LivingEntity::class.java, box, { it.isAlive && it != player })) {
+                if (!Targeting.shouldHarm(player, entity)) continue
+                entity.damage(world, world.damageSources.playerAttack(player), HhaConfig.numF("stomp_damage"))
+                entity.setOnFireFor(5.0f)
+            }
         }
 
         world.playSound(

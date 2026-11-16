@@ -25,6 +25,10 @@ class Palette(val core: Int, val main: Int, val edge: Int, val alt: Int) {
             Vfx.Style.SHADOW to Palette(0xFF6A4FA0.toInt(), 0xFF2C2338.toInt(), 0xFF130E19.toInt(), 0xFF3CD6EF.toInt()),
             // Kronos: Indigo mit sternweißem Kern (Leuchtmaske #6a7cff / #eef2ff).
             Vfx.Style.AEON to Palette(0xFFEEF2FF.toInt(), 0xFF6A7CFF.toInt(), 0xFF26346C.toInt(), 0xFFB8C4FF.toInt()),
+            // Überarbeitung 2 (PLAN 9.1): Kern, Haupt, Rand, Akzent.
+            Vfx.Style.THUNDER to Palette(0xFFFFFFFF.toInt(), 0xFF8FC7FF.toInt(), 0xFF1D4FB8.toInt(), 0xFFDFF1FF.toInt()),
+            Vfx.Style.MOON to Palette(0xFFF1EDFF.toInt(), 0xFF9A86E8.toInt(), 0xFF3B2E7A.toInt(), 0xFFCFC4FF.toInt()),
+            Vfx.Style.CRIMSON to Palette(0xFFFFD9D2.toInt(), 0xFFE0483C.toInt(), 0xFF7A1410.toInt(), 0xFFFF9A8A.toInt()),
         )
 
         /**
@@ -41,6 +45,9 @@ class Palette(val core: Int, val main: Int, val edge: Int, val alt: Int) {
             Vfx.Style.SHADOW to Palette(0xFFEADCFF.toInt(), 0xFFA27CFF.toInt(), 0xFF4A2C8A.toInt(), 0xFFC8B0FF.toInt()),
             // Kein Gold im Akzent.
             Vfx.Style.HELL to Palette(0xFFD8FDFF.toInt(), 0xFF3CD6EF.toInt(), 0xFF0B7690.toInt(), 0xFF8FF2FF.toInt()),
+            // Sisyphos, Ixion (P02): Glut ins Rote gerückt, damit sie auf hellem Boden nicht mit Gold (sicher) verwechselt
+            // wird (Farbabstand der Füllung auf Marmor vorher 59, siehe tmp/overhaul2/previews/effekte).
+            Vfx.Style.FIRE to Palette(0xFFFFD0A8.toInt(), 0xFFEE5A1C.toInt(), 0xFF8C1E06.toInt(), 0xFFFF9A5A.toInt()),
         )
 
         fun of(style: Vfx.Style): Palette = BY_STYLE.getValue(style)

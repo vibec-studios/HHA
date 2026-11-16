@@ -1,6 +1,7 @@
 package dev.henny.hha.client.model
 
 import dev.henny.hha.entity.miniboss.IxionAction
+import dev.henny.hha.logic.boss.BossDefense
 import dev.henny.hha.logic.boss.BossTimings
 import net.minecraft.client.model.ModelPart
 import kotlin.math.PI
@@ -164,6 +165,18 @@ class IxionModel(root: ModelPart) : GuardianModel(root) {
                 cock = step(a, 0f, 8f) * (1f - step(a, last + 4f, end)) * (1f - spit)
                 tSpread = 0.6f * cock + 0.7f * spit
                 tSpeed = IDLE_SPIN * 0.5f
+            }
+            BossDefense.ANTI_AIR -> {
+                // Konter (Überarbeitung 2, PLAN 4.3): Er kippt das Rad waagerecht über sich (Haltung des Speichenfeuers),
+                // es dreht schneller, beim Ende der Ansage ein Ruck nach oben; er schaut hinauf.
+                val g = BossTimings.Guardian
+                val up = step(a, 0f, g.ANTI_AIR_RAISE + 2f) * (1f - step(a, g.ANTI_AIR_END - 8f, g.ANTI_AIR_END.toFloat()))
+                tTilt = HALF_PI * up
+                tDy = lerp(HOVER, SPOKES_DY, up)
+                tSpread = 0.5f * up
+                look = up
+                tSpeed = IDLE_SPIN + (SPOKES_SPIN - IDLE_SPIN) * up
+                bounce = -2.5f * pulse(a - g.ANTI_AIR_HIT)
             }
             IxionAction.FALLEN -> {
                 fall = step(a, 0f, BossTimings.Ixion.FALLEN_DROP.toFloat())

@@ -1,6 +1,7 @@
 package dev.henny.hha.client.model
 
 import dev.henny.hha.entity.miniboss.WardenAction
+import dev.henny.hha.logic.boss.BossDefense
 import dev.henny.hha.logic.boss.BossTimings
 import net.minecraft.client.model.ModelPart
 import kotlin.math.PI
@@ -151,6 +152,18 @@ class WardenModel(root: ModelPart) : GuardianModel(root) {
             WardenAction.STAGGER -> {
                 play(a, Key(0f, null), Key(8f, STAGGER))
             }
+            BossDefense.ANTI_AIR -> {
+                // Konter (Überarbeitung 2, PLAN 4.3): das Richtbeil aus der Ausholhaltung (CHOP_WINDUP) senkrecht nach
+                // oben, beim Ende der Ansage ein Stoß in die Luft; er reckt sich und schaut hinauf.
+                val hit = G.ANTI_AIR_HIT.f
+                play(a, Key(0f, null), Key(G.ANTI_AIR_RAISE.f, CHOP_WINDUP), Key(hit, CHOP_WINDUP), Key(G.ANTI_AIR_END.f, null))
+                val jab = window(a, hit - 1f, hit + 6f)
+                armUR.pitch -= 0.4f * jab
+                armUL.pitch -= 0.4f * jab
+                body.originY -= 1.4f * jab
+                head.pitch -= 0.45f * window(a, 0f, G.ANTI_AIR_END.f)
+                tremble = window(a, 4f, hit) * 0.8f
+            }
         }
 
         // --- Nachschwingen über den Posen --------------------------------------------------------------------------
@@ -225,6 +238,7 @@ class WardenModel(root: ModelPart) : GuardianModel(root) {
 
     private companion object {
         val T = BossTimings.Warden
+        val G = BossTimings.Guardian
         val Int.f get() = toFloat()
         const val SOFT = 7f
         const val TAU = (PI * 2).toFloat()

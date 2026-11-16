@@ -204,7 +204,8 @@ def main(argv):
 
     model = boss_models.build(name)
     module = importlib.import_module(boss_models.REGISTRY[name][0])
-    all_poses = getattr(module, 'POSES', None) or {'rest': {}}
+    # Ein Modul mit zwei Modellen (z. B. kratos_model.py: kratos und bia) liefert je Modell POSES_<NAME>.
+    all_poses = getattr(module, f'POSES_{name.upper()}', None) or getattr(module, 'POSES', None) or {'rest': {}}
     wanted = [p for p in opt('--poses', ','.join(all_poses)).split(',') if p]
     for p in wanted:
         if p not in all_poses and p != 'rest':
@@ -255,7 +256,7 @@ def main(argv):
     os.remove(tmp)
     rest = world_points(model, {}, 'silhouette')
     height = max(q[1] for q in rest) - min(q[1] for q in rest)
-    exclude = tuple(getattr(module, 'HEIGHT_EXCLUDE', ()))
+    exclude = tuple(getattr(module, f'HEIGHT_EXCLUDE_{name.upper()}', getattr(module, 'HEIGHT_EXCLUDE', ())))
     body = world_points(model, {name: None for name in exclude}, 'silhouette') if exclude else rest
     body_height = max(q[1] for q in rest) - min(q[1] for q in body)
     st = stats(model)

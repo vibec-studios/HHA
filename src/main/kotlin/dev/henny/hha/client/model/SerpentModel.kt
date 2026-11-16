@@ -29,8 +29,8 @@ import kotlin.math.sqrt
 // -------------------------------------------------------------------------------------------------
 // Die Caduceus-Schlangen (Modell und Renderer; Modellschicht [BossLayers.SERPENT])
 //
-// Zwei schlanke Metallschlangen (A golden, B silberblau) mit einem Flügelpaar hinter dem Kopf; am Stab des Schattens
-// verkohlt mit giftgrünem Licht. Sie sind eine Attacke („Die Zwillinge"), kein Gegner: Man sieht sie 2–3 Sekunden in
+// Zwei schlanke Metallschlangen (A golden, B silberblau) mit einem Flügelpaar hinter dem Kopf. Sie sind eine
+// Attacke („Die Zwillinge"), kein Gegner: Man sieht sie 2–3 Sekunden in
 // schneller Bewegung, der leuchtende Rückengrat zeichnet die Bahn nach.
 // Geometrie, Texturen und Vorschau-Posen: tools/hha_assets/serpent_model.py (Winkel dort identisch, siehe POSES).
 // -------------------------------------------------------------------------------------------------
@@ -42,9 +42,6 @@ class SerpentRenderState : LivingEntityRenderState() {
 
     /** Ticks seit dem letzten Wechsel von [biting] (Auf- und Zuklappen des Mauls). */
     var biteTime = 100f
-
-    /** Schlange am Stab des Schattens (siehe [SerpentEntity.corrupted]). */
-    var corrupted = false
     var girth = 1f
 
     /** Neigung des Kopfes aus der Flugbahn (Bogenmaß). */
@@ -52,9 +49,6 @@ class SerpentRenderState : LivingEntityRenderState() {
 
     /** Mittelpunkte der Körperglieder relativ zum Kopf, mit eingerechneter Körperwelle. */
     var segments: List<Vec3d> = emptyList()
-
-    /** Schattenfarbe statt Gold/Silber. Auch für die entfallenen Varianten Höllenschlange/Kampe (2, 3). */
-    val shade: Boolean get() = corrupted
 }
 
 /** Schlüsselposen, identisch mit `POSES` in serpent_model.py. */
@@ -163,11 +157,8 @@ class SerpentRenderer(context: EntityRendererFactory.Context) :
     LivingEntityRenderer<SerpentEntity, SerpentRenderState, SerpentModel>(context, SerpentModel(context.getPart(BossLayers.SERPENT)), 0.5f) {
 
     private val texture = boss("serpent")
-    private val shadeTexture = boss("serpent_shade")
     private val layer = RenderLayers.entityCutoutNoCull(texture)
-    private val shadeLayer = RenderLayers.entityCutoutNoCull(shadeTexture)
     private val glowLayer = RenderLayers.eyes(boss("serpent_glow"))
-    private val shadeGlowLayer = RenderLayers.eyes(boss("serpent_shade_glow"))
     private val segmentRoot = context.getPart(BossLayers.SERPENT)
     private val segmentA = segmentRoot.getChild("segment_a")
     private val segmentB = segmentRoot.getChild("segment_b")
@@ -179,7 +170,7 @@ class SerpentRenderer(context: EntityRendererFactory.Context) :
     private val biteChanges = HashMap<Int, Pair<Boolean, Float>>()
 
     init {
-        addFeature(GlowFeature(this, { if (it.shade) shadeGlowLayer else glowLayer }) { -1 })
+        addFeature(GlowFeature(this, { glowLayer }) { -1 })
         addFeature(object : FeatureRenderer<SerpentRenderState, SerpentModel>(this) {
             override fun render(matrices: MatrixStack, queue: OrderedRenderCommandQueue, light: Int, state: SerpentRenderState, limbAngle: Float, limbDistance: Float) {
                 // Die Kopfflügel sind Metall wie der Leib: getönte Federn ohne Leuchten.
@@ -188,15 +179,11 @@ class SerpentRenderer(context: EntityRendererFactory.Context) :
         })
     }
 
-    private fun featherTint(state: SerpentRenderState): Int = when {
-        state.shade -> if (state.variant == 0) 0xFF5A5A5E.toInt() else 0xFF52555C.toInt()
-        state.variant == 0 -> 0xFFF4CF6A.toInt()
-        else -> 0xFFC9D6F2.toInt()
-    }
+    private fun featherTint(state: SerpentRenderState): Int = if (state.variant == 0) 0xFFF4CF6A.toInt() else 0xFFC9D6F2.toInt()
 
     override fun createRenderState() = SerpentRenderState()
 
-    override fun getTexture(state: SerpentRenderState): Identifier = if (state.shade) shadeTexture else texture
+    override fun getTexture(state: SerpentRenderState): Identifier = texture
 
     /** Der Körper reicht weit über die Kollisionsbox des Kopfes hinaus und darf nicht mit ihr verschwinden. */
     override fun canBeCulled(entity: SerpentEntity): Boolean = false
@@ -206,7 +193,6 @@ class SerpentRenderer(context: EntityRendererFactory.Context) :
         state.entityId = entity.id
         state.variant = entity.variant
         state.biting = entity.biting
-        state.corrupted = entity.corrupted
         state.girth = entity.girth
         val now = entity.age + tickDelta
         val last = biteChanges[entity.id]
@@ -256,8 +242,8 @@ class SerpentRenderer(context: EntityRendererFactory.Context) :
         super.render(state, matrices, queue, cameraState)
         val part = if (state.variant == 0) segmentA else segmentB
         val tail = if (state.variant == 0) tailA else tailB
-        val bodyLayer = if (state.shade) shadeLayer else layer
-        val bodyGlow = if (state.shade) shadeGlowLayer else glowLayer
+        val bodyLayer = layer
+        val bodyGlow = glowLayer
         val size = SIZE * state.girth
         val height = HEIGHT * state.girth
         var previous = Vec3d.ZERO
@@ -295,7 +281,6 @@ class SerpentRenderer(context: EntityRendererFactory.Context) :
         val right = Vec3d(cos(yaw).toDouble(), 0.0, sin(yaw).toDouble())
         val unit = SIZE * state.girth / 16.0
         val frame = BossGlow.SerpentFrame(state.entityId, state.variant, state.biting, state.age)
-        frame.corrupted = state.shade
         // Augen: Modell (±3,2 | −1,5 | −7) – seitlich am Keil, 7 Einheiten vor dem Drehpunkt, knapp über der Achse.
         val eyes = head.add(forward.multiply(unit * 7.0)).add(0.0, unit * 1.5, 0.0)
         frame.eyeR = eyes.subtract(right.multiply(unit * 3.2))

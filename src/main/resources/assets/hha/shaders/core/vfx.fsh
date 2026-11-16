@@ -9,6 +9,8 @@
 //   VFX_FLOW   – flächiges Wabern (Styx); UV sind freie Flächenkoordinaten
 //   sonst      – normales Sprite (Glühen, Federn, Runen, Wolken)
 // VFX_NO_FOG nimmt große Fernobjekte wie Wolken aus dem Nebel heraus.
+// VFX_GAIN (Überarbeitung 2, „Effekte ruhiger"): dämpft den gesamten Beitrag einer leuchtenden Ebene. Form und
+// Rauschen bleiben gleich, die Ebene leuchtet nur schwächer (Licht und Abdeckung gleichermaßen).
 uniform sampler2D Sampler0;
 
 in float sphericalVertexDistance;
@@ -33,7 +35,8 @@ void main() {
     float body = smoothstep(0.0, 0.55, across);
     float core = smoothstep(0.45, 1.0, across);
     float energy = body * (0.15 + noise * 1.1) + core * 0.35;
-    vec3 hot = mix(vertexColor.rgb, vec3(1.0), clamp(energy * energy * energy * 0.55, 0.0, 1.0));
+    // Der Kern wird nur noch leicht weißlich (früher 0,55): weniger Blenden, die Farbe bleibt lesbar.
+    vec3 hot = mix(vertexColor.rgb, vec3(1.0), clamp(energy * energy * energy * 0.3, 0.0, 1.0));
     fragColor = vec4(hot, clamp(energy, 0.0, 1.0) * vertexColor.a);
 #elif defined(VFX_FLOW)
     vec2 uv = texCoord0;
@@ -66,5 +69,8 @@ void main() {
     // Halb additiv: leuchtet nachts wie Licht und behält am hellen Tag trotzdem seine Farbe.
     fragColor.rgb *= fragColor.a;
     fragColor.a *= VFX_GLOW;
+#ifdef VFX_GAIN
+    fragColor *= VFX_GAIN;
+#endif
 #endif
 }

@@ -40,6 +40,9 @@ class HadesRenderState : LivingEntityRenderState() {
     var stage = 1
     var form = 0
     var bidentOut = false
+
+    /** Konter gegen Spieler über ihm (Überarbeitung 2): [HadesPose.SLAM] läuft rückwärts, der Bident fährt nach oben. */
+    var antiAir = false
     var walk = 0f
     var walkPhase = 0f
     var lookYaw = 0f
@@ -204,8 +207,19 @@ class HadesModel(root: ModelPart) : EntityModel<HadesRenderState>(root) {
                 // Solange er gleitet, wippt der gestreckte Stoß leicht.
                 if (t > H.THRUST_WINDUP + 2) ch[K.ROOT_Y] += sin(t * 0.9f) * 0.6f
             }
-            HadesPose.SLAM -> Track(t, from, ch).to(8f, K.SLAM_WINDUP).hold((H.SLAM_WINDUP - 2).toFloat())
-                .to(H.SLAM_WINDUP.toFloat(), K.SLAM_HIT, IN).end()
+            HadesPose.SLAM -> if (state.antiAir) {
+                // Konter (PLAN 4.3): der Bodenschlag rückwärts. Er duckt sich in die Schlaghaltung (SLAM_HIT) und reißt den
+                // Bident beim Treffer hart senkrecht nach oben in die Ausholhaltung (SLAM_WINDUP); der Blick geht nach oben.
+                val raise = BossTimings.Guardian.ANTI_AIR_RAISE.toFloat()
+                val hit = BossTimings.Guardian.ANTI_AIR_HIT.toFloat()
+                Track(t, from, ch).to(raise, K.SLAM_HIT).hold(hit - 2f).to(hit, K.SLAM_WINDUP, HARD).end()
+                val up = (t / raise).coerceIn(0f, 1f) * (1f - ((t - BossTimings.Guardian.ANTI_AIR_END + 6f) / 6f).coerceIn(0f, 1f))
+                ch[K.HEAD_RX] -= 0.4f * up
+                ch[K.CHEST_RX] -= 0.12f * up
+            } else {
+                Track(t, from, ch).to(8f, K.SLAM_WINDUP).hold((H.SLAM_WINDUP - 2).toFloat())
+                    .to(H.SLAM_WINDUP.toFloat(), K.SLAM_HIT, IN).end()
+            }
             HadesPose.STUCK -> {
                 if (t < 6f) {
                     Track(t, from, ch).to(6f, K.STUCK).end()
@@ -561,6 +575,7 @@ class HadesRenderer(context: EntityRendererFactory.Context) :
         state.stage = entity.stage
         state.form = entity.form
         state.bidentOut = entity.bidentOut
+        state.antiAir = entity.antiAir
         state.walk = entity.walkAmount
         state.walkPhase = entity.walkPhase
         updateLook(entity, state, tickDelta)

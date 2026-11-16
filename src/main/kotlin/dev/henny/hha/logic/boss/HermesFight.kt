@@ -3,7 +3,6 @@ package dev.henny.hha.logic.boss
 import dev.henny.hha.HhaSounds
 import dev.henny.hha.Hha
 import dev.henny.hha.HhaEntities
-import dev.henny.hha.HhaItems
 import dev.henny.hha.config.HhaConfig
 import dev.henny.hha.entity.boss.DivineParcelEntity
 import dev.henny.hha.entity.boss.HermaEntity
@@ -12,6 +11,9 @@ import dev.henny.hha.entity.boss.HermesEntity
 import dev.henny.hha.entity.boss.SerpentEntity
 import dev.henny.hha.logic.Fx
 import dev.henny.hha.logic.Vfx
+import dev.henny.hha.logic.world.OlympusPath
+import dev.henny.hha.logic.world.OlympusProgress
+import dev.henny.hha.world.olymp.OlympusLayout
 import net.minecraft.entity.Entity
 import net.minecraft.entity.EntityType
 import net.minecraft.entity.SpawnReason
@@ -21,10 +23,8 @@ import net.minecraft.entity.damage.DamageSource
 import net.minecraft.entity.effect.StatusEffectInstance
 import net.minecraft.entity.effect.StatusEffects
 import net.minecraft.entity.player.PlayerEntity
-import net.minecraft.item.ItemStack
 import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.server.world.ServerWorld
-import net.minecraft.sound.SoundCategory
 import net.minecraft.sound.SoundEvent
 import net.minecraft.sound.SoundEvents
 import net.minecraft.text.Text
@@ -40,12 +40,19 @@ import kotlin.math.min
 import kotlin.math.sin
 
 /**
- * Der Bossfight „Die letzte Zustellung" (und der Schatten des Boten): hält Arena, Teilnehmer, Lebensbalken und die
- * laufenden Skripte.
+ * Der Bossfight „Die letzte Zustellung“: hält Arena, Teilnehmer, Lebensbalken und die laufenden Skripte.
+ *
+ * Seit Überarbeitung 2 (PLAN 5.1) ist Hermes der erste Kampf des Olymp: Er beginnt am Tempel der Insel B
+ * ([Mode.TEMPLE], Rätsel der vier Gaben), das Himmelsforum entsteht darüber. [Mode.FIELD] (Forum über dem Standort)
+ * gibt es nur noch für Tests außerhalb des Olymp (`/hha hermes start`). Brief und Schatten des Boten entfallen.
+ *
+ * Stärke und Abwehr laufen über die gemeinsamen Systeme: Leben und Schaden nach Spielerzahl ([BossScaling], Familie
+ * `OLYMP`), effektives Grundleben [EFFECTIVE_HEALTH] (Zähigkeit [TOUGHNESS]), Deckel je Treffer
+ * ([BossScaling.hitCap]), Schaden × [DAMAGE_FACTOR], Smash-Folge und Konter „Abfangen in der Luft“ ([BossDefense]).
  *
  * Attacken und Cutscenes sind Kotlin-Sequenzen, die pro Tick genau einen Schritt weiterlaufen ([script] plus
  * beliebig viele parallele [tasks]). Dadurch liest sich ein Ablauf von oben nach unten wie ein Drehbuch; die
- * Inhalte stehen in [HermesAttacks], [HermesCutscenes] und [ShadeCutscenes].
+ * Inhalte stehen in [HermesAttacks] und [HermesCutscenes].
  *
  * Der ganze Kampf-Tick und alle Treffer-Rückmeldungen laufen im Scope von [telegraph] (Plan 3): Ansagen, Budget,
  * Mindestdauern und die Effekt-Regeln kommen von dort. Offene Fenster ([markOpen], goldene Rune) lassen Treffer
@@ -55,43 +62,42 @@ class HermesFight(
     val world: ServerWorld,
     val origin: Vec3d,
     summoner: ServerPlayerEntity,
-    /** Wie der Kampf begann: Brief, Rätsel im Tempel oder Obolus in der Hades-Halle. */
-    val mode: Mode = Mode.LETTER,
-    hallCenter: BlockPos? = null,
+    /** Wie der Kampf begann: Rätsel im Tempel (Olymp) oder Test am Standort. */
+    val mode: Mode = Mode.TEMPLE,
 ) {
 
-    enum class Mode { LETTER, TEMPLE, SHADE }
+    enum class Mode { TEMPLE, FIELD }
 
-    val shade: Boolean get() = mode == Mode.SHADE
-
-    val arena = if (hallCenter != null) {
-        HermesArena(world, hallCenter, permanent = true)
-    } else {
-        HermesArena(
-            world,
-            BlockPos(
-                MathHelper.floor(origin.x),
-                HermesArena.chooseHeight(world, MathHelper.floor(origin.y)),
-                MathHelper.floor(origin.z),
-            ),
-        )
-    }
+    val arena = HermesArena(
+        world,
+        BlockPos(
+            MathHelper.floor(origin.x),
+            HermesArena.chooseHeight(world, MathHelper.floor(origin.y)),
+            MathHelper.floor(origin.z),
+        ),
+    )
     val center: Vec3d get() = arena.centerPos()
 
-    /**
-     * Ansagen und Effekt-Budget dieses Kampfes. Gefahrenfarbe je Stage HEAVEN / HEAVEN / SOUL / STORM, beim Schatten
-     * immer HADES (dazu färbt [Vfx.styleOverride] alles grün; Gold bleibt im Scope Gold).
-     */
-    val telegraph: Telegraph.Fight = Telegraph.open(world, if (shade) "shade" else "hermes", stageStyle(1)) { targets() }
+    /** Läuft der Kampf im Olymp? Dann führen K. o. und Ende zum Eingang der Insel B. */
+    val inOlympus: Boolean get() = world.registryKey == OlympusLayout.WORLD
+
+    /** Wohin ein K. o., ein Abmelden und das Ende des Kampfes führen. */
+    val home: Vec3d get() = if (inOlympus) OlympusLayout.B.entrance else origin
+
+    /** Ansagen und Effekt-Budget dieses Kampfes. Gefahrenfarbe je Stage HEAVEN / HEAVEN / SOUL / STORM. */
+    val telegraph: Telegraph.Fight = Telegraph.open(world, "hermes", stageStyle(1)) { targets() }
 
     private val participants = LinkedHashSet<UUID>().apply {
         add(summoner.uuid)
         Cine.rejoin(summoner, this@HermesFight)
     }
-    private val summonerId: UUID = summoner.uuid
     private val bossBar = ServerBossBar(Text.translatable("entity.hha.hermes"), BossBar.Color.YELLOW, BossBar.Style.NOTCHED_10)
 
     var boss: HermesEntity? = null
+        private set
+
+    /** Abwehr gegen Mace-Sprünge für den echten Hermes (PLAN 4.3); entsteht mit ihm. */
+    var guard: BossDefense.Guard? = null
         private set
     val illusions = ArrayList<HermesEntity>()
     val serpents = ArrayList<SerpentEntity>()
@@ -107,23 +113,24 @@ class HermesFight(
     /** Solange das Forum nicht steht, stehen alle noch am Boden: dort gibt es nichts zu retten. */
     var arenaBuilt = false
     private var parcelOpened = false
-    private var letterReturned = false
+    private var rewarded = false
     private var ended = false
 
     private var script: Iterator<Unit>? = null
     private val tasks = ArrayList<Iterator<Unit>>()
     private val attacks = HermesAttacks(this)
     private val cutscenes = HermesCutscenes(this)
-    private val shadeScenes = ShadeCutscenes(this)
     private val skip = CineSkip()
 
-    /** Wie stark Hermes durch die Zahl der Mitspieler gerade skaliert ist. */
+    /** Skalierung nach Spielerzahl ([BossScaling]): teilt eingehenden Schaden bzw. vervielfacht ausgehenden. */
     var healthScale = 1f
         private set
     var damageScale = 1f
         private set
-    private var scaledFor = 1
-    private var hitsSinceBlock = 0
+
+    /** Zahl der Mitkämpfer `n` der letzten Skalierung. */
+    var crowd = 1
+        private set
     private var transitionQueued = false
     private var noPlayersFor = 0
     private var ticks = 0
@@ -139,38 +146,35 @@ class HermesFight(
     /** Letzte Positionen je Spieler für den Vorhalt (Seelensäulen); Spieler-Geschwindigkeit ist auf dem Server unzuverlässig. */
     private val tracks = HashMap<UUID, ArrayDeque<Vec3d>>()
 
-    /** Lebensgrenze jeder Stage. Die Zahlen bleiben fest, mehr Spieler machen Hermes über [healthScale] zäher. */
-    private fun stageFloor(s: Int): Float = if (shade) {
-        when (s) {
-            2 -> 650f
-            3 -> 300f
-            else -> 1f
-        }
-    } else {
-        when (s) {
-            1 -> 700f
-            2 -> 400f
-            3 -> 150f
-            else -> 1f
-        }
+    /** Lebensgrenze jeder Stage (70 / 40 / 15 % von 1000). Mehr Spieler machen Hermes über [healthScale] zäher. */
+    private fun stageFloor(s: Int): Float = when (s) {
+        1 -> 700f
+        2 -> 400f
+        3 -> 150f
+        else -> 1f
     }
 
     /**
-     * Passt Hermes an die aktuelle Spielerzahl an: Jeder weitere Spieler gibt ihm mehr Leben und mehr Schlagkraft
-     * (`hermes_health_per_player`, `hermes_damage_per_player`).
+     * Passt Hermes an die aktuelle Spielerzahl an ([BossScaling.health], [BossScaling.damage]): Jeder weitere Spieler
+     * gibt ihm mehr Leben und mehr Schlagkraft.
      *
      * Die Leben wachsen nicht über das Attribut, denn Minecraft deckelt maximale Leben bei 1024. Stattdessen teilt
      * [healthScale] den eingehenden Schaden, was dieselbe Wirkung hat und mit jeder Spielerzahl funktioniert.
      */
     private fun updateScaling(force: Boolean = false) {
-        val crowd = max(1, targets().size)
-        if (!force && crowd == scaledFor) return
-        val announce = !force && crowd > scaledFor
-        scaledFor = crowd
-        healthScale = 1f + HhaConfig.numF("hermes_health_per_player") * (crowd - 1)
-        damageScale = 1f + HhaConfig.numF("hermes_damage_per_player") * (crowd - 1)
+        val n = BossScaling.crowd(targets())
+        if (!force && n == crowd) {
+            // Config-Werte können sich live ändern: Faktoren trotzdem neu rechnen.
+            healthScale = BossScaling.health(n)
+            damageScale = BossScaling.damage(n, BossScaling.Family.OLYMP)
+            return
+        }
+        val announce = !force && n > crowd
+        crowd = n
+        healthScale = BossScaling.health(n)
+        damageScale = BossScaling.damage(n, BossScaling.Family.OLYMP)
         for (stone in stones) scaleMinion(stone, HERMA_HEALTH)
-        if (announce) for (player in players()) player.sendMessage(Text.translatable("hha.hermes.hint.crowd", crowd).formatted(Formatting.GOLD), true)
+        if (announce) for (player in players()) player.sendMessage(Text.translatable("hha.hermes.hint.crowd", n).formatted(Formatting.GOLD), true)
     }
 
     /** Auch die Herma-Steine halten bei mehr Spielern entsprechend mehr aus. */
@@ -181,24 +185,24 @@ class HermesFight(
         entity.health = (fraction * entity.maxHealth).coerceAtLeast(1f)
     }
 
-    /** Boss-Schaden nach Konfiguration und Spielerzahl. */
-    fun scaledDamage(base: Float): Float = base * HhaConfig.numF("hermes_damage") * damageScale
+    /** Boss-Schaden: Grundschaden S × [DAMAGE_FACTOR] × Spielerzahl und Regler (`hermes_damage`, [BossScaling.damage]). */
+    fun scaledDamage(base: Float): Float = base * DAMAGE_FACTOR * damageScale
+
+    /** Zähigkeit für die Lebensleiste: [TOUGHNESS] × Regler `hermes_toughness`. */
+    private fun toughness(): Float = TOUGHNESS * HhaConfig.numF("hermes_toughness")
 
     fun begin() {
-        // Alle in der Nähe des Briefs bzw. Obolus und alle, die schon in der Halle stehen, sehen die Cutscene mit.
-        val hall = center
+        // Alle in der Nähe des Altars bzw. des Standorts sehen die Cutscene mit.
         for (player in world.players) {
             if (player.isSpectator) continue
-            val nearOrigin = player.squaredDistanceTo(origin) <= PICKUP_RADIUS * PICKUP_RADIUS
-            val nearHall = shade && player.squaredDistanceTo(hall) <= HALL_PICKUP_RADIUS * HALL_PICKUP_RADIUS
-            if (nearOrigin || nearHall) {
+            if (player.squaredDistanceTo(origin) <= PICKUP_RADIUS * PICKUP_RADIUS) {
                 participants.add(player.uuid)
                 Cine.rejoin(player, this)
             }
         }
         for (player in players()) bossBar.addPlayer(player)
         bossBar.isVisible = false
-        script = (if (shade) shadeScenes.prologue() else cutscenes.prologue()).iterator()
+        script = cutscenes.prologue().iterator()
     }
 
     fun players(): List<ServerPlayerEntity> = participants.mapNotNull { world.getPlayerByUuid(it) as? ServerPlayerEntity }.filter { it.isAlive }
@@ -217,7 +221,6 @@ class HermesFight(
 
     /** Gefahrenfarbe einer Stage (Plan 3.1). */
     fun stageStyle(number: Int): Vfx.Style = when {
-        shade -> Vfx.Style.HADES
         number == 3 -> Vfx.Style.SOUL
         number >= 4 -> Vfx.Style.STORM
         else -> Vfx.Style.HEAVEN
@@ -226,19 +229,8 @@ class HermesFight(
     /** Gefahrenfarbe der laufenden Stage. */
     val style: Vfx.Style get() = telegraph.style
 
-    /**
-     * Führt [block] im Kampf-Scope aus: Effekt-Regeln aus [telegraph], beim Schatten alles in HADES. Für alles, was
-     * außerhalb des Kampf-Ticks passiert (Treffer auf Hermes, Steine, Trugbilder).
-     */
-    fun <T> scoped(block: () -> T): T {
-        val previous = Vfx.styleOverride
-        if (shade) Vfx.styleOverride = Vfx.Style.HADES
-        try {
-            return telegraph.during(block)
-        } finally {
-            Vfx.styleOverride = previous
-        }
-    }
+    /** Führt [block] im Kampf-Scope aus (Effekt-Regeln aus [telegraph]); für alles außerhalb des Kampf-Ticks. */
+    fun <T> scoped(block: () -> T): T = telegraph.during(block)
 
     /** Ton des Kampfes mit Budget (höchstens zwei je Tick). */
     fun sound(event: SoundEvent, at: Vec3d, volume: Float = 2f, pitch: Float = 1f) {
@@ -335,19 +327,24 @@ class HermesFight(
         Vfx.feathers(world, style, entity.entityPos.add(0.0, 1.8, 0.0), 8, 0.8f, 24)
     }
 
-    /** Schaden skaliert über `hermes_damage`; Spieler in einer Cutscene sind immer sicher. */
-    fun hurt(player: ServerPlayerEntity, base: Float, magic: Boolean = false) {
+    /**
+     * Schaden an [player], skaliert über [scaledDamage]; Spieler in einer Cutscene sind immer sicher. Mit der Höhenregel
+     * ([BossDefense.reaches], Boden = Forum): [reach] sagt, wie hoch der Angriff noch trifft (Standard
+     * [BossDefense.Reach.BODY]).
+     */
+    fun hurt(player: ServerPlayerEntity, base: Float, magic: Boolean = false, reach: BossDefense.Reach = BossDefense.Reach.BODY) {
         if (inCutscene) return
         // Ziele, die ein Ablauf früher gemerkt hat, können inzwischen ausgeschieden oder in einer anderen Welt sein.
         if (player.uuid !in participants || player.entityWorld !== world) return
+        if (!BossDefense.reaches(player, arena.floorY, reach, (boss?.height ?: HERMES_HEIGHT).toDouble())) return
         val scaled = scaledDamage(base)
         val attacker = boss
         val source: DamageSource = if (magic || attacker == null) world.damageSources.magic() else world.damageSources.mobAttack(attacker)
         player.damage(world, source, scaled)
     }
 
-    /** Spieler mit den Füßen auf dem Forum (für Bodenwellen, über die man springen kann). */
-    fun grounded(player: ServerPlayerEntity): Boolean = player.y <= arena.floorY + 0.7
+    /** Spieler mit den Füßen auf dem Forum (für Bodenwellen, über die man springen kann): [BossDefense.Reach.LOW]. */
+    fun grounded(player: ServerPlayerEntity): Boolean = BossDefense.reaches(player, arena.floorY, BossDefense.Reach.LOW)
 
     fun clampToArena(pos: Vec3d, margin: Double = 3.0): Vec3d {
         val flat = pos.subtract(center).let { Vec3d(it.x, 0.0, it.z) }
@@ -360,17 +357,17 @@ class HermesFight(
         val entity = HhaEntities.HERMES.create(world, SpawnReason.EVENT)!!
         entity.setPosition(pos)
         entity.yaw = 0f
-        entity.corrupted = shade
         world.spawnEntity(entity)
         boss = entity
+        guard = BossDefense.Guard(entity)
         updateScaling(force = true)
         entity.health = entity.maxHealth
         return entity
     }
 
     /**
-     * Löst die beiden Schlangen vom Caduceus (Variante 0 golden, 1 silberblau; beim Schatten verkohlt). Sie sind reine
-     * Attacke ohne Trefferzonen und ohne Lebensleiste; [anchor] ist der Stab, Standard über Hermes' Kopf.
+     * Löst die beiden Schlangen vom Caduceus (Variante 0 golden, 1 silberblau). Sie sind reine Attacke ohne
+     * Trefferzonen und ohne Lebensleiste; [anchor] ist der Stab, Standard über Hermes' Kopf.
      */
     fun spawnSerpents(anchor: Vec3d? = null): List<SerpentEntity> {
         val spawned = ArrayList<SerpentEntity>()
@@ -378,7 +375,6 @@ class HermesFight(
         for (variant in 0..1) {
             val serpent = HhaEntities.SERPENT.create(world, SpawnReason.EVENT)!!
             serpent.variant = variant
-            serpent.corrupted = shade
             serpent.setPosition(at.add(if (variant == 0) 0.4 else -0.4, 0.0, 0.0))
             world.spawnEntity(serpent)
             serpents.add(serpent)
@@ -438,9 +434,8 @@ class HermesFight(
         telegraph.reset()
         telegraph.style = stageStyle(number)
         bossBar.isVisible = true
-        val prefix = if (shade) "hha.shade" else "hha.hermes"
-        bossBar.setName(Text.translatable("$prefix.bar", Text.translatable("$prefix.stage.$number")))
-        bossBar.color = if (shade) BossBar.Color.GREEN else when (number) {
+        bossBar.setName(Text.translatable("hha.hermes.bar", Text.translatable("hha.hermes.stage.$number")))
+        bossBar.color = when (number) {
             2 -> BossBar.Color.PINK
             3 -> BossBar.Color.BLUE
             4 -> BossBar.Color.RED
@@ -470,6 +465,11 @@ class HermesFight(
 
     fun onBossDamaged(entity: HermesEntity, source: DamageSource, amount: Float): Float = scoped { damageBoss(entity, source, amount) }
 
+    /**
+     * Eingehender Schaden in der gemeinsamen Reihenfolge (`tmp/overhaul2/API.md`, Abschnitt 0): eigener Faktor
+     * (Abfangen × 1,5, offenes Fenster × [OPENING_BONUS]) → [BossDefense.Guard.onHit] (Wachsamkeit, Smash-Folge) →
+     * Deckel [BossScaling.hitCap] (Grundleben [EFFECTIVE_HEALTH]) → Leiste [BossScaling.toBar] → Stage-Grenze.
+     */
     private fun damageBoss(entity: HermesEntity, source: DamageSource, amount: Float): Float {
         if (entity.isIllusion) {
             attacks.onIllusionStruck(entity, source)
@@ -488,22 +488,31 @@ class HermesFight(
             if (attacker is ServerPlayerEntity) attacker.sendMessage(Text.translatable("hha.hermes.hint.invulnerable").formatted(Formatting.GOLD), true)
             return 0f
         }
-        // Abfangen (× 1,5), Rauchschritt durchschauen, Trugbilder verpuffen lassen.
+        // Abfangen (× 1,5), Trugbilder verpuffen lassen.
         val bonus = attacks.onBossStruck(entity, source)
         // Wer ihn trifft, während er die Beute hält, holt sie zurück.
         if (attacker is ServerPlayerEntity && lootFor > 0) returnLoot(attacker)
         val open = openFor > 0
-        // Mehr Spieler bedeuten mehr Leben: Jeder Treffer zählt entsprechend weniger (siehe updateScaling).
-        val toughness = HhaConfig.numF("hermes_toughness") * healthScale
-        val raw = amount * bonus * (if (open) OPENING_BONUS else 1f) / toughness
-        val cap = HhaConfig.numF("hermes_max_hit") * (if (open || bonus > 1f) 1.5f else 1f)
-        val capped = raw.coerceAtMost(cap)
+        var effective = amount * bonus * (if (open) OPENING_BONUS else 1f)
+        guard?.let { effective = it.onHit(source, effective, open) }
+        if (effective <= 0f) return 0f
+        effective = effective.coerceAtMost(BossScaling.hitCap(EFFECTIVE_HEALTH, BossScaling.Tier.BOSS, open || bonus > 1f))
+        val bar = BossScaling.toBar(effective, toughness(), crowd)
         val floor = stageFloor(stage)
-        val allowed = min(capped, entity.health - floor)
+        val allowed = min(bar, entity.health - floor)
         if (allowed <= 0f) return 0f
         if (entity.health - allowed <= floor + 0.01f) queueTransition()
         return allowed
     }
+
+    /** Der Treffer ist durchgegangen (Vanilla hat ihn angenommen): Sturztreffer zählen für die Smash-Folge. */
+    fun onBossLanded(entity: HermesEntity, source: DamageSource) {
+        if (entity !== boss) return
+        guard?.landed(source, openFor > 0)
+    }
+
+    /** Ist der Konter fällig (Spieler über ihm, Smash-Folge)? Nie in Cutscenes. */
+    fun counterDue(): Boolean = !inCutscene && stage in 1..4 && guard?.counterDue() == true
 
     private fun queueTransition() {
         transitionQueued = true
@@ -541,39 +550,22 @@ class HermesFight(
         script = cutscenes.parcelOpened(entity, opener).iterator()
     }
 
-    /** Verteilt die Belohnung an alle, die bis zum Ende dabei waren. */
-    fun grantRewards() {
-        for (player in players()) {
-            give(player, ItemStack(HhaItems.HEAVEN_HELMET))
-            give(player, ItemStack(HhaItems.HEAVEN_CHESTPLATE))
-            give(player, ItemStack(HhaItems.HEAVEN_LEGGINGS))
-            give(player, ItemStack(HhaItems.HEAVEN_BOOTS))
-            give(player, ItemStack(HhaItems.HERMES_FEATHER, 4))
-            // Zwischen den Federn steckt noch etwas: das, was vom schwarzen Brief übrig blieb.
-            give(player, ItemStack(HhaItems.HADES_MAP))
-            player.sendMessage(Text.translatable("hha.hades.map.found").formatted(Formatting.GREEN, Formatting.ITALIC), false)
-        }
-    }
-
-    /** Beute aus der Hades-Halle: Der Weg durchs Tor ist die eigentliche Belohnung. */
-    fun grantShadeRewards() {
-        for (player in players()) {
-            // Der Schatten trug noch Hermes' Waffen: Wer ihn besiegt, nimmt sie ihm ab.
-            give(player, ItemStack(HhaItems.HEAVENS_SWORD))
-            give(player, ItemStack(HhaItems.HEAVENS_MACE))
-            give(player, ItemStack(HhaItems.HERMES_FEATHER, 8))
-            give(player, ItemStack(net.minecraft.item.Items.NETHERITE_SCRAP, 4))
-            give(player, ItemStack(net.minecraft.item.Items.ENCHANTED_GOLDEN_APPLE, 2))
-        }
-    }
-
-    private fun give(player: ServerPlayerEntity, stack: ItemStack) {
-        if (!player.giveItemStack(stack)) player.dropItem(stack, false)
+    /**
+     * Der Inhalt des Götterpakets: Beute nur über [BossRewards.grant] (beim ersten Sieg der Welt die Heaven Boots,
+     * sonst der Ersatz; der Schwarze Brief für jeden, der keinen trägt), dann Fortschritt und Pfad. Genau einmal.
+     */
+    fun grantRewards(at: Vec3d) {
+        if (rewarded) return
+        rewarded = true
+        BossRewards.grant(OlympusProgress.HERMES, targets(), at)
+        val server = world.server ?: return
+        OlympusProgress.markDone(server, OlympusProgress.HERMES)
+        OlympusPath.onProgress(server, OlympusProgress.HERMES)
     }
 
     /**
-     * Tödliche Treffer enden im Forum nie mit dem Tod: Hermes stellt nur zu. Der Spieler landet angeschlagen
-     * wieder am Beschwörungsort und behält sein Inventar.
+     * Tödliche Treffer enden im Forum nie mit dem Tod: Hermes stellt nur zu. Der Spieler landet angeschlagen am
+     * Tempeleingang der Insel B (außerhalb des Olymp am Startort) und behält sein Inventar.
      * @return true, wenn der Tod abgefangen wurde.
      */
     fun tryKnockOut(player: ServerPlayerEntity, cause: DamageSource): Boolean {
@@ -602,17 +594,12 @@ class HermesFight(
         return true
     }
 
-    /** Ausgeloggt: zurück an den Beschwörungsort, damit niemand später hoch über der Welt aufwacht. */
+    /** Ausgeloggt: zurück an den Rückkehrort, damit niemand später hoch über der Welt aufwacht. */
     fun onPlayerLeft(player: ServerPlayerEntity) {
         if (participants.remove(player.uuid)) {
             bossBar.removePlayer(player)
             skip.recheck(players().filter { it.uuid != player.uuid })
-            if (arenaBuilt) player.refreshPositionAndAngles(origin.x, origin.y, origin.z, player.yaw, player.pitch)
-            // Offline bekäme der Beschwörer den Brief am Ende nicht mehr zurück.
-            if (mode == Mode.LETTER && player.uuid == summonerId && !letterReturned && stage < 5) {
-                letterReturned = true
-                give(player, ItemStack(HhaItems.HERMES_SUMMONS))
-            }
+            if (arenaBuilt) player.refreshPositionAndAngles(home.x, home.y, home.z, player.yaw, player.pitch)
         }
     }
 
@@ -632,14 +619,11 @@ class HermesFight(
         skip.recheck(players())
         // Gestohlene Effekte gehören ihm weiter.
         loot.remove(player.uuid)?.let { effects -> for (effect in effects) player.addStatusEffect(StatusEffectInstance(effect)) }
-        if (mode == Mode.LETTER && player.uuid == summonerId && !letterReturned && stage < 5) {
-            letterReturned = true
-            give(player, ItemStack(HhaItems.HERMES_SUMMONS))
-        }
     }
 
     private fun sendBack(player: ServerPlayerEntity) {
-        player.teleport(world, origin.x, origin.y, origin.z, emptySet(), player.yaw, player.pitch, false)
+        val to = home
+        player.teleport(world, to.x, to.y, to.z, emptySet(), player.yaw, player.pitch, false)
         player.velocity = Vec3d.ZERO
         player.velocityDirty = true
         player.fallDistance = 0.0
@@ -647,7 +631,6 @@ class HermesFight(
 
     fun tick() {
         if (ended) return
-        // Im Reich des Hades brennt alles grün, ohne dass jede Attacke davon wissen muss; alles läuft im Kampf-Scope.
         scoped { step() }
     }
 
@@ -683,6 +666,7 @@ class HermesFight(
         syncBar()
         rescueFallers()
         trackPlayers()
+        if (!inCutscene && stage in 1..4) guard?.tick(targets())
         if (openFor > 0) openFor--
         if (lootFor > 0 && --lootFor == 0) dropLoot()
 
@@ -718,21 +702,15 @@ class HermesFight(
         attacks.reset()
         telegraph.reset()
         closeOpening()
+        // Ein Konter, den die Cutscene abschneidet, endet hier (sonst bliebe die Abwehr im Konter hängen).
+        guard?.let { if (it.inCounter) it.endCounter() }
         bossBar.isVisible = next <= 4
         boss?.vulnerable = true
-        val scene: Sequence<Unit> = if (shade) {
-            when (next) {
-                3 -> shadeScenes.rising()
-                4 -> shadeScenes.last()
-                else -> shadeScenes.finale()
-            }
-        } else {
-            when (next) {
-                2 -> cutscenes.feather()
-                3 -> cutscenes.descent()
-                4 -> cutscenes.zeus()
-                else -> cutscenes.finale()
-            }
+        val scene: Sequence<Unit> = when (next) {
+            2 -> cutscenes.feather()
+            3 -> cutscenes.descent()
+            4 -> cutscenes.zeus()
+            else -> cutscenes.finale()
         }
         script = scene.iterator()
     }
@@ -759,7 +737,7 @@ class HermesFight(
                 player.velocityDirty = true
                 player.fallDistance = 0.0
                 if (!inCutscene) {
-                    hurt(player, 4f, magic = true)
+                    hurt(player, 4f, magic = true, reach = BossDefense.Reach.SKY)
                     player.sendMessage(Text.translatable("hha.hermes.hint.fall").formatted(Formatting.GOLD), true)
                 }
                 Vfx.shockwave(world, Vfx.Style.GOLD, spot, 3f, 10, 1.2f)
@@ -776,7 +754,7 @@ class HermesFight(
         }
     }
 
-    /** Beendet alles und stellt die Welt wieder her. */
+    /** Beendet alles und stellt die Welt wieder her. Alle Teilnehmer kehren an den Rückkehrort ([home]) zurück. */
     fun finish(success: Boolean) {
         if (ended) return
         ended = true
@@ -793,21 +771,13 @@ class HermesFight(
         Cine.atmosphere(everyone, null, center, 40)
         Cine.wings(everyone, false)
         Cine.music(everyone, null)
-        // Nach dem Sieg in der Halle bleiben alle vor dem offenen Tor stehen.
-        if (!(shade && success)) {
-            for (player in everyone) sendBack(player)
-        }
+        for (player in everyone) sendBack(player)
         bossBar.clearPlayers()
         returnLoot(null)
         clearMinions()
         boss?.discard()
         parcel?.discard()
         arena.restore()
-        if (!success && !letterReturned && mode == Mode.LETTER) {
-            // Der Brief kommt zurück: nichts verloren außer etwas Stolz.
-            val owner = world.getPlayerByUuid(summonerId) as? ServerPlayerEntity
-            if (owner != null) give(owner, ItemStack(HhaItems.HERMES_SUMMONS))
-        }
         Cine.encounterEnded(this)
         HermesFights.onFinished(this)
         Hha.LOGGER.info("Hermes-Kampf beendet (Erfolg: {})", success)
@@ -815,14 +785,25 @@ class HermesFight(
 
     companion object {
         const val PICKUP_RADIUS = 32.0
-        const val HALL_PICKUP_RADIUS = 56.0
         const val JOIN_RADIUS = 60.0
 
         /** Treffer in einem offenen Fenster zählen so viel mehr (wie `OPENING_BONUS` bei Hades). */
         const val OPENING_BONUS = 1.8f
 
+        /** Effektives Grundleben solo (PLAN 4.1: 1000 → 1400); Bezug des Deckels. */
+        const val EFFECTIVE_HEALTH = 1400f
+
+        /** Zähigkeit: Lebensattribut 1000 × 1,4 = [EFFECTIVE_HEALTH]. */
+        const val TOUGHNESS = 1.4f
+
+        /** Schaden gegenüber dem Stand vor Überarbeitung 2 (PLAN 4.1); die Grundwerte S der Angriffe bleiben. */
+        const val DAMAGE_FACTOR = 1.25f
+
         /** Leben eines Herma-Steins (Plan 4.2), wächst mit der Spielerzahl. */
         const val HERMA_HEALTH = 30.0
+
+        /** Höhe der Trefferbox (Rückfall, solange er nicht steht). */
+        private const val HERMES_HEIGHT = 2.8f
 
         /** Radius der goldenen Rune im offenen Fenster. */
         private const val OPEN_RUNE = 2.4f

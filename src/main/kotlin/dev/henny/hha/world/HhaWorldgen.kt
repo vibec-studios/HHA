@@ -17,13 +17,23 @@ import net.minecraft.world.gen.structure.Structure
 import net.minecraft.world.gen.structure.StructureType
 import java.util.function.Consumer
 
-/** Biom-Einträge für die Oberwelt; wird von VanillaBiomeParametersMixin benutzt und muss ohne Mod-Start laufen. */
+/**
+ * Biome der Mod. **Altlast (Überarbeitung 2, PLAN 3):** Olymp- und Hades-Biom entstehen in der Oberwelt nicht mehr; das
+ * Mixin, das [wrap] aufrief (`VanillaBiomeParametersMixin`), ist entfernt. Die Biom-JSONs bleiben registriert, damit alte
+ * Welten ihre Chunks laden; [wrap] ruft niemand mehr auf. Neu sind die beiden Biome der Olymp-Dimension.
+ */
 object HhaBiomes {
 
     @JvmField val OLYMPUS: RegistryKey<Biome> = RegistryKey.of(RegistryKeys.BIOME, Hha.id("olympus"))
     @JvmField val HADES: RegistryKey<Biome> = RegistryKey.of(RegistryKeys.BIOME, Hha.id("hades"))
 
+    /** Olymp-Dimension: die Elysischen Wiesen (unterhalb y 176) und die Marmorhöhen darüber. */
+    @JvmField val ELYSIAN_MEADOW: RegistryKey<Biome> = RegistryKey.of(RegistryKeys.BIOME, Hha.id("elysian_meadow"))
+    @JvmField val MARBLE_HEIGHTS: RegistryKey<Biome> = RegistryKey.of(RegistryKeys.BIOME, Hha.id("marble_heights"))
+
     /**
+     * Altlast, wird nicht mehr aufgerufen (siehe oben).
+     *
      * Die warmen, steinigen Gipfel der Oberwelt werden zum Olymp: Berge formt in Minecraft das Gelände-Rauschen, nicht
      * das Biom, und genau diese Einträge sitzen auf den höchsten warmen Graten. Das Hades-Biom kommt als eigener
      * Höhlen-Eintrag dazu, in der Tiefe zwischen Tiefenhöhle und Oberfläche, nur in trockenen und nicht zu kalten Gegenden.
@@ -68,6 +78,8 @@ object HhaWorldgen {
     lateinit var HALL_TYPE: StructureType<HadesHallStructure>; private set
 
     fun init() {
+        // Olymp-Dimension: feste Platzierung, Inselpfad und Nebeninseln (PLAN 8.1).
+        dev.henny.hha.world.olymp.OlympusStructures.init()
         TEMPLE_PIECE = Registry.register(Registries.STRUCTURE_PIECE, Hha.id("olympus_temple"), StructurePieceType { _: StructureContext, nbt: NbtCompound -> OlympusTemplePiece(nbt) })
         HALL_PIECE = Registry.register(Registries.STRUCTURE_PIECE, Hha.id("hades_hall"), StructurePieceType { _: StructureContext, nbt: NbtCompound -> HadesHallPiece(nbt) })
         TEMPLE_TYPE = Registry.register(Registries.STRUCTURE_TYPE, Hha.id("olympus_temple"), StructureType { OlympusTempleStructure.CODEC })

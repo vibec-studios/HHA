@@ -161,6 +161,10 @@ object HhaNetworking {
         PayloadTypeRegistry.playS2C().register(ConfigSyncPayload.ID, ConfigSyncPayload.CODEC)
         PayloadTypeRegistry.playS2C().register(VfxPayload.ID, VfxPayload.CODEC)
         PayloadTypeRegistry.playS2C().register(CinePayload.ID, CinePayload.CODEC)
+        PayloadTypeRegistry.playC2S().register(GuiRequestPayload.ID, GuiRequestPayload.CODEC)
+        PayloadTypeRegistry.playC2S().register(GuiActionPayload.ID, GuiActionPayload.CODEC)
+        PayloadTypeRegistry.playS2C().register(GuiStatePayload.ID, GuiStatePayload.CODEC)
+        dev.henny.hha.logic.GuiServer.init()
 
         ServerPlayConnectionEvents.JOIN.register { _, sender, _ ->
             sender.sendPacket(ConfigSyncPayload(HhaConfig.numbersSnapshot()))

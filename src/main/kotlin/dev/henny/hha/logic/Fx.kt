@@ -12,11 +12,25 @@ import kotlin.math.sin
 /** Gemeinsame Effekt- und Bewegungs-Helfer. */
 object Fx {
 
-    /** Vanilla-Partikel je Stoß im Kampf (Plan 3.3); [spawn] kappt im Kampf-Scope darauf, [burst] immer. */
-    const val BURST_MAX = 24
+    /** Vanilla-Partikel je Stoß im Kampf (PLAN 9.1: ≤ 12); [spawn] kappt im Kampf-Scope darauf, [burst] immer. */
+    const val BURST_MAX = 12
 
-    /** Dauer-Emitter im Kampf: höchstens so viele Partikel je Tick … (Plan 3.3, vom Kampf selbst einzuhalten) */
-    const val EMITTER_MAX_PER_TICK = 4
+    /** Dauer-Emitter im Kampf: höchstens so viele Partikel je Tick … (PLAN 9.1, vom Kampf selbst einzuhalten) */
+    const val EMITTER_MAX_PER_TICK = 2
+
+    /**
+     * Außerhalb von Kampf und Cutscene (Fähigkeiten der Spieler, Welt): Partikel × so viel (PLAN 9.1: halbiert) und
+     * höchstens [FREE_BURST_MAX] je Stoß.
+     */
+    const val FREE_FACTOR = 0.5
+
+    /** Siehe [FREE_FACTOR]. */
+    const val FREE_BURST_MAX = 24
+
+    /** Punkte je Ring/Spirale ([ring], [orientedRing], [spiral]): halbiert, höchstens so viele (früher bis 30). */
+    const val SHAPE_POINTS_MAX = 15
+
+    private fun shapePoints(points: Int): Int = ((points + 1) / 2).coerceIn(1, SHAPE_POINTS_MAX)
 
     /** … und höchstens so viele Emitter gleichzeitig. */
     const val EMITTERS_MAX = 2
@@ -40,9 +54,13 @@ object Fx {
         speed: Double,
     ) {
         if (dev.henny.hha.logic.boss.Cine.muted) return
-        // Im Kampf (Effekte des Gegners) höchstens [BURST_MAX] je Stoß; Cutscenes dürfen mehr.
+        // Im Kampf (Effekte des Gegners) höchstens [BURST_MAX] je Stoß; Cutscenes dürfen mehr. Sonst halbiert.
         val fight = dev.henny.hha.logic.boss.Telegraph.current
-        val capped = if (fight != null && !fight.inCutscene()) count.coerceAtMost(BURST_MAX) else count
+        val capped = when {
+            fight != null && !fight.inCutscene() -> count.coerceAtMost(BURST_MAX)
+            fight != null -> count
+            else -> Math.ceil(count * FREE_FACTOR).toInt().coerceAtMost(FREE_BURST_MAX)
+        }
         val scaled = scaledCount(world, capped, "particle_effects")
         if (scaled > 0) {
             world.spawnParticles(particle, x, y, z, scaled, dx, dy, dz, speed)
@@ -163,8 +181,9 @@ object Fx {
         points: Int = 24,
         speed: Double = 0.02,
     ) {
-        for (i in 0 until points) {
-            val angle = (i.toDouble() / points) * Math.PI * 2.0
+        val n = shapePoints(points)
+        for (i in 0 until n) {
+            val angle = (i.toDouble() / n) * Math.PI * 2.0
             world.spawnParticles(
                 particle,
                 center.x + cos(angle) * radius,
@@ -188,8 +207,9 @@ object Fx {
         particle: ParticleEffect,
         points: Int = 12,
     ) {
-        for (i in 0 until points) {
-            val angle = (i.toDouble() / points) * Math.PI * 2.0
+        val n = shapePoints(points)
+        for (i in 0 until n) {
+            val angle = (i.toDouble() / n) * Math.PI * 2.0
             val offset = axisA.multiply(cos(angle) * radius).add(axisB.multiply(sin(angle) * radius))
             world.spawnParticles(
                 particle,
@@ -210,8 +230,9 @@ object Fx {
         particle: ParticleEffect,
         points: Int = 30,
     ) {
-        for (i in 0 until points) {
-            val t = i.toDouble() / points
+        val n = shapePoints(points)
+        for (i in 0 until n) {
+            val t = i.toDouble() / n
             val angle = t * Math.PI * 4.0
             world.spawnParticles(
                 particle,

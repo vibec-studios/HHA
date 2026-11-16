@@ -1,0 +1,16 @@
+{
+  "model": {
+    "type": "minecraft:condition",
+    "property": "minecraft:has_component",
+    "component": "minecraft:enchantments",
+    "ignore_default": true,
+    "on_true": {
+      "type": "minecraft:model",
+      "model": "hha:item/hells_mace_link2_ench_3d"
+    },
+    "on_false": {
+      "type": "minecraft:model",
+      "model": "hha:item/hells_mace_link2_3d"
+    }
+  }
+}

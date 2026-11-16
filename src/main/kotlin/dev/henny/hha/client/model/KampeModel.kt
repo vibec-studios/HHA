@@ -47,6 +47,10 @@ class KampeModel(root: ModelPart) : EntityModel<KampeRenderState>(root) {
         KampeKeys.BONES[i].split('/').fold(root) { part, name -> part.getChild(name) }
     }
     private val count = bones.size
+
+    /** Kopf und Stachel für den Konter (Index in [KampeKeys.BONES], −1 = nicht gefunden). */
+    private val headBone = KampeKeys.BONES.indexOfFirst { it.endsWith("/head") }
+    private val stingBone = KampeKeys.BONES.indexOfFirst { it.endsWith("/sting") }
     private val base = FloatArray(count * 6)
     private val current = FloatArray(count * 6)
     private val previous = FloatArray(count * 6)
@@ -181,6 +185,7 @@ class KampeModel(root: ModelPart) : EntityModel<KampeRenderState>(root) {
             KampePose.DAZED -> k.DAZED.toFloat()
             KampePose.ROAR -> k.ROAR.toFloat()
             KampePose.DEATH -> k.DEATH.toFloat()
+            KampePose.ANTI_AIR -> BossTimings.Guardian.ANTI_AIR_END.toFloat()
             else -> 0f
         }
     }
@@ -222,6 +227,18 @@ class KampeModel(root: ModelPart) : EntityModel<KampeRenderState>(root) {
                 mix(out, KampeKeys.DIVE, step(t, hit, hit + hard))
             }
             KampePose.DAZED -> mix(out, KampeKeys.DAZED, step(t, 0f, 10f))
+            KampePose.ANTI_AIR -> {
+                // Konter (Überarbeitung 2, PLAN 4.3): Sie reißt den Stachel aus der Ausholhaltung des Stichs (STING_WINDUP)
+                // senkrecht nach oben, beim Ende der Ansage bäumt sie sich auf und schaut hinauf; dann zurück.
+                val g = BossTimings.Guardian
+                val raise = step(t, 0f, g.ANTI_AIR_RAISE.toFloat())
+                mix(out, KampeKeys.STING_WINDUP, raise)
+                val jab = hold(t - (g.ANTI_AIR_HIT - 1f), 2f, 5f, 10f)
+                out[4] -= 2f * jab
+                if (headBone >= 0) out[headBone * 6] -= 0.35f * raise
+                if (stingBone >= 0) out[stingBone * 6] -= 0.3f * jab
+                rest(out, step(t, g.ANTI_AIR_END - 8f, g.ANTI_AIR_END.toFloat()))
+            }
             KampePose.ROAR -> {
                 mix(out, KampeKeys.ROAR, step(t, 0f, 6f))
                 rest(out, step(t, k.ROAR - 6f, k.ROAR.toFloat()))
@@ -393,6 +410,9 @@ class KampeModel(root: ModelPart) : EntityModel<KampeRenderState>(root) {
             val x = ((t - from) / (to - from)).coerceIn(0f, 1f)
             return x * x * (3f - 2f * x)
         }
+
+        /** Hoch bis [peak], halten bis [release], weich zurück bis [end] (wie bei den anderen Wächtern). */
+        fun hold(t: Float, peak: Float, release: Float, end: Float): Float = step(t, 0f, peak) * (1f - step(t, release, end))
     }
 }
 

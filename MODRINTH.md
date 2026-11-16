@@ -2,7 +2,7 @@
 
 Adds two rival armor sets: **Heaven** and **Hell**. Both are full endgame sets with their own abilities, a sword and a mace each. I originally built this for a two-faction SMP, but it works fine in normal survival too.
 
-The Heaven set is white netherite with golden trim. The Hell set is dark netherite burning with blue soul fire (the item textures are animated). You craft both by upgrading diamond gear in a smithing table, similar to netherite upgrades.
+The Heaven set is white netherite with golden trim. The Hell set is dark netherite burning with blue soul fire (the item textures are animated). You craft both by upgrading diamond gear in a smithing table, similar to netherite upgrades (off by default since the second overhaul: the pieces are relics of the bosses, see below).
 
 ## Abilities
 
@@ -30,6 +30,21 @@ Each armor piece has its own passive, wearing the full set unlocks more. A coold
 
 Full sets also give +10 hearts and fall damage immunity, and there's an Ultra Mode with its own cooldown.
 
+## Olympus and Tartarus
+
+**Olympus** is its own dimension: floating islands above a sea of clouds. Build a glowstone frame (inside 2 × 3 up to 9 × 9), pour a water bucket into it and step through the cloud gate. If you fall off, you drop into the Overworld sky with slow falling.
+
+A fixed path of six islands leads upward, each with its own fight:
+- **Hermes**, the messenger: solve the riddle in his temple, then catch him in four stages
+- **Hekate**, goddess of thresholds: a crossroads with three roads, a turning key, three forms of which only one carries the fire. She guards the gate to Tartarus
+- **Brontes** the Cyclops: let his hammer hit a glowing ingot and the sparks blind him; hide behind the anvil, stand on the cool grates
+- **Kratos and Bia**, the throne guard: obey his commands (back off, come close, kneel) and steer Bia's charge into him
+- **Zeus**: lure his lightning into the copper pillars, look away from the Gorgon on his shield, and step into the golden pan of his scales
+
+**Tartarus**: five guardians hold the chain on the palace of Hades. Each one you beat breaks a link and makes the others stronger; at five of five the seal opens for Hades and Kronos. A ghostly Hermes points the way.
+
+Every attack is announced on the floor, gold always means safe or open, no boss summons adds, and nothing takes away your control. Bosses grow with the number of players and counter repeated mace smashes from above. Every piece of the Heaven and Hell sets drops **once per world** from its boss; a second win gives ingots. Curetes, griffins and golden automatons guard the islands.
+
 ## Config
 
 Basically everything can be turned off or tuned: `/hha toggle` and `/hha set` change abilities, damage values and cooldowns live, no restart needed.
@@ -38,7 +53,7 @@ Recipes are editable too. On first launch the mod puts template files into `conf
 
 Other stuff:
 - `/trust <player>` makes sure your abilities, trails and brutes never hurt your friends
-- `/hha kit hell|heaven` gives out a fully enchanted PvP kit (needs `kit_mode` enabled)
+- `/hha kit hell|heaven` gives out a fully enchanted PvP kit (needs `kit_mode` enabled, or creative mode)
 - Banner patterns for both factions
 
 ## Requirements

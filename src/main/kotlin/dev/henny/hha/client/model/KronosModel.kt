@@ -34,6 +34,9 @@ class KronosRenderState : LivingEntityRenderState() {
 
     /** Fliegt die Harpe gerade (siehe [KronosEntity.harpeOut])? */
     var harpeOut = false
+
+    /** Konter gegen Spieler über ihm (Überarbeitung 2): [KronosPose.SWEEP_L] als Aufwärtshieb, siehe [KronosEntity.antiAir]. */
+    var antiAir = false
     var walk = 0f
     var walkPhase = 0f
 }
@@ -202,6 +205,16 @@ class KronosModel(root: ModelPart) : EntityModel<KronosRenderState>(root) {
         else -> 0f
     }
 
+    /**
+     * Zeit im SWEEP_L-Ablauf während des Konters: bis zum Treffer gestaucht (Ansage [BossTimings.Guardian.ANTI_AIR_HIT]
+     * statt [BossTimings.Kronos.SWEEP_L_WINDUP]), danach im normalen Takt weiter.
+     */
+    private fun counterTime(t: Float): Float {
+        val hit = BossTimings.Guardian.ANTI_AIR_HIT.toFloat()
+        val full = BossTimings.Kronos.SWEEP_L_WINDUP.toFloat()
+        return if (t <= hit) t * full / hit else t + (full - hit)
+    }
+
     /** Steht die Zeit (Sand, Atem, Ring)? */
     private fun frozenTicks(pose: Int, t: Float): Float = when (pose) {
         KronosPose.HALT -> MathHelper.clamp(t - BossTimings.Kronos.HALT_RAISE, 0f, BossTimings.Kronos.HALT_FROZEN.toFloat())
@@ -215,7 +228,9 @@ class KronosModel(root: ModelPart) : EntityModel<KronosRenderState>(root) {
         val t = state.poseTime
         val age = state.age
         val start = evaluate(state.previousPose, settled(state.previousPose), Keys.IDLE.v)
-        val v = evaluate(pose, t, start)
+        // Konter (Überarbeitung 2, PLAN 4.3): SWEEP_L läuft so gestaucht, dass der Hieb auf das Ende der Konter-Ansage fällt.
+        val counter = state.antiAir && pose == KronosPose.SWEEP_L
+        val v = evaluate(pose, if (counter) counterTime(t) else t, start)
         for (b in 0 until Keys.COUNT) {
             val p = parts[b]
             val o = b * 6
@@ -261,6 +276,19 @@ class KronosModel(root: ModelPart) : EntityModel<KronosRenderState>(root) {
             armL.pitch += stride * 0.2f * w
             part(Keys.LOIN_F).pitch -= abs(stride) * 0.25f * w
             part(Keys.LOIN_B).pitch += abs(stride) * 0.2f * w
+        }
+
+        if (counter) {
+            // Aufwärtshieb: Beim Treffer fährt der Harpenarm über den Kopf, der Oberkörper lehnt zurück, der Blick geht nach oben.
+            val hit = BossTimings.Guardian.ANTI_AIR_HIT.toFloat()
+            val end = BossTimings.Guardian.ANTI_AIR_END.toFloat()
+            val fade = 1f - MathHelper.clamp((t - end + 6f) / 6f, 0f, 1f)
+            val swing = MathHelper.clamp((t - hit + 3f) / 4f, 0f, 1f) * fade
+            val look = MathHelper.clamp(t / BossTimings.Guardian.ANTI_AIR_RAISE, 0f, 1f) * fade
+            armR.pitch -= 1.25f * swing
+            foreR.pitch -= 0.35f * swing
+            chest.pitch -= 0.18f * swing
+            head.pitch -= 0.45f * look
         }
 
         // Spannung beim Halten des Ausholens: ein kaum sichtbares Zittern in Armen und Brust.
@@ -525,6 +553,7 @@ class KronosRenderer(context: EntityRendererFactory.Context) :
         state.poseTime = (entity.age - entity.poseChangedAge) + tickDelta
         state.form = entity.form
         state.harpeOut = entity.harpeOut
+        state.antiAir = entity.antiAir
         state.walk = entity.walkAmount
         state.walkPhase = entity.walkPhase
     }

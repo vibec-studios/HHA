@@ -1,14 +1,12 @@
 {
   "layers": {
     "humanoid": [
-      {
-        "texture": "hha:heaven"
-      }
+      { "texture": "hha:heaven" },
+      { "texture": "hha:heaven_glow" }
     ],
     "humanoid_leggings": [
-      {
-        "texture": "hha:heaven"
-      }
+      { "texture": "hha:heaven" },
+      { "texture": "hha:heaven_glow" }
     ]
   }
 }

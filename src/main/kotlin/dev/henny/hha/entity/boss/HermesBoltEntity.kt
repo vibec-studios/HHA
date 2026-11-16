@@ -160,14 +160,14 @@ class HermesBoltEntity(type: EntityType<out HermesBoltEntity>, world: World) : P
         impact(world)
     }
 
-    /** Nebenwirkungen; Plan 9.2: nie Slowness über Stufe II, Gift nur kurz. */
+    /** Nebenwirkungen: nie Slowness über Stufe I (Überarbeitung 2, PLAN 12.3), Gift nur kurz. */
     private fun afflict(victim: LivingEntity) {
         // Hat der Treffer den Spieler k.o. aus dem Kampf geworfen, bleibt es dabei.
         if (victim is net.minecraft.server.network.ServerPlayerEntity && !dev.henny.hha.logic.Fx.canAffect(victim)) return
         when (kind) {
             VENOM -> victim.addStatusEffect(StatusEffectInstance(StatusEffects.POISON, BossTimings.Kampe.SPIT_POISON, 0))
             FIRE -> victim.setOnFireFor(4f)
-            SAND -> victim.addStatusEffect(StatusEffectInstance(StatusEffects.SLOWNESS, 40, 1))
+            SAND -> victim.addStatusEffect(StatusEffectInstance(StatusEffects.SLOWNESS, 40, 0))
         }
     }
 
@@ -222,6 +222,36 @@ class HermesBoltEntity(type: EntityType<out HermesBoltEntity>, world: World) : P
 
         /** Sisyphos' Fels im Flug: Knochen `boulder` aus dem Sisyphos-Modell, rollt. */
         const val BOULDER = 8
+
+        // Überarbeitung 2 (PLAN 10.1): Requisiten des Olymp, gezeichnet von `OlympPropsModel` (Modell `olymp_props`).
+        // Nur hinten anfügen: Die Werte gehen über die Leitung.
+
+        /** Zeus' Blitz (Keraunos) im Flug und steckend. */
+        const val KERAUNOS = 9
+
+        /** Der Adler des Zeus (Saal-Gefahr in Phase II). */
+        const val EAGLE = 10
+
+        /** Brontes' glühender Rohling (liegt danach am Boden und kühlt ab). */
+        const val INGOT = 11
+
+        /** Hekates Fackel im Wurf. */
+        const val TORCH = 12
+
+        /** Der fertige Donnerkeil des Brontes („Der Keil“). */
+        const val HAMMER_BOLT = 13
+
+        /** Bias Klingenbogen für „KNIET!“. */
+        const val BLADE = 14
+
+        /** Kratos' weggeworfener Schild: liegt flach am Boden (Requisit, fliegt nicht, trifft nichts). */
+        const val SHIELD = 15
+
+        /** Nikes Kranz über dem Kopf des Siegers (Zeus, Schlussszene; Requisit, trifft nichts). */
+        const val WREATH = 16
+
+        /** Alle Arten, die `OlympPropsModel` zeichnet. */
+        val OLYMP_KINDS: Set<Int> = setOf(KERAUNOS, EAGLE, INGOT, TORCH, HAMMER_BOLT, BLADE, SHIELD, WREATH)
 
         /** Standard-Lebensdauer in Ticks. */
         const val MAX_AGE = 200

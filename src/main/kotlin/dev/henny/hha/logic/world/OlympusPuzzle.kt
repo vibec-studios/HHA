@@ -5,6 +5,7 @@ import dev.henny.hha.HhaSounds
 import dev.henny.hha.block.OfferingPedestalBlock
 import dev.henny.hha.logic.Vfx
 import dev.henny.hha.logic.boss.HermesFights
+import dev.henny.hha.world.olymp.OlympusLayout
 import net.minecraft.block.Block
 import net.minecraft.block.BlockState
 import net.minecraft.entity.EntityType
@@ -29,6 +30,9 @@ import net.minecraft.util.math.Vec3d
  *
  * Reihenfolge: Osten (Feder), Süden (Notenblock), Westen (Leder oder Rindfleisch), Norden (Papier).
  * Der Fortschritt steckt in den Blöcken selbst, also überlebt er Neustarts und braucht keinen eigenen Speicher.
+ *
+ * Seit Überarbeitung 2 steht der Tempel fest auf Insel B im Olymp ([OlympusLayout.B]); nur dort startet das Rätsel den
+ * Kampf. Alte Opfersteine in der Oberwelt verweisen auf das Wolkentor (`hha.olympus.moved`).
  */
 object OlympusPuzzle {
 
@@ -48,6 +52,11 @@ object OlympusPuzzle {
     }
 
     fun offer(world: ServerWorld, pos: BlockPos, state: BlockState, stack: ItemStack, player: ServerPlayerEntity) {
+        // Seit Überarbeitung 2 beginnt Hermes nur noch im Olymp (Insel B); der Opferstein selbst fragt das schon ab.
+        if (world.registryKey != OlympusLayout.WORLD) {
+            player.sendMessage(Text.translatable("hha.olympus.moved").formatted(Formatting.GOLD, Formatting.ITALIC), false)
+            return
+        }
         if (state.get(OfferingPedestalBlock.LIT)) {
             player.sendMessage(Text.translatable("hha.olympus.taken").formatted(Formatting.GRAY), true)
             return

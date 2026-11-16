@@ -231,18 +231,21 @@ def chain_link():
     save(Image(16, 16).fn(lambda x, y: ramp(steel, y / 15 * 0.85 + n(x, y) * 0.15)), 'textures/vfx/chain.png')
 
 
+def solid():
+    """Deckende weiße Fläche: klare Ränder und Füllungen der Ansagen (Überarbeitung 2, ohne Leuchtsaum)."""
+    save(Image(8, 8).fn(lambda x, y: (255, 255, 255, 255)), 'textures/vfx/solid.png')
+
+
+ALL = {
+    'noise': noise_tile, 'glow': glow, 'flare': flare, 'rays': rays, 'feather': feather,
+    'feather_particles': feather_particles, 'feather_atlas': feather_atlas, 'rune_circle': rune_circle,
+    'rune_ring': rune_ring, 'smoke': smoke, 'cloud': cloud, 'shard': shard, 'chain': chain_link, 'solid': solid,
+}
+
+
 if __name__ == '__main__':
-    noise_tile()
-    glow()
-    flare()
-    rays()
-    feather()
-    feather_particles()
-    feather_atlas()
-    rune_circle()
-    rune_ring()
-    smoke()
-    cloud()
-    shard()
-    chain_link()
+    # Ohne Argument alle Texturen, sonst nur die genannten (z. B. `python vfx_textures.py solid`).
+    import sys
+    for name in (sys.argv[1:] or list(ALL)):
+        ALL[name]()
     flush()

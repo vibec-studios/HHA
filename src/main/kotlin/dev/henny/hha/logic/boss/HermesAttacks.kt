@@ -1,7 +1,6 @@
 package dev.henny.hha.logic.boss
 
 import dev.henny.hha.HhaEntities
-import dev.henny.hha.HhaParticles
 import dev.henny.hha.HhaSounds
 import dev.henny.hha.entity.boss.HermaEntity
 import dev.henny.hha.entity.boss.HermesBoltEntity
@@ -14,23 +13,19 @@ import net.minecraft.entity.SpawnReason
 import net.minecraft.entity.damage.DamageSource
 import net.minecraft.entity.effect.StatusEffectCategory
 import net.minecraft.entity.effect.StatusEffectInstance
-import net.minecraft.item.ItemStack
-import net.minecraft.item.Items
-import net.minecraft.particle.ItemStackParticleEffect
 import net.minecraft.particle.ParticleTypes
 import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.sound.SoundEvents
 import net.minecraft.util.math.Vec3d
 import java.util.UUID
 import kotlin.math.PI
-import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 
 /**
- * Das Kampfrepertoire von Hermes (Plan 4.2) und seinem Schatten (Plan 4.3): je Stage eine **feste Reihenfolge**.
+ * Das Kampfrepertoire von Hermes (Plan 4.2): je Stage eine **feste Reihenfolge**.
  *
  * Jeder Angriff hat drei Teile: Ansage über [Telegraph] (die Form ist genau die Trefferfläche, die Zeiten kommen aus
  * [BossTimings]) und eine Pose zu Beginn des Ausholens → Treffer → Erholung, in der er steht. Offene Fenster (SKID,
@@ -42,6 +37,11 @@ import kotlin.math.sin
  * Effekte nach Plan 3.3/3.4: je Treffer genau ein Flächeneffekt (Schockwelle/Nova/Säule/Sichel) und höchstens ein
  * Rütteln ≤ 4; Gefahr in der Farbe der Stage ([HermesFight.style]), Gold nur für Rune, sichere Flächen und den echten
  * Hermes. Keine Wirbelstürme, keine Zielsuche, kein Hotbar-Mischen, keine Unverwundbarkeit außerhalb von Stage IV.
+ *
+ * Überarbeitung 2 (PLAN 4.3, 5.1): Jeder Treffer nennt seine Reichweite ([BossDefense.Reach]); Seelensäulen, Speere des
+ * Olymp und der Einschlag des Sturzflugs treffen auch in der Luft (`SKY`), Bodenwellen und Letztes Wort nur am Boden
+ * (`LOW`), alles andere bis Körperhöhe (`BODY`). Wer ihn von oben bearbeitet, bekommt nach dem Angriff statt der Pause
+ * den Konter „Abfangen in der Luft“ ([counter]). Pausen werden mit der Spielerzahl kürzer ([BossScaling.pause]).
  */
 class HermesAttacks(private val fight: HermesFight) {
 
@@ -56,11 +56,6 @@ class HermesAttacks(private val fight: HermesFight) {
     /** Abfangen: scharf, solange der echte Hermes in einer Stoßfolge ist; höchstens einmal je Folge. */
     private var interceptArmed = false
     private var intercepted = false
-
-    /** Rauchschritt: In diesem Welt-Tick-Bereich lässt ein Nahkampftreffer ihn stolpern. */
-    private var smokeFrom = -1L
-    private var smokeUntil = -1L
-    private var smokeBroken = false
 
     /** Herma-Sprung: der glühende Zielstein und ob er zerschlagen wurde, bevor Hermes ankam. */
     private var leapTarget: HermaEntity? = null
@@ -83,43 +78,60 @@ class HermesAttacks(private val fight: HermesFight) {
         rotation = 0
         interceptArmed = false
         intercepted = false
-        smokeFrom = -1L
-        smokeUntil = -1L
-        smokeBroken = false
         leapTarget = null
         leapBroken = false
     }
 
-    /** Die nächste Attacke der Stage in fester Reihenfolge, danach die Pause der Stage. */
+    /**
+     * Die nächste Attacke der Stage in fester Reihenfolge, danach die Pause der Stage (kürzer mit mehr Spielern) oder,
+     * wenn ihn jemand von oben bearbeitet, statt der Pause der Konter.
+     */
     fun next(stage: Int): Sequence<Unit> {
-        val list: List<() -> Sequence<Unit>> = if (fight.shade) {
-            when (stage) {
-                // Phase I – Die Asche
-                2 -> listOf(::mirrorDash, ::stickyFingers, ::smokeStep, ::crossroads)
-                // Phase II – Der Styx
-                3 -> listOf(::twins, ::soulPillars, ::ferryWave, ::lanceRow)
-                // Phase III – Das letzte Wort: nach jedem Muster Erschöpfung (offen)
-                else -> listOf({ dives(S.EXHAUST) }, ::coinToss, { lastWord(S.EXHAUST) })
-            }
-        } else {
-            when (stage) {
-                1 -> listOf({ courierDash(H.DASH_COUNT) }, ::featherFan, ::stormSlam)
-                2 -> listOf(::mirrorDash, ::stickyFingers, ::crossroads, ::mirrorDash, ::hermaLeap)
-                3 -> listOf(::twins, ::soulPillars, ::lanceRow, ::styx, { courierDash(H.DASH_COUNT_STAGE3) })
-                else -> listOf({ dives(H.DIVE_EXHAUST) }, ::skySpears, { lastWord(H.FINAL_EXHAUST) })
-            }
+        val list: List<() -> Sequence<Unit>> = when (stage) {
+            1 -> listOf({ courierDash(H.DASH_COUNT) }, ::featherFan, ::stormSlam)
+            2 -> listOf(::mirrorDash, ::stickyFingers, ::crossroads, ::mirrorDash, ::hermaLeap)
+            3 -> listOf(::twins, ::soulPillars, ::lanceRow, ::styx, { courierDash(H.DASH_COUNT_STAGE3) })
+            else -> listOf({ dives(H.DIVE_EXHAUST) }, ::skySpears, { lastWord(H.FINAL_EXHAUST) })
         }
         val attack = list[rotation++ % list.size]()
-        val pause = when {
-            fight.shade -> S.PAUSE
-            stage >= 4 -> H.PAUSE_STAGE4
-            else -> H.PAUSE
-        }
+        val pause = if (stage >= 4) H.PAUSE_STAGE4 else H.PAUSE
         return sequence {
             yieldAll(attack)
             fight.boss?.let { if (it.isAlive) it.pose = HermesPose.IDLE }
-            wait(pause)
+            if (fight.counterDue()) yieldAll(counter()) else wait(BossScaling.pause(pause, fight.crowd))
         }
+    }
+
+    // -------------------------------------------------------------------------------------------------
+    // Konter (PLAN 4.3): Abfangen in der Luft
+    // -------------------------------------------------------------------------------------------------
+
+    /**
+     * **Abfangen in der Luft:** geduckt (DIVE) mit dem gemeinsamen Konter-Kreis um ihn ([BossDefense.COUNTER_TICKS],
+     * Höhe unbegrenzt), dann schießt er senkrecht hoch: S 12 (`SKY`) und Abwurf nach außen und unten. Danach ist er
+     * wachsam (Sturztreffer prallen ab).
+     */
+    private fun counter(): Sequence<Unit> = sequence {
+        val guard = fight.guard ?: return@sequence
+        guard.beginCounter()
+        val from = boss.entityPos
+        val spot = ground(from, 0.05)
+        boss.pose = HermesPose.DIVE
+        val ring = telegraph.ring(spot, guard.counterRadius().toFloat(), BossDefense.COUNTER_TICKS)
+        fight.sound(HhaSounds.CHARGE, from, 1.8f, 1.4f)
+        wait(ring.ticks)
+        for (target in ring.hits(fight.targets())) {
+            fight.hurt(target, Dmg.COUNTER, reach = BossDefense.Reach.SKY)
+            guard.counterHit(target)
+        }
+        boss.pose = HermesPose.ASCEND
+        Vfx.trail(world, style, boss, 0.7f, 12)
+        fight.sound(HhaSounds.DASH, from, 2.2f, 1.3f)
+        flyTo(from.add(0.0, H.COUNTER_HEIGHT, 0.0), H.COUNTER_RISE, smooth = false)
+        guard.endCounter()
+        flyTo(from, H.COUNTER_RETURN)
+        boss.pose = HermesPose.IDLE
+        wait(H.COUNTER_RECOVER)
     }
 
     // -------------------------------------------------------------------------------------------------
@@ -137,8 +149,8 @@ class HermesAttacks(private val fight: HermesFight) {
     }
 
     /**
-     * Ein Treffer auf den echten Hermes: Trugbilder verpuffen, der Rauchschritt ist durchschaut, oder er wird im Stoß
-     * abgefangen. @return Schadensfaktor ([INTERCEPT_BONUS] beim Abfangen, sonst 1).
+     * Ein Treffer auf den echten Hermes: Trugbilder verpuffen, oder er wird im Stoß abgefangen.
+     * @return Schadensfaktor ([INTERCEPT_BONUS] beim Abfangen, sonst 1).
      */
     fun onBossStruck(entity: HermesEntity, source: DamageSource): Float {
         fight.sound(HhaSounds.HIT, entity.entityPos.add(0.0, 1.5, 0.0), 1.6f, 0.9f + world.random.nextFloat() * 0.25f)
@@ -152,13 +164,6 @@ class HermesAttacks(private val fight: HermesFight) {
         val player = source.attacker as? ServerPlayerEntity ?: return 1f
         // Nahkampf: Angreifer und Schadensquelle sind derselbe (kein Pfeil, kein Dreizack).
         if (!source.isDirect) return 1f
-        val now = world.time
-        if (smokeFrom >= 0L && now in smokeFrom until smokeUntil) {
-            smokeBroken = true
-            smokeFrom = -1L
-            fight.hint("hha.hermes.hint.intercept", listOf(player))
-            return 1f
-        }
         if (interceptArmed && !intercepted && entity.pose == HermesPose.DASH) {
             intercepted = true
             interceptArmed = false
@@ -177,6 +182,10 @@ class HermesAttacks(private val fight: HermesFight) {
     // -------------------------------------------------------------------------------------------------
     // Hilfen
     // -------------------------------------------------------------------------------------------------
+
+    /** Trifft ein Angriff mit [reach] den Spieler (Höhenregel, Boden = Forum)? Für Stöße, die nur Getroffene schieben. */
+    private fun inReach(player: ServerPlayerEntity, reach: BossDefense.Reach = BossDefense.Reach.BODY): Boolean =
+        BossDefense.reaches(player, fight.arena.floorY, reach, boss.height.toDouble())
 
     /** Punkt auf Bodenhöhe des Forums (plus [lift]). */
     private fun ground(pos: Vec3d, lift: Double = 0.0): Vec3d = Vec3d(pos.x, center.y + lift, pos.z)
@@ -290,7 +299,7 @@ class HermesAttacks(private val fight: HermesFight) {
                 val d = flat(player.entityPos.subtract(at)).length()
                 if (d >= from - WAVE_BAND && d in (previous - WAVE_BAND)..(radius + WAVE_BAND)) {
                     hit.add(player.uuid)
-                    fight.hurt(player, damage)
+                    fight.hurt(player, damage, reach = BossDefense.Reach.LOW)
                     Fx.launchPlayer(player, Vec3d(0.0, 0.45, 0.0))
                 }
             }
@@ -318,10 +327,7 @@ class HermesAttacks(private val fight: HermesFight) {
         wait(H.STUMBLE_WINDOW)
     }
 
-    /**
-     * Erschöpfung (Stage IV und Schatten-Phase III): kniet, goldene Rune, verwundbar und offen. Am Ende ein Flare,
-     * kein Wegstoßen (Plan 3.4).
-     */
+    /** Erschöpfung (Stage IV): kniet, goldene Rune, verwundbar und offen. Am Ende ein Flare, kein Wegstoßen (Plan 3.4). */
     private fun exhausted(ticks: Int): Sequence<Unit> = sequence {
         val spot = fight.clampToArena(ground(boss.entityPos, 0.05), 6.0)
         flyTo(spot, H.LAND)
@@ -330,8 +336,8 @@ class HermesAttacks(private val fight: HermesFight) {
         fight.markOpen(ticks)
         fight.hint("hha.hermes.hint.exhausted")
         wait(ticks)
-        // Der Schatten ist immer verwundbar (Plan 4.3), Hermes in Stage IV nur hier.
-        if (!fight.shade) boss.vulnerable = false
+        // In Stage IV ist er nur hier verwundbar.
+        boss.vulnerable = false
         boss.pose = HermesPose.ASCEND
         Vfx.flare(world, style, boss.entityPos.add(0.0, 1.5, 0.0), 2.4f, 10)
         flyTo(spot.add(0.0, EXHAUST_LIFT, 0.0), H.EXHAUST_RISE)
@@ -361,7 +367,7 @@ class HermesAttacks(private val fight: HermesFight) {
             val stride = min(H.DASH_SPEED, length - travelled)
             val next = position.add(way.multiply(stride))
             for (player in fight.targets()) {
-                if (player.uuid in hit || abs(player.y - from.y) > DASH_REACH_Y) continue
+                if (player.uuid in hit || player.y < from.y - DASH_REACH_Y || !inReach(player)) continue
                 if (!Telegraph.inLine(player.entityPos, position, next, H.DASH_WIDTH.toDouble(), player.width * 0.5)) continue
                 hit.add(player.uuid)
                 fight.hurt(player, damage)
@@ -464,6 +470,7 @@ class HermesAttacks(private val fight: HermesFight) {
         wait(circle.ticks - H.SLAM_DROP)
         flyTo(ground(spot, 0.05), H.SLAM_DROP, smooth = false)
         for (target in circle.hits(fight.targets())) {
+            if (!inReach(target)) continue
             fight.hurt(target, Dmg.SLAM)
             Fx.launchPlayer(target, heading(spot, target.entityPos).multiply(0.8).add(0.0, 0.95, 0.0))
         }
@@ -478,13 +485,12 @@ class HermesAttacks(private val fight: HermesFight) {
     }
 
     // -------------------------------------------------------------------------------------------------
-    // Stage II: Der Dieb (beim Schatten Phase I)
+    // Stage II: Der Dieb
     // -------------------------------------------------------------------------------------------------
 
     private fun spawnIllusion(pos: Vec3d): HermesEntity {
         val ghost = HhaEntities.HERMES.create(world, SpawnReason.EVENT)!!
         ghost.isIllusion = true
-        ghost.corrupted = boss.corrupted
         ghost.stage = boss.stage
         ghost.setPosition(pos)
         world.spawnEntity(ghost)
@@ -503,7 +509,6 @@ class HermesAttacks(private val fight: HermesFight) {
      * **Spiegel-Stoß:** drei Körper (zwei Trugbilder) im Kreis um das Ziel, jeder mit Linie W 30; nur unter dem Echten
      * liegt der goldene Kreis. Echter S 12, Trugbild S 4. Danach spotten die Trugbilder 30 Ticks, der Echte steht in
      * SKID F 30 (offen). Treffer auf den Echten: Trugbilder verpuffen; im Stoß abgefangen: STUMBLE.
-     * Beim Schatten brennen die Bahnen als **Aschespur** nach.
      */
     private fun mirrorDash(): Sequence<Unit> = sequence {
         val player = nextTarget() ?: return@sequence
@@ -546,39 +551,7 @@ class HermesAttacks(private val fight: HermesFight) {
         }
         yieldAll(dashTask(boss, slots[real], ends[real], Dmg.MIRROR))
         interceptArmed = false
-        if (fight.shade) ashTrail(slots.indices.map { ground(slots[it]) to ground(ends[it]) })
         if (intercepted) yieldAll(stumble()) else yieldAll(skid())
-    }
-
-    /**
-     * Schatten: Die Bahnen des Spiegel-Stoßes brennen [BossTimings.Shade.ASH_TRAIL] Ticks als Aschespur nach, S 4 alle
-     * 10 Ticks am Boden. Zählt als Saal-Gefahr; ist der Platz belegt, brennt nichts nach.
-     */
-    private fun ashTrail(paths: List<Pair<Vec3d, Vec3d>>) {
-        val hazard = telegraph.hazard(reserve = S.ASH_TRAIL) ?: return
-        for ((a, b) in paths) Vfx.beam(world, style, a.add(0.0, 0.12, 0.0), b.add(0.0, 0.12, 0.0), 0.7f, S.ASH_TRAIL)
-        fight.runTask(sequence {
-            for (tick in 0 until S.ASH_TRAIL) {
-                // Glut: höchstens zwei Partikel je Tick (Plan 3.3).
-                if (tick % 2 == 0) {
-                    repeat(2) {
-                        val (a, b) = paths[world.random.nextInt(paths.size)]
-                        val p = a.lerp(b, world.random.nextDouble())
-                        Fx.spawn(world, HhaParticles.SOUL_FLAME, p.x, center.y + 0.1, p.z, 1, 0.12, 0.02, 0.12, 0.01)
-                    }
-                }
-                if (tick % S.ASH_TICK == S.ASH_TICK - 1) {
-                    for (player in fight.targets()) {
-                        if (!fight.grounded(player)) continue
-                        if (paths.any { (a, b) -> Telegraph.inLine(player.entityPos, a, b, H.DASH_WIDTH.toDouble(), player.width * 0.5) }) {
-                            fight.hurt(player, Dmg.ASH, magic = true)
-                        }
-                    }
-                }
-                yield(Unit)
-            }
-            hazard.end()
-        })
     }
 
     /**
@@ -643,7 +616,7 @@ class HermesAttacks(private val fight: HermesFight) {
             wait(group.ticks)
             for ((a, b) in rays) Vfx.beam(world, style, a.add(0.0, 0.8, 0.0), b.add(0.0, 0.8, 0.0), 0.8f, 10)
             val struck = LinkedHashSet<ServerPlayerEntity>()
-            for (line in lines) for (p in line.hits(fight.targets())) if (p.y < center.y + CROSS_REACH_Y) struck.add(p)
+            for (line in lines) for (p in line.hits(fight.targets())) struck.add(p)
             for (p in struck) fight.hurt(p, Dmg.CROSS)
             fight.sound(HhaSounds.DASH, center, 2.5f, 1.3f)
             if (wave < H.CROSS_LINES.size - 1) wait(H.CROSS_GAP)
@@ -754,7 +727,7 @@ class HermesAttacks(private val fight: HermesFight) {
     }
 
     // -------------------------------------------------------------------------------------------------
-    // Stage III: Der Seelenführer (beim Schatten Phase II)
+    // Stage III: Der Seelenführer
     // -------------------------------------------------------------------------------------------------
 
     /** Geschwungene Bahn vom Stab zum Rand: Radius wächst gleichmäßig, der Winkel dreht um [bend]. */
@@ -784,7 +757,7 @@ class HermesAttacks(private val fight: HermesFight) {
         serpent.setPosition(head)
         fight.face(serpent, pointAt(lane, (progress + ahead).coerceIn(0.0, 1.0)).let { if (it.squaredDistanceTo(head) < 0.01) head.add(flat(head.subtract(center))) else it })
         for (player in fight.targets()) {
-            if (player.uuid in hit || player.y > center.y + SERPENT_REACH_Y) continue
+            if (player.uuid in hit || !inReach(player)) continue
             if (flat(player.entityPos.subtract(head)).length() > H.TWINS_WIDTH * 0.5 + SERPENT_HEAD) continue
             if (lane.zipWithNext().none { (a, b) -> Telegraph.inLine(player.entityPos, a, b, H.TWINS_WIDTH.toDouble(), player.width * 0.5) }) continue
             hit.add(player.uuid)
@@ -798,7 +771,6 @@ class HermesAttacks(private val fight: HermesFight) {
      * **Die Zwillinge** (PLANT): Hermes rammt den Stab in die Mitte (20 Ticks). Zwei geschwungene Bahnen (Breite 2,4)
      * von der Mitte zum Rand, W 30; die Schlangen schnellen in 30 Ticks hinaus und in 20 zurück, S 12. Der zweite
      * Durchgang ist gespiegelt. Er kanalisiert die ganze Zeit in der Mitte und ist verwundbar.
-     * Beim Schatten schnappt jede Schlange am Ende ihrer Bahn einmal zu (Kreis Radius 3, W 12, S 10).
      * Keine Lebensleiste, kein Gift, keine Verfolgung, keine Trefferzonen (Plan 4.1).
      */
     private fun twins(): Sequence<Unit> = sequence {
@@ -823,8 +795,7 @@ class HermesAttacks(private val fight: HermesFight) {
             wait(group.ticks)
 
             // Die Bahnen bleiben angesagt, bis die Schlangen zurück am Stab sind.
-            val snap = fight.shade
-            val travel = H.TWINS_OUT + H.TWINS_BACK + if (snap) S.TWINS_SNAP_WINDUP else 0
+            val travel = H.TWINS_OUT + H.TWINS_BACK
             for (lane in lanes) laneLines(group, lane, travel)
             val serpents = fight.spawnSerpents(staff.add(0.0, SERPENT_HEIGHT, 0.0))
             fight.sound(HhaSounds.ROAR, staff, 2.4f, 1.3f)
@@ -832,19 +803,6 @@ class HermesAttacks(private val fight: HermesFight) {
             for (k in 1..H.TWINS_OUT) {
                 for ((i, serpent) in serpents.withIndex()) moveSerpent(serpent, lanes[i], k.toDouble() / H.TWINS_OUT, 0.05, hits[i])
                 yield(Unit)
-            }
-            if (snap) {
-                // Schatten: Am Ende der Bahn schnappt die Schlange einmal zu.
-                for (serpent in serpents) serpent.biting = true
-                val bites = lanes.map { group.ring(it.last(), S.TWINS_SNAP_RADIUS, S.TWINS_SNAP_WINDUP) }
-                fight.sound(HhaSounds.HISS, staff, 2.4f, 1.4f)
-                wait(bites.maxOf { it.ticks })
-                for (bite in bites) {
-                    for (p in bite.hits(fight.targets())) fight.hurt(p, Dmg.TWINS_SNAP)
-                    Vfx.nova(world, style, bite.center.add(0.0, 0.8, 0.0), S.TWINS_SNAP_RADIUS, 8)
-                }
-                fight.sound(HhaSounds.BITE, staff, 2.4f, 0.9f)
-                for (serpent in serpents) serpent.biting = false
             }
             for (h in hits) h.clear()
             for (k in 1..H.TWINS_BACK) {
@@ -858,7 +816,7 @@ class HermesAttacks(private val fight: HermesFight) {
 
     /**
      * **Seelensäulen:** 4 Wellen mit je einem Kreis Radius 3 je Spieler, W 20, 14 Ticks Abstand; die letzten zwei mit
-     * Vorhalt. S 11 + Hochwurf. Danach landet er: F 20.
+     * Vorhalt. S 11 + Hochwurf, trifft auch in der Luft (`SKY`). Danach landet er: F 20.
      */
     private fun soulPillars(): Sequence<Unit> = sequence {
         boss.pose = HermesPose.CAST
@@ -888,7 +846,7 @@ class HermesAttacks(private val fight: HermesFight) {
         Vfx.pillar(world, style, ring.center, 2.2f, 14f, 18)
         if (loud) fight.sound(HhaSounds.SOUL, ring.center, 1.6f, 1.2f)
         for (target in ring.hits(fight.targets())) {
-            fight.hurt(target, Dmg.PILLAR, magic = true)
+            fight.hurt(target, Dmg.PILLAR, magic = true, reach = BossDefense.Reach.SKY)
             Fx.launchPlayer(target, Vec3d(0.0, 0.9, 0.0))
         }
     }
@@ -959,8 +917,8 @@ class HermesAttacks(private val fight: HermesFight) {
 
     /**
      * **Styx-Flut:** zwei Phasen (erst der Rand, dann die Mitte), W 40 (Plan 30, saalweit angehoben); die Flut in
-     * SOUL, der sichere Bereich gold (Phase 1 als goldene Fläche, Phase 2 mit goldenem Rand). S 7 alle 10 Ticks am
-     * Boden. Er schwebt darüber.
+     * SOUL, der sichere Bereich gold (Phase 1 als goldene Fläche, Phase 2 mit goldenem Rand). S 7 alle 10 Ticks bis
+     * Körperhöhe (`BODY`, Überspringen hilft nicht). Er schwebt darüber.
      */
     private fun styx(): Sequence<Unit> = sequence {
         boss.pose = HermesPose.CAST
@@ -987,7 +945,7 @@ class HermesAttacks(private val fight: HermesFight) {
             group.hold(H.STYX_FLOOD)
             for (tick in 0 until H.STYX_FLOOD) {
                 if (tick % H.STYX_TICK == 0) {
-                    for (player in danger.hits(fight.targets())) if (fight.grounded(player)) fight.hurt(player, Dmg.STYX, magic = true)
+                    for (player in danger.hits(fight.targets())) fight.hurt(player, Dmg.STYX, magic = true)
                 }
                 yield(Unit)
             }
@@ -997,11 +955,11 @@ class HermesAttacks(private val fight: HermesFight) {
     }
 
     // -------------------------------------------------------------------------------------------------
-    // Stage IV: Der Götterbote — nur in der Erschöpfung verwundbar (der Schatten immer)
+    // Stage IV: Der Götterbote — nur in der Erschöpfung verwundbar
     // -------------------------------------------------------------------------------------------------
 
     /**
-     * **Sturzflug × 3** (DIVE): Kreis Radius 5, W 16 Ausholen + 3 Sturz; S 13 und eine kleine Bodenwelle bis 9 (mit
+     * **Sturzflug × 3** (DIVE): Kreis Radius 5, W 16 Ausholen + 3 Sturz; S 13 (`SKY`) und eine kleine Bodenwelle bis 9 (mit
      * dem Kreis angesagt; sie läuft los, wenn ihr Ring endet; überspringen). Danach Erschöpfung (KNEEL, goldene Rune).
      */
     private fun dives(exhaust: Int): Sequence<Unit> = sequence {
@@ -1021,7 +979,7 @@ class HermesAttacks(private val fight: HermesFight) {
             Vfx.trail(world, style, boss, 0.8f, 10)
             flyTo(ground(spot, 0.1), H.DIVE_DROP, smooth = false)
             for (target in circle.hits(fight.targets())) {
-                fight.hurt(target, Dmg.DIVE)
+                fight.hurt(target, Dmg.DIVE, reach = BossDefense.Reach.SKY)
                 Fx.launchPlayer(target, heading(spot, target.entityPos).multiply(1.0).add(0.0, 0.7, 0.0))
             }
             // Eine Schockwelle trägt Einschlag und Bodenwelle; Rütteln entfällt, weil der Wellenring noch angesagt ist.
@@ -1034,7 +992,7 @@ class HermesAttacks(private val fight: HermesFight) {
     }
 
     /**
-     * **Speere des Olymp × 2:** je Spieler ein Speer mit Kreis Radius 8, W 50 und dann 40; S 22, eine Schockwelle und
+     * **Speere des Olymp × 2:** je Spieler ein Speer mit Kreis Radius 8, W 50 und dann 40; S 22 (`SKY`), eine Schockwelle und
      * Rütteln 4. Danach je eine Bodenwelle als eigene Ring-Ansage (bis 18, S 7). Danach Erschöpfung.
      */
     private fun skySpears(): Sequence<Unit> = sequence {
@@ -1053,7 +1011,7 @@ class HermesAttacks(private val fight: HermesFight) {
             wait(circles.maxOf { it.ticks })
             for (circle in circles) {
                 for (target in circle.hits(fight.targets())) {
-                    fight.hurt(target, Dmg.SPEAR)
+                    fight.hurt(target, Dmg.SPEAR, reach = BossDefense.Reach.SKY)
                     Fx.launchPlayer(target, heading(circle.center, target.entityPos).multiply(1.1).add(0.0, 0.8, 0.0))
                 }
                 Vfx.shockwave(world, style, circle.center, H.SPEAR_RADIUS, 16, 3f)
@@ -1096,7 +1054,7 @@ class HermesAttacks(private val fight: HermesFight) {
                     if (!fight.grounded(player) || (cooldown[player.uuid] ?: 0) > tick) continue
                     if (!Telegraph.inLine(player.entityPos, ground(origin), ground(tip), H.FINAL_WIDTH.toDouble(), player.width * 0.5)) continue
                     cooldown[player.uuid] = tick + FINAL_COOLDOWN
-                    fight.hurt(player, Dmg.FINAL, magic = true)
+                    fight.hurt(player, Dmg.FINAL, magic = true, reach = BossDefense.Reach.LOW)
                     Fx.launchPlayer(player, Vec3d(0.0, 0.6, 0.0))
                 }
             }
@@ -1107,149 +1065,7 @@ class HermesAttacks(private val fight: HermesFight) {
         yieldAll(exhausted(exhaust))
     }
 
-    // -------------------------------------------------------------------------------------------------
-    // Nur der Schatten (Plan 4.3)
-    // -------------------------------------------------------------------------------------------------
-
-    /**
-     * **Rauchschritt** (SMOKE): Er zerfällt zu Rauch; drei Rauchsäulen stehen 24 Ticks um das Ziel (Abstand 6), in der
-     * echten glimmen ab Tick 12 zwei Augen (Modell). Bei Tick 24 tritt er heraus und schlägt: Kreis Radius 3 am Ziel,
-     * S 12. Danach SKID F 24 (offen). Wer ihn in den letzten 12 Ticks in seiner Säule trifft, lässt ihn stolpern (40).
-     */
-    private fun smokeStep(): Sequence<Unit> = sequence {
-        val player = nextTarget() ?: return@sequence
-        val anchor = ground(player.entityPos)
-        Fx.burst(world, ParticleTypes.LARGE_SMOKE, boss.entityPos.add(0.0, 1.2, 0.0), 16, 0.5, 0.02)
-        fight.sound(HhaSounds.BLINK, boss.entityPos, 1.6f, 0.6f)
-        val phase = randomAngle()
-        val count = S.SMOKE_COLUMNS
-        val columns = List(count) { i ->
-            fight.clampToArena(ground(anchor.add(dir(phase + i * PI * 2.0 / count).multiply(S.SMOKE_SPACING.toDouble())), 0.05), 1.5)
-        }
-        val real = world.random.nextInt(count)
-        boss.setPosition(columns[real])
-        fight.face(boss, anchor)
-        boss.pose = HermesPose.SMOKE
-        fight.hint("hha.shade.hint.smoke")
-        val strike = telegraph.ring(anchor, S.SMOKE_RADIUS, S.SMOKE_WINDUP)
-        for (column in columns) Fx.burst(world, ParticleTypes.LARGE_SMOKE, column.add(0.0, 1.2, 0.0), 8, 0.35, 0.01)
-        smokeBroken = false
-        smokeFrom = world.time + strike.ticks - S.SMOKE_INTERCEPT
-        smokeUntil = world.time + strike.ticks
-        for (tick in 0 until strike.ticks) {
-            if (smokeBroken) break
-            // Ein Emitter, ein Partikel je Säule und Tick.
-            for (column in columns) {
-                Fx.spawn(world, ParticleTypes.LARGE_SMOKE, column.x, column.y + 1.3, column.z, 1, 0.25, 0.9, 0.25, 0.01)
-            }
-            if (tick == strike.ticks - BossTimings.Anim.BLEND_HARD) {
-                // Er tritt heraus: an den Rand des Kreises, Blick zum Ziel.
-                val out = heading(anchor, columns[real])
-                boss.setPosition(ground(anchor.add(out.multiply(SMOKE_STEP_OUT)), 0.05))
-                fight.face(boss, anchor)
-            }
-            yield(Unit)
-        }
-        smokeFrom = -1L
-        smokeUntil = -1L
-        if (smokeBroken) {
-            smokeBroken = false
-            yieldAll(stumble())
-            return@sequence
-        }
-        for (target in strike.hits(fight.targets())) fight.hurt(target, Dmg.SMOKE)
-        Vfx.crescent(world, style, boss.entityPos.add(0.0, 1.0, 0.0), heading(boss.entityPos, anchor), S.SMOKE_RADIUS * 1.6f, 3f, 8)
-        fight.sound(HhaSounds.WHOOSH, anchor, 2.2f, 0.8f)
-        yieldAll(skid(S.SMOKE_WINDOW))
-    }
-
-    /**
-     * **Fährmanns Welle:** Ringband am Wasserrand (W 30), dann läuft der Ring in 40 Ticks zur Mitte; S 10 am Boden,
-     * überspringen. Zwei Wellen im Abstand von 30 Ticks.
-     */
-    private fun ferryWave(): Sequence<Unit> = sequence {
-        boss.pose = HermesPose.CAST
-        flyTo(ground(center, CAST_HEIGHT), CAST_MOVE)
-        fight.hint("hha.shade.hint.ferry")
-        val outer = HermesArena.RADIUS.toFloat()
-        val group = telegraph.boss()
-        for (wave in 0 until S.FERRY_WAVES) {
-            val band = group.ring(center, outer, S.FERRY_WINDUP, inner = outer - S.FERRY_BAND)
-            fight.sound(HhaSounds.FLOOD, center, 2.6f, 0.8f + wave * 0.1f)
-            fight.runTask(ferryRun(band.ticks, outer.toDouble()))
-            if (wave < S.FERRY_WAVES - 1) wait(S.FERRY_GAP)
-        }
-        group.hold(group.ticks + S.FERRY_TRAVEL)
-        wait(group.ticks + S.FERRY_TRAVEL)
-    }
-
-    private fun ferryRun(delay: Int, from: Double): Sequence<Unit> = sequence {
-        wait(delay)
-        val hit = HashSet<UUID>()
-        var previous = from
-        for (k in 0..S.FERRY_TRAVEL) {
-            val radius = from * (1.0 - k.toDouble() / S.FERRY_TRAVEL)
-            // Die Welle selbst: ein kurzer Flutring an der Front, alle drei Ticks erneuert.
-            if (k % 3 == 0) Vfx.flood(world, style, center, (radius + 1.0).toFloat(), max(0.0, radius - 1.0).toFloat(), 6)
-            for (player in fight.targets()) {
-                if (player.uuid in hit || !fight.grounded(player)) continue
-                val d = flat(player.entityPos.subtract(center)).length()
-                if (d in (radius - WAVE_BAND)..(previous + WAVE_BAND)) {
-                    hit.add(player.uuid)
-                    fight.hurt(player, Dmg.FERRY, magic = true)
-                    Fx.launchPlayer(player, Vec3d(0.0, 0.45, 0.0))
-                }
-            }
-            previous = radius
-            yield(Unit)
-        }
-    }
-
-    /**
-     * **Münzwurf (der Obolus)** (COIN): Er schnippt eine Münze, 30 Ticks in der Luft. „Kopf": die Mitte ist sicher
-     * (Radius 12), „Zahl": der Rand. Der sichere Bereich wird gold umrandet, der andere füllt sich 60 Ticks lang grün,
-     * dann S 20. Der Hinweis nennt das Ergebnis. Danach Erschöpfung (offen).
-     */
-    private fun coinToss(): Sequence<Unit> = sequence {
-        flyTo(ground(center, 0.05), CAST_MOVE)
-        nextTarget()?.let { fight.face(boss, it.entityPos) }
-        boss.pose = HermesPose.COIN
-        fight.sound(HhaSounds.CHIME, boss.entityPos, 2f, 1.8f)
-        // Die Münze startet an der linken Hand (Anfrage Hermes-Modell: `handL`, vor der Brust).
-        val forward = facing(boss)
-        val left = Vec3d(forward.z, 0.0, -forward.x)
-        val hand = boss.entityPos.add(forward.multiply(COIN_HAND_FORWARD)).add(left.multiply(COIN_HAND_SIDE)).add(0.0, COIN_HAND_HEIGHT, 0.0)
-        val coin = ItemStackParticleEffect(ParticleTypes.ITEM, ItemStack(Items.GOLD_NUGGET))
-        for (k in 0 until S.COIN_AIR) {
-            if (k >= S.COIN_FLICK) {
-                val t = (k - S.COIN_FLICK).toDouble() / (S.COIN_AIR - S.COIN_FLICK)
-                Fx.spawn(world, coin, hand.x, hand.y + COIN_PEAK * 4.0 * t * (1.0 - t), hand.z, 1, 0.02, 0.02, 0.02, 0.0)
-            }
-            yield(Unit)
-        }
-        val heads = world.random.nextBoolean()
-        fight.hint(if (heads) "hha.shade.hint.coin.heads" else "hha.shade.hint.coin.tails")
-        fight.sound(HhaSounds.CHIME, boss.entityPos, 2.4f, if (heads) 1.4f else 0.8f)
-        val outer = HermesArena.RADIUS.toFloat()
-        val group = telegraph.boss(pace = Telegraph.Pace.ROOM)
-        val fill = if (heads) reachTicks(S.COIN_FILL, 0.0, S.COIN_SAFE_RADIUS.toDouble())
-        else reachTicks(S.COIN_FILL, S.COIN_SAFE_RADIUS.toDouble(), outer.toDouble())
-        val danger = if (heads) {
-            group.safe(center, S.COIN_SAFE_RADIUS - 0.4f, fill)
-            group.ring(center, outer, fill, inner = S.COIN_SAFE_RADIUS)
-        } else {
-            goldRim(group, S.COIN_SAFE_RADIUS + 0.6, fill)
-            group.ring(center, S.COIN_SAFE_RADIUS, fill)
-        }
-        wait(group.ticks)
-        for (player in danger.hits(fight.targets())) fight.hurt(player, Dmg.COIN, magic = true)
-        Vfx.flood(world, style, center, danger.radius.toFloat(), danger.inner.toFloat(), 16)
-        telegraph.roomShake(center, 5f)
-        fight.sound(HhaSounds.IMPACT, center, 3f, 0.7f)
-        yieldAll(exhausted(S.EXHAUST))
-    }
-
-    /** Grundschaden S (Plan 4.2/4.3), vor `hermes_damage` und Spielerzahl. */
+    /** Grundschaden S (Plan 4.2), vor [HermesFight.DAMAGE_FACTOR], `hermes_damage` und Spielerzahl. */
     private object Dmg {
         const val DASH = 10f
         const val FEATHER = 4f
@@ -1269,17 +1085,12 @@ class HermesAttacks(private val fight: HermesFight) {
         const val SPEAR_WAVE = 7f
         const val FINAL = 9f
 
-        // Schatten
-        const val ASH = 4f
-        const val SMOKE = 12f
-        const val TWINS_SNAP = 10f
-        const val FERRY = 10f
-        const val COIN = 20f
+        /** Konter „Abfangen in der Luft“ (PLAN 4.3). */
+        const val COUNTER = 12f
     }
 
     private companion object {
         val H = BossTimings.Hermes
-        val S = BossTimings.Shade
 
         /** Abgefangen im Kurierstoß: der Treffer zählt so viel mehr. */
         const val INTERCEPT_BONUS = 1.5f
@@ -1295,7 +1106,6 @@ class HermesAttacks(private val fight: HermesFight) {
         const val WAVE_BAND = 1.2
         const val CAST_HEIGHT = 3.0
         const val CAST_MOVE = 12
-        const val CROSS_REACH_Y = 2.5
         const val HERMA_TOP = 4.0
         const val LEAP_ARC = 3.0
         const val HERMA_THROW_RECOVER = 6
@@ -1305,7 +1115,6 @@ class HermesAttacks(private val fight: HermesFight) {
         const val TWINS_BEND = 1.15
         const val SERPENT_HEIGHT = 0.35
         const val SERPENT_HEAD = 0.7
-        const val SERPENT_REACH_Y = 2.2
         const val LANCE_OFFSET = 8.0
         const val LANCE_HOVER = 6.0
         const val LANCE_SLANT = 4.0
@@ -1318,11 +1127,6 @@ class HermesAttacks(private val fight: HermesFight) {
         const val BEAM_HEIGHT = 1.0
         const val FINAL_COOLDOWN = 10
         const val EXHAUST_LIFT = 3.0
-        const val SMOKE_STEP_OUT = 1.6
-        const val COIN_PEAK = 4.5
-        const val COIN_HAND_FORWARD = 0.45
-        const val COIN_HAND_SIDE = 0.35
-        const val COIN_HAND_HEIGHT = 1.55
     }
 }
 

@@ -2,10 +2,11 @@ package dev.henny.hha.entity.miniboss
 
 import dev.henny.hha.HhaEntities
 import dev.henny.hha.HhaSounds
-import dev.henny.hha.config.HhaConfig
 import dev.henny.hha.entity.boss.HermesBoltEntity
 import dev.henny.hha.logic.Fx
 import dev.henny.hha.logic.Vfx
+import dev.henny.hha.logic.boss.BossDefense
+import dev.henny.hha.logic.boss.BossScaling
 import dev.henny.hha.logic.boss.BossTimings
 import dev.henny.hha.logic.boss.Telegraph
 import net.minecraft.entity.Entity
@@ -41,10 +42,15 @@ import kotlin.math.sin
  * Gemeinsam für alle:
  * - **Leine** ([BossTimings.Guardian.LEASH]): Weiter weg von der Mitte seines Platzes ([home]) bricht er ab, geht zurück
  *   zu seinem Standplatz ([post]) und heilt sich dabei ganz.
- * - **Spielerzahl:** Leben und Schaden wachsen mit `hermes_health_per_player`/`hermes_damage_per_player` (wie bei den
- *   Bossen teilt [healthScale] den eingehenden Schaden, damit die Lebensleiste stimmt).
+ * - **Spielerzahl, Deckel, Abwehr** (Überarbeitung 2, PLAN 4.1–4.3): Leben und Schaden wachsen über [BossScaling]
+ *   ([healthScale] teilt den eingehenden Schaden, damit die Lebensleiste stimmt). Jeder Treffer läuft durch
+ *   [BossDefense.Guard] (Smash-Folge, Wachsamkeit) und den Deckel der Stufe [tier]; nach einem Angriff spielt er statt
+ *   der Erholung den Konter ([counter], Aktion [BossDefense.ANTI_AIR]), wenn jemand ihn von oben bearbeitet.
  * - **Offen** ([open]): goldene Rune, Treffer zählen mehr. Die Wächter setzen damit ihre Mythos-Mechanik um.
  * - Keine Adds, keine Statuseffekte auf ihm, kein Rückstoß, kein Fallschaden.
+ *
+ * Auch die neuen Bosse ([dev.henny.hha.entity.boss.DuelBossEntity]) und die Gegner des Olymp bauen hierauf auf; dafür
+ * sind Stufe, Familie, Zähigkeit, Mitkämpfer, Leine und Pause überschreibbar.
  *
  * Unterklassen liefern Name und Farbe fürs [telegraph], die Angriffe ([createMoves]) und Lebensschwellen
  * ([phaseEvent]). Nebenläufiges (rollende Felsen, Feuerspuren) läuft über [launch].
@@ -56,6 +62,36 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
 
     /** Gefahrenfarbe (Plan 3.1). */
     protected abstract val danger: Vfx.Style
+
+    /** Deckel-Stufe (PLAN 4.2): Wächter 6 % / 9 %, Bosse 4 % / 6 %, normale Gegner ohne Deckel und ohne Abwehr. */
+    protected open val tier: BossScaling.Tier get() = BossScaling.Tier.GUARDIAN
+
+    /** Schadensregler (`hades_damage` für den Tartaros, `hermes_damage` für den Olymp). */
+    protected open val family: BossScaling.Family get() = BossScaling.Family.TARTAROS
+
+    /** Zähigkeit: effektives Leben = Lebensattribut × Zähigkeit (Wächter 1). */
+    protected open fun toughness(): Float = 1f
+
+    /** Effektives Grundleben solo für den Deckel ([BossScaling.hitCap]). */
+    protected open fun effectiveBase(): Float = maxHealth * toughness()
+
+    /** Abwehr gegen Mace-Sprünge (Smash-Folge, Konter, Wachsamkeit); nur bei [usesDefense]. */
+    protected val guard = BossDefense.Guard(this)
+
+    /** Hat er die Abwehr aus PLAN 4.3? Normale Gegner nicht. */
+    protected open val usesDefense: Boolean get() = tier != BossScaling.Tier.MOB
+
+    /** Aktion des Konters fürs Modell (Wächter: gemeinsame Aktion [BossDefense.ANTI_AIR]). */
+    protected open val antiAirAction: Int get() = BossDefense.ANTI_AIR
+
+    /** Schaden des Konters vor Skalierung (Wächter 12, PLAN 4.3). */
+    protected open val antiAirDamage: Float get() = 12f
+
+    /** Zusätzlicher Radius des Konter-Kreises (Zeus: Radius 4 statt 3,5). */
+    protected open val antiAirExtraRadius: Double get() = 0.0
+
+    /** Wählt er selbst Angriffe? Nein heißt: Er spielt nur, was ihm [interrupt] gibt (Bia wird von Kratos geführt). */
+    protected open val autonomous: Boolean get() = true
 
     /** Mitte seines Platzes: Leine und Kampfradius zählen von hier. Ohne Angabe die Stelle, an der er zuerst steht. */
     var home: Vec3d? = null
@@ -99,7 +135,6 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
     private var held: Vec3d? = null
     private var openUntil = 0L
     private var openFactor = 1f
-    private var scaledFor = 0
     private val hinted = HashSet<String>()
 
     /** Der zuletzt gewählte Angriff ([Move.id]); der nächste ist ein anderer. */
@@ -109,12 +144,16 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
     protected var prey: ServerPlayerEntity? = null
         private set
 
-    /** Teilt eingehenden Schaden (mehr Spieler = mehr Leben). */
+    /** Teilt eingehenden Schaden (mehr Spieler = mehr Leben): [BossScaling.health]. */
     protected var healthScale = 1f
         private set
 
-    /** Vervielfacht seinen Schaden (mehr Spieler = mehr Schlagkraft). */
+    /** Vervielfacht seinen Schaden (mehr Spieler = mehr Schlagkraft): [BossScaling.damage] samt Familienregler. */
     protected var damageScale = 1f
+        private set
+
+    /** Zahl der Mitkämpfer `n` der letzten Skalierung. */
+    protected var crowdSize = 1
         private set
 
     init {
@@ -140,25 +179,46 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
     private fun think() {
         val anchor = anchor()
         if (age % 20 == 0) updateScaling()
-        lonely = if (fighters().isEmpty()) lonely + 1 else 0
+        val crowd = fighters()
+        lonely = if (crowd.isEmpty()) lonely + 1 else 0
         if (lonely > BossTimings.Guardian.LONELY) {
-            discard()
+            onLonely()
             return
         }
+        if (usesDefense) guard.tick(crowd)
         tickBody()
         runTasks()
-        if (!returning && flat(entityPos, anchor) > BossTimings.Guardian.LEASH) beginReturn()
+        if (!returning && flat(entityPos, anchor) > leash()) beginReturn()
         if (returning) {
             returnHome()
             return
         }
-        val mind = script ?: drehbuch().iterator().also { script = it }
-        if (mind.hasNext()) mind.next() else script = null
+        val mind = script ?: (if (autonomous) drehbuch().iterator() else null)?.also { script = it }
+        if (mind != null) {
+            if (mind.hasNext()) mind.next() else script = null
+        }
         held?.let(::applyFacing)
     }
 
     /** Jeder Tick vor dem Drehbuch (z. B. Schweben, Nachsorge von Geschossen). */
     protected open fun tickBody() {}
+
+    /** Niemand mehr in der Nähe ([BossTimings.Guardian.LONELY] Ticks): Wächter verschwinden und erscheinen später neu. */
+    protected open fun onLonely() {
+        discard()
+    }
+
+    /** Weiter als so weit von [home] bricht er ab und geht zurück. */
+    protected open fun leash(): Double = BossTimings.Guardian.LEASH
+
+    /** Heilt er sich auf dem Rückweg und im Leerlauf? (Bosse nicht.) */
+    protected open val regenerates: Boolean get() = true
+
+    /** Boden der Ansagen für die Höhenregel in [strike] (Standard: Boden unter ihm; Bosse: Boden der Arena). */
+    protected open fun defaultFloor(): Double = floorAt(entityPos)
+
+    /** Pause nach einem Angriff vor Spielerzahl ([BossScaling.pause] verkürzt sie bei mehr Spielern). */
+    protected open fun basePause(): Int = BossTimings.Guardian.PAUSE + random.nextInt(8)
 
     /** Auftritt vor dem ersten Angriff (der Titel kommt aus [MiniBossKit.announce]). */
     protected open fun entrance(): Sequence<Unit> = sequence {
@@ -167,6 +227,9 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
             yield(Unit)
         }
     }
+
+    /** Auftritt samt filmischer Rahmung (Bosse, Wächter des Tartaros); Standard: nur [entrance]. */
+    protected open fun framedEntrance(): Sequence<Unit> = entrance()
 
     /**
      * Lebensschwellen und andere Ereignisse, die vor dem nächsten Angriff dran sind (Wut, Durst, Fluch, Taumeln).
@@ -187,7 +250,7 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
     private fun drehbuch(): Sequence<Unit> = sequence {
         if (!started) {
             started = true
-            yieldAll(entrance())
+            yieldAll(framedEntrance())
         }
         while (true) {
             val event = phaseEvent()
@@ -206,8 +269,34 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
             prey = target
             yieldAll(engage(target))
             held = null
-            yieldAll(rest(BossTimings.Guardian.PAUSE + random.nextInt(8)))
+            // PLAN 4.3: Wer ihn von oben bearbeitet, bekommt statt der Erholung den Konter.
+            if (usesDefense && guard.counterDue()) yieldAll(counter()) else yieldAll(rest(BossScaling.pause(basePause(), crowdSize)))
         }
+    }
+
+    /**
+     * Der Konter gegen Spieler über ihm (PLAN 4.3): eigene Aktion ([antiAirAction]), Ansage-Kreis um ihn
+     * ([BossDefense.COUNTER_TICKS] Ticks, Höhe unbegrenzt), Treffer [antiAirDamage] mit Abwurf, danach wachsam.
+     * Die Unterklassen liefern nur Aktion und Schaden; wer mehr will, überschreibt das hier.
+     */
+    protected open fun counter(): Sequence<Unit> = sequence {
+        guard.beginCounter()
+        stopMoving()
+        kit.act(antiAirAction)
+        val radius = guard.counterRadius(antiAirExtraRadius).toFloat()
+        val group = telegraph.boss()
+        val ring = group.ring(ground(entityPos), radius, BossDefense.COUNTER_TICKS)
+        telegraph.sound(HhaSounds.CHARGE, entityPos, 1.6f, 1.3f)
+        wait(group.ticks)
+        for (player in fighters()) {
+            if (!ring.contains(player)) continue
+            strike(player, antiAirDamage, BossDefense.Reach.SKY)
+            guard.counterHit(player)
+        }
+        telegraph.sound(HhaSounds.IMPACT, entityPos, 1.8f, 1.2f)
+        guard.endCounter()
+        yieldAll(rest(BossDefense.COUNTER_TICKS))
+        kit.act(0)
     }
 
     /** Herangehen, bis ein Angriff in Reichweite ist (nie derselbe wie zuletzt), dann ihn ausführen. */
@@ -276,7 +365,7 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
 
     private fun clampToLeash(goal: Vec3d): Vec3d {
         val anchor = anchor()
-        val limit = BossTimings.Guardian.LEASH - 3.0
+        val limit = leash() - 3.0
         val d = flat(goal, anchor)
         if (d <= limit) return goal
         val k = limit / d
@@ -294,12 +383,12 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
     private fun idleStep() {
         val spot = post ?: anchor()
         if (flat(entityPos, spot) > 3.0) walkTo(spot, 0.8) else stopMoving()
-        if (age % 40 == 0 && health < maxHealth) heal(maxHealth * 0.01f)
+        if (regenerates && age % 40 == 0 && health < maxHealth) heal(maxHealth * 0.01f)
     }
 
     private fun choosePrey(): ServerPlayerEntity? {
         val anchor = anchor()
-        val crowd = fighters().filter { flat(it.entityPos, anchor) < BossTimings.Guardian.LEASH + 10.0 }
+        val crowd = fighters().filter { flat(it.entityPos, anchor) < preyRange() }
         if (crowd.isEmpty()) return null
         val nearest = crowd.minBy { it.squaredDistanceTo(this) }
         val current = prey?.takeIf { it in crowd } ?: return nearest
@@ -307,12 +396,22 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
         return if (current.squaredDistanceTo(this) <= nearest.squaredDistanceTo(this) + 36.0) current else nearest
     }
 
+    /**
+     * Gilt das Ziel noch als Mitkämpfer? Dieselbe Regel wie [fighters] (Duell-Bosse: Arena-Liste samt voller Höhe),
+     * sonst könnte ein Spieler weit über der Arena mitkämpfen, ohne je angegriffen zu werden (Review R1 M1).
+     */
+    /**
+     * Wie weit (waagerecht um [home]) ein Mitkämpfer als Ziel gewählt werden darf. Wächter: Leine + 10. Duell-Bosse
+     * nehmen jeden aus der Arena-Liste, sonst kämpft man am Rand mit, ohne je Ziel zu sein (Review R2 M1).
+     */
+    protected open fun preyRange(): Double = leash() + 10.0
+
     private fun stillFighting(target: ServerPlayerEntity): Boolean =
         target.isAlive && !target.isRemoved && !target.isSpectator && !target.isCreative &&
-            target.entityWorld === entityWorld && target.squaredDistanceTo(anchor()) < BossTimings.Guardian.FIGHT_RADIUS * BossTimings.Guardian.FIGHT_RADIUS
+            target.entityWorld === entityWorld && target in fighters()
 
     /** Wer mitkämpft: lebende Spieler (nicht Kreativ/Zuschauer) im Kampfradius um [home]. */
-    fun fighters(): List<ServerPlayerEntity> {
+    open fun fighters(): List<ServerPlayerEntity> {
         val world = entityWorld as? ServerWorld ?: return emptyList()
         val anchor = anchor()
         val r = BossTimings.Guardian.FIGHT_RADIUS
@@ -337,6 +436,7 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
         close()
         telegraph.reset()
         kit.act(0)
+        guard.reset()
         onReset()
         stopMoving()
     }
@@ -345,12 +445,12 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
         val spot = post ?: anchor()
         returnTicks++
         walkTo(spot, 1.25)
-        if (returnTicks % 10 == 0) heal(maxHealth * 0.03f)
+        if (regenerates && returnTicks % 10 == 0) heal(maxHealth * 0.03f)
         val arrived = flat(entityPos, spot) < 2.5
         if (arrived || returnTicks > 400) {
             if (!arrived) refreshPositionAndAngles(spot.x, spot.y, spot.z, yaw, 0f)
             returning = false
-            health = maxHealth
+            if (regenerates) health = maxHealth
             stopMoving()
         }
     }
@@ -378,10 +478,12 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
     protected fun interrupt(event: Sequence<Unit>) {
         stopMoving()
         held = null
+        // Ein abgebrochener Konter muss enden, sonst kommt nie wieder einer (Review R1 m1).
+        if (guard.inCounter) guard.endCounter()
         script = sequence {
             yieldAll(event)
             held = null
-            yieldAll(drehbuch())
+            if (autonomous) yieldAll(drehbuch())
         }.iterator()
     }
 
@@ -401,28 +503,64 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
     // Treffer
     // ---------------------------------------------------------------------------------------------
 
+    /**
+     * Eingehender Schaden in der festen Reihenfolge aus [BossScaling]: eigener Faktor ([hitFactor]; im offenen Fenster
+     * gilt der größere von beiden), Abwehr ([BossDefense.Guard.onHit]), Deckel ([BossScaling.hitCap]), dann geteilt durch
+     * Zähigkeit × Spielerzahl. [limitBarDamage] darf das Ergebnis noch begrenzen (Phasen-Schwellen der Bosse).
+     */
     override fun damage(world: ServerWorld, source: DamageSource, amount: Float): Boolean {
-        val factor = max(if (world.time < openUntil) openFactor else 1f, hitFactor(source))
+        if (!acceptsHit(world, source)) return false
+        val open = isOpen()
+        val hit = hitFactor(source)
+        val factor = if (open) max(openFactor, hit) else hit
+        var effective = amount * factor
+        if (usesDefense) effective = guard.onHit(source, effective, open)
+        if (effective <= 0f) return false
+        effective = effective.coerceAtMost(BossScaling.hitCap(effectiveBase(), tier, open))
+        val bar = limitBarDamage(source, BossScaling.toBar(effective, toughness(), crowdSize))
+        if (bar <= 0f) return false
         val before = health
-        val hurt = super.damage(world, source, amount * factor / healthScale)
+        val hurt = super.damage(world, source, bar)
         if (hurt && before > health) {
+            afterHealthLoss()
+            if (usesDefense) guard.landed(source, open)
             if (factor > 1f && source.attacker is PlayerEntity) Vfx.flare(world, Vfx.Style.GOLD, entityPos.add(0.0, height * 0.6, 0.0), 1.6f, 5)
             onDamaged(source, before - health, factor)
         }
         return hurt
     }
 
-    /** Zusätzlicher Faktor für diesen Treffer (z. B. von hinten auf die Laterne). */
+    /** Nimmt er überhaupt Schaden von [source]? (Bosse vor dem Kampf, Trugbilder, Bia: nein.) */
+    protected open fun acceptsHit(world: ServerWorld, source: DamageSource): Boolean = true
+
+    /** Begrenzt, was die Lebensleiste verliert (z. B. bis zur nächsten Phasen-Schwelle). Standard: unverändert. */
+    protected open fun limitBarDamage(source: DamageSource, bar: Float): Float = bar
+
+    /** Ist gerade ein offenes Fenster (goldene Rune)? */
+    protected fun isOpen(): Boolean = (entityWorld as? ServerWorld)?.let { it.time < openUntil } ?: false
+
+    /**
+     * Zusätzlicher Faktor für diesen Treffer (z. B. von hinten auf die Laterne × 1,5, Schild von vorn × 0,2). Wird
+     * **vor** Abwehr und Deckel angewandt.
+     */
     protected open fun hitFactor(source: DamageSource): Float = 1f
 
     /** Nach einem Treffer: [lost] Lebenspunkte weniger. */
     protected open fun onDamaged(source: DamageSource, lost: Float, factor: Float) {}
 
+    /**
+     * Das Leben ist tatsächlich gesunken (Treffer oder [hurtSelf]). Schwellen (Phasenwechsel, Sieg, Waage) werden erst
+     * hier vorgemerkt, nicht schon beim Begrenzen: Vanilla kann einen Treffer danach noch ablehnen (Review R2 m1).
+     */
+    protected open fun afterHealthLoss() {}
+
     /** Eigener Schaden ohne Faktoren und Spielerzahl (z. B. vom eigenen Fels getroffen). */
     protected fun hurtSelf(amount: Float) {
         val world = entityWorld as? ServerWorld ?: return
         timeUntilRegen = 0
+        val before = health
         super.damage(world, world.damageSources.magic(), amount)
+        if (health < before) afterHealthLoss()
     }
 
     /** Offen: goldene Rune (an ihm oder an [at]), Treffer × [factor] für [ticks] Ticks. */
@@ -441,11 +579,21 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
         openUntil = 0L
     }
 
-    /** Schaden an einem Spieler, nach Spielerzahl skaliert. */
-    protected fun strike(player: ServerPlayerEntity, base: Float): Boolean {
+    /**
+     * Schaden an einem Spieler, nach Spielerzahl und Familie skaliert ([BossScaling.damage]). Mit der Höhenregel
+     * ([BossDefense.reaches]): [reach] sagt, wie hoch der Angriff über [floorY] (Boden der Ansage, Standard: Boden unter
+     * ihm) noch trifft. Ohne Angabe [BossDefense.Reach.BODY].
+     */
+    protected fun strike(
+        player: ServerPlayerEntity, base: Float, reach: BossDefense.Reach = BossDefense.Reach.BODY, floorY: Double = defaultFloor(),
+    ): Boolean {
         val world = entityWorld as? ServerWorld ?: return false
-        return player.damage(world, world.damageSources.mobAttack(this), base * damageScale)
+        if (!BossDefense.reaches(player, floorY, reach, height.toDouble())) return false
+        return player.damage(world, world.damageSources.mobAttack(this), base * damageScale * rageDamage)
     }
+
+    /** Zusatzfaktor auf jeden Treffer, z. B. im letzten Gefecht der Bosse ([dev.henny.hha.entity.boss.DuelBossEntity]). */
+    protected var rageDamage = 1f
 
     /** Stößt [player] waagerecht in [dir] und nach oben. */
     protected fun knock(player: ServerPlayerEntity, dir: Vec3d, strength: Double, up: Double) {
@@ -458,12 +606,15 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
         for (player in fighters()) player.sendMessage(Text.translatable(key).formatted(Formatting.GOLD), true)
     }
 
-    private fun updateScaling() {
-        val crowd = max(1, fighters().size)
-        if (crowd == scaledFor) return
-        scaledFor = crowd
-        healthScale = 1f + HhaConfig.numF("hermes_health_per_player") * (crowd - 1)
-        damageScale = 1f + HhaConfig.numF("hermes_damage_per_player") * (crowd - 1)
+    /** Mitkämpfer für die Skalierung (Standard: [fighters]; Gegner des Olymp zählen im Umkreis 24). */
+    protected open fun scalingCrowd(): Int = BossScaling.crowd(fighters())
+
+    /** Skalierung neu rechnen (alle 20 Ticks; Config-Werte können sich live ändern, darum immer neu). */
+    protected fun updateScaling() {
+        val crowd = scalingCrowd()
+        crowdSize = crowd
+        healthScale = BossScaling.health(crowd)
+        damageScale = BossScaling.damage(crowd, family)
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -583,8 +734,13 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
             tasks.clear()
             clearProps()
             telegraph.reset()
-            kit.defeated()
+            onDefeated()
         }
+    }
+
+    /** Besiegt (gestorben): Wächter geben Beute und befreien ihr Bauwerk ([MiniBossKit.defeated]). */
+    protected open fun onDefeated() {
+        kit.defeated()
     }
 
     override fun remove(reason: RemovalReason) {

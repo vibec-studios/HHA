@@ -4,8 +4,10 @@ import dev.henny.hha.HhaEntities
 import dev.henny.hha.HhaSounds
 import dev.henny.hha.entity.boss.HermesBoltEntity
 import dev.henny.hha.logic.Vfx
+import dev.henny.hha.logic.boss.BossDefense
 import dev.henny.hha.logic.boss.BossTimings
 import dev.henny.hha.logic.boss.Telegraph
+import dev.henny.hha.logic.world.TartarosChain
 import net.minecraft.entity.EntityStatuses
 import net.minecraft.entity.EntityType
 import net.minecraft.entity.SpawnReason
@@ -49,6 +51,12 @@ object KampePose {
 
     const val ROAR = 7
     const val DEATH = 8
+
+    /**
+     * Konter gegen Spieler über ihr (Überarbeitung 2, PLAN 4.3): Sie reißt den Stachel senkrecht nach oben. Gespielt
+     * zusammen mit der gemeinsamen Aktion `BossDefense.ANTI_AIR`; Zeiten `BossTimings.Guardian.ANTI_AIR_*`.
+     */
+    const val ANTI_AIR = 9
 }
 
 /**
@@ -64,11 +72,13 @@ object KampePose {
  * Wie bei den Bossen setzt der Server eine Pose je Angriff zu Beginn des Ausholens ([pose]); der Client merkt sich die
  * vorige Pose und den Zeitpunkt des Wechsels für weiche Übergänge.
  */
-class KampeEntity(type: EntityType<out KampeEntity>, world: World) : GuardianEntity(type, world) {
+class KampeEntity(type: EntityType<out KampeEntity>, world: World) : TartarosGuardian(type, world) {
 
     override val kit = MiniBossKit(this, "entity.hha.kampe", BossBar.Color.GREEN, Vfx.Style.HADES)
     override val fightName = "kampe"
     override val danger = Vfx.Style.HADES
+    override val link get() = TartarosChain.Link.KAMPE
+    override val baseHealth get() = HEALTH
 
     /** Fußpunkt des angeketteten Titanen (Mitte des Grubenbodens); Standard: die Mitte ihres Platzes. */
     var titan: Vec3d? = null
@@ -114,7 +124,7 @@ class KampeEntity(type: EntityType<out KampeEntity>, world: World) : GuardianEnt
         }
     }
 
-    override fun createMoves() = listOf(
+    override fun guardianMoves() = listOf(
         Move(KampePose.TAIL_SWEEP, 0.0..BossTimings.Kampe.SWEEP_RADIUS.toDouble(), 3, { flanker() != null }) { sweep() },
         Move(KampePose.SPIT, 5.0..BossTimings.Kampe.SPIT_RANGE.toDouble(), 2) { spit(it) },
         Move(KampePose.STING, 2.0..7.0, 3) { sting(it) },
@@ -142,6 +152,16 @@ class KampeEntity(type: EntityType<out KampeEntity>, world: World) : GuardianEnt
         play(KampePose.IDLE)
     }
 
+    /** Der Konter der Basis, dazu ihre eigene Pose: der Stachel senkrecht nach oben. */
+    override fun counter(): Sequence<Unit> {
+        val base = super.counter()
+        return sequence {
+            play(KampePose.ANTI_AIR)
+            yieldAll(base)
+            play(KampePose.IDLE)
+        }
+    }
+
     /** Wer in Reichweite des Schwanzes hinter oder neben ihr steht (außerhalb der vorderen ±60°). */
     private fun flanker(): ServerPlayerEntity? {
         val f = facing()
@@ -162,11 +182,9 @@ class KampeEntity(type: EntityType<out KampeEntity>, world: World) : GuardianEnt
         val cone = telegraph.cone(ground(entityPos), back, k.SWEEP_RADIUS, k.SWEEP_HALF_ANGLE, k.SWEEP_WINDUP, Telegraph.Pace.HEAVY)
         telegraph.sound(HhaSounds.HISS, entityPos, 2.2f, 0.7f)
         wait(cone.ticks)
-        val struck = cone.hits(fighters()).filter { !airborne(it) }
-        for (player in struck) {
-            strike(player, 14f)
-            knock(player, dirTo(player.entityPos), 1.0, 0.5)
-        }
+        // Schwanzfeger flach über den Boden: zum Überspringen (LOW).
+        val struck = cone.hits(fighters()).filter { !airborne(it) && hit(it, 14f, BossDefense.Reach.LOW) }
+        for (player in struck) knock(player, dirTo(player.entityPos), 1.0, 0.5)
         Vfx.crescent(sw, danger, entityPos.add(0.0, 0.5, 0.0), back, k.SWEEP_RADIUS, 6f, 10)
         telegraph.sound(HhaSounds.WHOOSH, entityPos, 2f, 0.6f)
         if (struck.isNotEmpty()) telegraph.hitShake(entityPos, 3f)
@@ -201,7 +219,7 @@ class KampeEntity(type: EntityType<out KampeEntity>, world: World) : GuardianEnt
             val bolt = HhaEntities.HERMES_BOLT.create(sw, SpawnReason.EVENT) ?: continue
             bolt.kind = HermesBoltEntity.VENOM
             bolt.size = 0.9f
-            bolt.damage = 6f * damageScale
+            bolt.damage = 6f * damageScale * power()
             bolt.fight = telegraph
             bolt.setOwner(self)
             bolt.setPosition(mouth)
@@ -227,11 +245,8 @@ class KampeEntity(type: EntityType<out KampeEntity>, world: World) : GuardianEnt
         val ring = telegraph.ring(spot, k.STING_RADIUS, k.STING_WINDUP, pace = Telegraph.Pace.HEAVY)
         telegraph.sound(HhaSounds.STING, entityPos, 2.2f, 0.8f)
         wait(ring.ticks)
-        val struck = ring.hits(fighters())
-        for (player in struck) {
-            strike(player, 18f)
-            knock(player, dir, 0.6, 0.45)
-        }
+        val struck = ring.hits(fighters()).filter { hit(it, 18f, BossDefense.Reach.BODY, spot.y) }
+        for (player in struck) knock(player, dir, 0.6, 0.45)
         Vfx.shockwave(sw, danger, spot, k.STING_RADIUS + 0.5f, 12, 1.4f)
         telegraph.sound(HhaSounds.IMPACT, spot, 2f, 0.9f)
         if (struck.isNotEmpty()) telegraph.hitShake(spot, 3f)
@@ -324,12 +339,14 @@ class KampeEntity(type: EntityType<out KampeEntity>, world: World) : GuardianEnt
                 place(p)
                 val travelled = flat(g0, p)
                 for (player in fighters()) {
-                    if (player.uuid in struck || abs(player.y - p.y) > 3.0) continue
+                    // Der Stoß kommt von oben (PLAN 4.3: SKY): Wer über ihr in der Luft hängt, wird mitgerissen; nur wer
+                    // tief unter ihr ist (Grubenrand, Treppe), bleibt verschont.
+                    if (player.uuid in struck || player.y < p.y - 3.0) continue
                     if (abs(along(player.entityPos, g0, dir) - travelled) > 2.4) continue
                     if (!line.contains(player)) continue
                     struck.add(player.uuid)
+                    if (!hit(player, 16f, BossDefense.Reach.SKY, base.y)) continue
                     anyHit = true
-                    strike(player, 16f)
                     knock(player, dir, 1.0, 0.5)
                 }
                 yield(Unit)
@@ -398,7 +415,8 @@ class KampeEntity(type: EntityType<out KampeEntity>, world: World) : GuardianEnt
     }
 
     companion object {
-        const val HEALTH = 420.0
+        /** PLAN 4.1: 420 → 920. */
+        const val HEALTH = 920.0
 
         /** Fluggeschwindigkeit der Giftgeschosse (Blöcke je Tick). */
         private const val SPIT_SPEED = 0.85

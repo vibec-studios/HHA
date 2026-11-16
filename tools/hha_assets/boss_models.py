@@ -37,6 +37,16 @@ REGISTRY = {
     'ixion': ('ixion_model', 'ixion'),
     'tantalus': ('tantalus_model', 'tantalus'),
     'kampe': ('kampe_model', 'kampe'),
+    # Überarbeitung 2 (PLAN 10.1): Olymp. Gerüste von P00, die Modell-Pakete füllen sie.
+    'hekate': ('hekate_model', 'hekate'),
+    'brontes': ('brontes_model', 'brontes'),
+    'kratos': ('kratos_model', 'kratos'),
+    'bia': ('kratos_model', 'bia'),
+    'zeus': ('zeus_model', 'zeus'),
+    'kurete': ('kurete_model', 'kurete'),
+    'griffin': ('griffin_model', 'griffin'),
+    'automaton': ('automaton_model', 'automaton'),
+    'olymp_props': ('olymp_props_model', 'olymp_props'),
 }
 
 

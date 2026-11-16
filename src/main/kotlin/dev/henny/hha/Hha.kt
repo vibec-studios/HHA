@@ -39,6 +39,13 @@ class Hha : ModInitializer {
         CombatEvents.init()
         DivineShield.init()
         dev.henny.hha.logic.boss.HermesFights.init()
+        // Überarbeitung 2: Arenen der neuen Bosse, Bewohner des Olymp (Gerüst für P11).
+        dev.henny.hha.logic.boss.Arenas.init()
+        dev.henny.hha.logic.world.OlympusLife.init()
+        // Wolkentor: Zünden mit dem Wassereimer, Sturz vom Olymp, Übergänge, Nachholen des Höllentors (P03).
+        dev.henny.hha.logic.world.OlympusGate.init()
+        // RPG-Modus: Wege, Weltzustand, Start beim ersten Betreten
+        dev.henny.hha.rpg.RpgServer.init()
         ServerTickEvents.END_SERVER_TICK.register(PassiveEffects::tick)
         LOGGER.info("Hell's & Heaven's Set geladen — stay crispy, fly high.")
     }

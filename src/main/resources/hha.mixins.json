@@ -5,7 +5,6 @@
   "compatibilityLevel": "JAVA_21",
   "mixins": [
     "LivingEntityMixin",
-    "VanillaBiomeParametersMixin",
     "ExplosionImplMixin"
   ],
   "client": [
@@ -17,7 +16,9 @@
     "client.KeyboardInputMixin",
     "client.MouseMixin",
     "client.EnvironmentAttributeInterpolatorMixin",
-    "client.ClientWorldAccessor"
+    "client.ClientWorldAccessor",
+    "client.EquipmentRendererMixin",
+    "client.ItemModelManagerMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -15,6 +15,11 @@ import net.minecraft.util.Identifier
 /**
  * Eigene Render-Pipelines der Effekte: Position + UV + Farbe, keine Tiefenschreibung, beidseitig.
  * Additive Varianten leuchten wie Licht; die Alpha-Varianten sind für Rauch, Federn und Trümmer.
+ *
+ * **Überarbeitung 2 („Effekte ruhiger", P02):** Jede leuchtende Ebene hat einen Dämpfer ([GAIN_ENERGY] …), der im
+ * Shader (`VFX_GAIN`) den ganzen Beitrag senkt. Formen, Texturen und Rauschen bleiben unverändert; ein Lichthof mit
+ * Vertex-Alpha 1 wirkt danach höchstens mit [GAIN_SPRITE]. Ansagen zeichnen mit den deckenden Ebenen [TELE_FILL],
+ * [TELE_SOLID] und [TELE_WALL] (kein Additiv-Schein, auf hellem Marmor wie auf Schwarzstein lesbar).
  */
 object VfxLayers {
 
@@ -29,6 +34,22 @@ object VfxLayers {
     val SHARD: Identifier = tex("shard")
     val CHAIN: Identifier = tex("chain")
     val CLOUD: Identifier = tex("cloud")
+    val SOLID: Identifier = tex("solid")
+
+    /** Plasma-Bänder (Schockwellen, Strahlen, Spuren): bleiben die tragende Form, leuchten aber schwächer. */
+    const val GAIN_ENERGY = 0.62f
+
+    /** Wabernde Flächen (Styx, Sanduhr). */
+    const val GAIN_FLOW = 0.55f
+
+    /** Lichthöfe, Lichtsterne, Lichtwände (`GLOW_ADD`, `FLARE_ADD`, `RAYS_ADD`): Richtwert Alpha ≤ 0,35 (PLAN 9.1). */
+    const val GAIN_SPRITE = 0.4f
+
+    /** Gezeichnete Formen mit Kontur (Runen, Runenbänder, Glutfedern): bleiben gut lesbar. */
+    const val GAIN_SHAPE = 0.7f
+
+    /** Himmelslichter (Fernsäule, Zeus' Augen, Wolkenblitze). */
+    const val GAIN_SKY = 0.75f
 
     private fun tex(name: String): Identifier = Hha.id("textures/vfx/$name.png")
 
@@ -44,12 +65,16 @@ object VfxLayers {
         .withVertexFormat(VertexFormats.POSITION_TEXTURE_COLOR, VertexFormat.DrawMode.QUADS)
         .buildSnippet()
 
-    /** [occlude]: 0 = rein additiv, 1 = deckt wie Farbe ab; dazwischen leuchtet es und behält den Farbton. */
-    private fun glowing(name: String, occlude: Float, define: String? = null): RenderPipeline {
+    /**
+     * [occlude]: 0 = rein additiv, 1 = deckt wie Farbe ab; dazwischen leuchtet es und behält den Farbton.
+     * [gain] dämpft Licht und Abdeckung zusammen (1 = alte Stärke).
+     */
+    private fun glowing(name: String, occlude: Float, gain: Float, define: String? = null): RenderPipeline {
         val builder = RenderPipeline.builder(BASE)
             .withLocation(Hha.id("pipeline/vfx_$name"))
             .withBlend(BlendFunction.TRANSLUCENT_PREMULTIPLIED_ALPHA)
             .withShaderDefine("VFX_GLOW", occlude)
+            .withShaderDefine("VFX_GAIN", gain)
         if (define != null) builder.withShaderDefine(define)
         return RenderPipelines.register(builder.build())
     }
@@ -60,6 +85,7 @@ object VfxLayers {
             .withLocation(Hha.id("pipeline/vfx_$name"))
             .withBlend(BlendFunction.TRANSLUCENT_PREMULTIPLIED_ALPHA)
             .withShaderDefine("VFX_GLOW", 0.25f)
+            .withShaderDefine("VFX_GAIN", GAIN_SKY)
             .withShaderDefine("VFX_NO_FOG")
             .build(),
     )
@@ -73,10 +99,11 @@ object VfxLayers {
         return RenderPipelines.register(builder.build())
     }
 
-    private val ENERGY_PIPELINE = glowing("energy", 0.75f, "VFX_ENERGY")
-    private val FLOW_ADD_PIPELINE = glowing("flow_add", 0.6f, "VFX_FLOW")
+    private val ENERGY_PIPELINE = glowing("energy", 0.75f, GAIN_ENERGY, "VFX_ENERGY")
+    private val FLOW_ADD_PIPELINE = glowing("flow_add", 0.6f, GAIN_FLOW, "VFX_FLOW")
     private val FLOW_ALPHA_PIPELINE = blended("flow_alpha", "VFX_FLOW")
-    private val SPRITE_ADD_PIPELINE = glowing("sprite_add", 0.5f)
+    private val SPRITE_ADD_PIPELINE = glowing("sprite_add", 0.5f, GAIN_SPRITE)
+    private val SHAPE_ADD_PIPELINE = glowing("shape_add", 0.5f, GAIN_SHAPE)
     private val SPRITE_ALPHA_PIPELINE = blended("sprite_alpha")
     private val SOLID_PIPELINE = blended("solid", depthWrite = true)
     private val CLOUD_PIPELINE = blended("cloud", "VFX_NO_FOG")
@@ -103,12 +130,21 @@ object VfxLayers {
     val FLOW_ADD: RenderLayer = repeating("flow_add", FLOW_ADD_PIPELINE, NOISE)
     val FLOW_ALPHA: RenderLayer = repeating("flow_alpha", FLOW_ALPHA_PIPELINE, NOISE)
     val RAYS_ADD: RenderLayer = repeating("rays", SPRITE_ADD_PIPELINE, RAYS)
-    val RING_ADD: RenderLayer = repeating("rune_ring", SPRITE_ADD_PIPELINE, RUNE_RING)
+    val RING_ADD: RenderLayer = repeating("rune_ring", SHAPE_ADD_PIPELINE, RUNE_RING)
     val GLOW_ADD: RenderLayer = clamped("glow", SPRITE_ADD_PIPELINE, GLOW)
     val FLARE_ADD: RenderLayer = clamped("flare", SPRITE_ADD_PIPELINE, FLARE)
-    val RUNE_ADD: RenderLayer = clamped("rune_circle", SPRITE_ADD_PIPELINE, RUNE_CIRCLE)
+    val RUNE_ADD: RenderLayer = clamped("rune_circle", SHAPE_ADD_PIPELINE, RUNE_CIRCLE)
     val FEATHER_ALPHA: RenderLayer = clamped("feather", SPRITE_ALPHA_PIPELINE, FEATHER)
-    val FEATHER_ADD: RenderLayer = clamped("feather_add", SPRITE_ADD_PIPELINE, FEATHER)
+    val FEATHER_ADD: RenderLayer = clamped("feather_add", SHAPE_ADD_PIPELINE, FEATHER)
+
+    /** Ansage-Füllung: wabernd wie bisher, aber deckend gemischt statt additiv (bleibt auf hellem Boden sichtbar). */
+    val TELE_FILL: RenderLayer = repeating("tele_fill", FLOW_ALPHA_PIPELINE, NOISE)
+
+    /** Klare, deckende Linien und Flächen (Ränder und Wachstumsfront der Ansagen). */
+    val TELE_SOLID: RenderLayer = clamped("tele_solid", SPRITE_ALPHA_PIPELINE, SOLID)
+
+    /** Niedrige Randwand der Ansagen, deckend statt leuchtend. */
+    val TELE_WALL: RenderLayer = repeating("tele_wall", SPRITE_ALPHA_PIPELINE, RAYS)
     val SMOKE_ALPHA: RenderLayer = clamped("smoke", SPRITE_ALPHA_PIPELINE, SMOKE)
 
     /** Wolkenbausch: bleibt auch in der Ferne sichtbar, statt im Nebel zu verschwinden. */

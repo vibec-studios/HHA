@@ -17,6 +17,36 @@
     },
     "story=5": {
       "model": "hha:block/stele"
+    },
+    "story=6": {
+      "model": "hha:block/stele_olymp"
+    },
+    "story=7": {
+      "model": "hha:block/stele_olymp"
+    },
+    "story=8": {
+      "model": "hha:block/stele_olymp"
+    },
+    "story=9": {
+      "model": "hha:block/stele_olymp"
+    },
+    "story=10": {
+      "model": "hha:block/stele_olymp"
+    },
+    "story=11": {
+      "model": "hha:block/stele_olymp"
+    },
+    "story=12": {
+      "model": "hha:block/stele_olymp"
+    },
+    "story=13": {
+      "model": "hha:block/stele_olymp"
+    },
+    "story=14": {
+      "model": "hha:block/stele_olymp"
+    },
+    "story=15": {
+      "model": "hha:block/stele_olymp"
     }
   }
 }

@@ -97,7 +97,7 @@ object HhaItems {
     /** Feder des Götterboten: Beute von Hermes und Zutat für Heavens Barren. */
     lateinit var HERMES_FEATHER: Item; private set
 
-    /** Karte zu Hades: Beute von Hermes, führt zum Eingang der Halle unter dem Hades-Biom. */
+    /** Der Schwarze Brief (ID bleibt `hades_map`): Pfand an Hekates Altar, keine Kartenfunktion mehr (PLAN 3). */
     lateinit var HADES_MAP: Item; private set
 
     fun init() {

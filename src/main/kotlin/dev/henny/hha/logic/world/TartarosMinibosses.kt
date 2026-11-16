@@ -7,6 +7,7 @@ import dev.henny.hha.entity.miniboss.GuardianEntity
 import dev.henny.hha.entity.miniboss.IxionEntity
 import dev.henny.hha.entity.miniboss.KampeEntity
 import dev.henny.hha.entity.miniboss.SisyphusEntity
+import dev.henny.hha.entity.miniboss.TartarosGuardian
 import dev.henny.hha.logic.boss.HadesFights
 import dev.henny.hha.world.TartarusKind
 import dev.henny.hha.world.TartarusPiece
@@ -19,6 +20,7 @@ import net.minecraft.server.MinecraftServer
 import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.server.world.ServerWorld
 import net.minecraft.text.Text
+import net.minecraft.util.Formatting
 import net.minecraft.util.math.BlockPos
 import net.minecraft.util.math.Vec3d
 import net.minecraft.world.PersistentState
@@ -36,6 +38,10 @@ import kotlin.math.sin
  *
  * Wer einen Wächter besiegt, befreit das Bauwerk für immer; das merkt sich die Welt ([Defeated]). Verschwindet ein Wächter,
  * ohne zu sterben (weil alle weggegangen sind), erscheint er beim nächsten Besuch wieder.
+ *
+ * **Die Kette zu Hades** (Überarbeitung 2, PLAN 5.7): Jeder Sieg sprengt zusätzlich sein Glied ([TartarosChain]); jeder
+ * Wächter erscheint mit dem Kettenbonus der schon gesprengten Glieder ([TartarosGuardian.applyChain]) und nennt im Titel,
+ * das wievielte Glied er ist. Danach weist Hermes den Weg zum nächsten ([TartarosGuide.onLinkBroken]).
  */
 object TartarosMinibosses {
 
@@ -52,6 +58,9 @@ object TartarosMinibosses {
     private var clock = 0
 
     private fun state(world: ServerWorld): Defeated = world.persistentStateManager.getOrCreate(Defeated.TYPE)
+
+    /** Ist das Bauwerk mit der Mitte [middle] schon befreit (sein Wächter erscheint dort nie wieder)? */
+    fun isFreed(world: ServerWorld, middle: BlockPos): Boolean = middle.asLong() in state(world).sites
 
     fun tick(server: MinecraftServer) {
         val world = server.getWorld(HadesGate.TARTAROS) ?: return
@@ -110,7 +119,8 @@ object TartarosMinibosses {
                 val inPit: (ServerPlayerEntity) -> Boolean = { hypot(it.x - base.x, it.z - base.z) < TartarusPlans.PRISON_PIT_RADIUS && it.y < o.y - 6.0 }
                 Site(HhaEntities.KAMPE, spot, base, inPit) { (it as KampeEntity).titan = base }
             }
-            else -> when (siteVariant(o)) {
+            // Die Variante steht im Bauwerk (neue Welten) oder kommt aus der alten Streuformel (alte Welten).
+            else -> when (piece.siteVariant()) {
                 0 -> {
                     val top = TartarusPlans.sisyphusSummit(o)
                     Site(HhaEntities.SISYPHUS, top, top, near(top)) { (it as SisyphusEntity).summit = top }
@@ -132,9 +142,6 @@ object TartarosMinibosses {
         }
     }
 
-    /** Dieselbe Auswahl wie im Bauplan: Welche Stätte steht hier? */
-    private fun siteVariant(o: BlockPos): Int = TartarusPlans.siteVariant(o)
-
     private fun standable(world: ServerWorld, from: BlockPos): Vec3d {
         var pos = from.down(3)
         repeat(30) {
@@ -154,27 +161,67 @@ object TartarosMinibosses {
         mob.post = site.spot
         site.setup(mob)
         mob.kit.site = key
+        // Kettenbonus: Jedes schon gesprengte Glied macht ihn zäher und härter (PLAN 5.7).
+        val chain = TartarosChain.of(world.server ?: return)
+        val guardian = mob as? TartarosGuardian
+        guardian?.applyChain(chain.brokenCount())
         world.spawnEntity(mob)
-        mob.kit.announce()
+        mob.kit.announce(if (guardian != null) chainTitle(guardian, chain) else Text.translatable(mob.kit.nameKey + ".sub"))
         active[key] = mob
-        Hha.LOGGER.info("Tartaros-Wächter {} erscheint bei {}", piece.kind, piece.middle)
+        Hha.LOGGER.info("Tartaros-Wächter {} erscheint bei {} (Kette {}/{})", piece.kind, piece.middle, chain.brokenCount(), TartarosChain.Link.entries.size)
     }
 
-    /** Vom Wächter gemeldet: Das Bauwerk ist frei. */
-    fun onDefeated(world: ServerWorld, key: Long) {
-        if (key == 0L) return
-        val defeated = state(world)
-        if (defeated.sites.add(key)) defeated.markDirty()
-        active.remove(key)
-        for (player in world.players) {
-            if (player.squaredDistanceTo(Vec3d.of(BlockPos.fromLong(key))) < 90.0 * 90.0) {
-                player.sendMessage(Text.translatable("hha.guardian.defeated"), true)
-            }
+    /** Unterzeile beim Erscheinen: das wievielte Glied der Kette er ist, dahinter sein Beiname. */
+    private fun chainTitle(guardian: TartarosGuardian, chain: TartarosChain.State): Text {
+        val sub = Text.translatable(guardian.kit.nameKey + ".sub")
+        if (chain.isBroken(guardian.link)) return Text.translatable("hha.tartaros.chain.title.again", sub)
+        val ordinal = (chain.brokenCount() + 1).coerceIn(1, TartarosChain.Link.entries.size)
+        return Text.translatable("hha.tartaros.chain.title." + ordinal, sub)
+    }
+
+    /**
+     * Vom Wächter gemeldet (nach der Beute): Das Bauwerk ist frei, und sein Glied der Kette ist gesprengt. Wer in der Nähe
+     * ist, erfährt, wie viele Glieder noch halten, und bekommt danach den Wegweiser zum nächsten.
+     */
+    fun onDefeated(world: ServerWorld, key: Long, link: TartarosChain.Link, at: Vec3d) {
+        if (key != 0L) {
+            val defeated = state(world)
+            if (defeated.sites.add(key)) defeated.markDirty()
+            active.remove(key)
         }
+        val chain = TartarosChain.of(world.server ?: return)
+        val fresh = !chain.isBroken(link)
+        chain.breakLink(link)
+        val broken = chain.brokenCount()
+        val total = TartarosChain.Link.entries.size
+        for (player in world.players) {
+            if (player.squaredDistanceTo(at) > VICTORY_RADIUS * VICTORY_RADIUS) continue
+            player.sendMessage(Text.translatable("hha.guardian.defeated"), true)
+            val line = when {
+                fresh && broken >= total -> Text.translatable("hha.tartaros.chain.complete").formatted(Formatting.GOLD, Formatting.BOLD)
+                fresh -> Text.translatable("hha.tartaros.chain.broken", Text.translatable(guardianName(link)), broken, total).formatted(Formatting.GOLD)
+                else -> Text.translatable("hha.tartaros.chain.already", broken, total).formatted(Formatting.GRAY)
+            }
+            player.sendMessage(line, false)
+        }
+        // Wächter, die schon stehen, werden sofort stärker (sonst ließe sich die Kette vorab bei 0 „einfrieren").
+        if (fresh) for (other in active.values) (other as? TartarosGuardian)?.takeIf { !it.isRemoved }?.raiseChain(broken)
+        Hha.LOGGER.info("Glied {} der Kette gesprengt ({}/{})", link.key, broken, total)
+        TartarosGuide.onLinkBroken(world, at)
+    }
+
+    /** Sprachschlüssel des Wächters, der ein Glied hält (Meldungen am Siegel und nach dem Sieg). */
+    fun guardianName(link: TartarosChain.Link): String = when (link) {
+        TartarosChain.Link.WARDEN -> "entity.hha.warden_of_chains"
+        TartarosChain.Link.KAMPE -> "entity.hha.kampe"
+        TartarosChain.Link.SISYPHUS -> "entity.hha.sisyphus"
+        TartarosChain.Link.IXION -> "entity.hha.ixion"
+        TartarosChain.Link.TANTALUS -> "entity.hha.tantalus"
     }
 
     private const val TRIGGER = 30.0
     private const val BUSY_RADIUS = 64.0
+    private const val VICTORY_RADIUS = 90.0
 
     /** Ixion-Plattform (Radius 19): innen steht das Rad mit Stützen (bis ~10,8), außen die Stufen (ab 17,6). */
     private const val IXION_INNER = 10.8

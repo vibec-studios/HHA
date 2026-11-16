@@ -2,6 +2,66 @@
 
 ## Unreleased
 
+### Added — RPG mode, cutscenes, new weapons
+- **RPG mode** ([docs](docs/rpg.md)): new **HHA RPG** button in the main menu. Pick a path (Heaven: Olympus to Zeus, Hell: through the hell gate to Hades) and the addons that take part, create a lobby and let friends join with a six-letter code (four recommended, up to 16). The host presses start, everyone sees the same start animation instead of loading screens and lands at the start of the chosen path. The host runs the world locally; friends connect through a relay (`backend/rpg-lobby`, no worlds on the server). Addons opt in with `"hha:rpg": true` or `HhaRpg.declareSupport`/`registerPath`
+- **Cutscenes for Hekate, Brontes, Kratos and the five Tartarus wardens**: camera flight on arrival, camera orbit at phase changes and on defeat; skippable like all cutscenes
+- **Last Stand**: at 20 % health every Olympus duel boss fights harder (shorter pauses, harder hits) with its own title card
+- **New weapon models** after the author's references: Heaven's Sword with a long glowing golden blade and golden wings at the guard, Heavens Mace as a flanged mace with gold-trimmed flanges, Hells Sword as a broad skull blade with horns, a channel full of skulls and a forked tip
+- **Chain physics**: the chains of the Hells Mace (pull and grapple), the Jailer and Hades now hang and swing as a simulated rope
+- **Hells Mace in hand**: the chain between handle and head is physically simulated in first and third person; the head hangs, swings when you walk, turn or strike, and bounces off the handle
+- **RPG lobby redesign** in the style of the control center: your group stands as 3D skin figures on a stage with light rays in the path color, joins and leaves get a light-beam animation, path tiles with weapons, addon switches, the code as tiles, toasts; on start the lobby sinks away, the light swells and an iris closes, and the start animation reopens it (portal rings, light streaks, feathers or embers, the group's names, progress) and reveals the world through the portal
+
+### Changed
+- All bosses and wardens are much tougher (×1.6 health) and hit harder (×1.35), on top of player scaling
+- Heaven armor is noticeably brighter (the gold trims keep their previous colors)
+- Both maces are larger in first person; the Heavens Mace is smaller in third person
+- RPG mode: dying sends you back to the start of your path (Olympus or the hell gate) instead of the Overworld spawn, unless you set your own bed
+- Control center: more breathing room (taller rows, descriptions on their own line, wider column) and a switcher between H&H Armors and each addon in Abilities and Values
+
+
+### Added — Second overhaul: Olympus and Tartarus
+- **Olympus dimension** (`hha:olympus`, [docs](docs/olymp.md)): floating islands above a sea of clouds with a fixed island path of six large islands and five bridges, plus random sky islets with meadows, ruins (with an Olympus loot chest), cloud banks and Curete posts. No rain, no monsters, day and night, beds work
+- **Cloud gate**: a glowstone frame (inside 2 × 3 to 9 × 9, corners optional) lit with a water bucket, like the Aether portal. Every gate leads to the arrival island, the way back leads to your own gate; falling off Olympus drops you into the Overworld sky with slow falling. The gate shows a parallax window with sky, cloud banks and a temple island that shift with the view (`/hhac toggle portal_shader`)
+- **Sealed bridges** that close after the boss before them is beaten, a golden far beacon to the next goal and steles 6–15 that tell each island's story
+- **Hekate**, goddess of thresholds, at the crossroads: torch sweeps and throws, the turning key that leaves one golden road, the threshold step, three forms of which only one carries the fire, and the lunar eclipse. Beating her opens the gate to Tartarus
+- **Brontes the Cyclops** in his forge: hammer blows with cracks, the anvil as cover, glowing ingots that blind him when his hammer hits them, burning grates with cool golden sectors and "The Wedge"
+- **Kratos and Bia**, the throne guard: a shield that blocks from the front, the commands BACK OFF!, COME HERE! and KNEEL! (hold sneak), Bia's charge across the plaza and the clash when you steer her into him. Bia never takes damage and has no health bar
+- **Zeus** at his throne: grounding on six copper pillars, the air rule, the Gorgon gaze, eagle and storm wall, three chains named after the Cyclopes and the scales with a golden pan; intro, phase and ending cutscenes
+- **Enemies of Olympus** at fixed posts: Curetes (shield and spear, in groups only one attacks at a time), griffins (dive from their column) and golden automatons (statues that wake up, weak valve on the back)
+- **Relics**: every piece of the Heaven and Hell sets drops exactly once per world, spread over the bosses; a second win gives ingots instead (`/hha relics`)
+- **New commands**: `/hha relics [drop|mark|reset]`, `/hha progress [set]`, `/hha boss start|skip|stop <boss>`, `/hha tp <station>`, `/hha olymp spawn <kurete|griffin|automaton>`, `/hha olymp bridges`
+- New switches and numbers: `olympus_portal`, `tartaros_chain`, `relic_drops`, `relic_crafting`, `boss_anti_air`, `boss_strength`, `boss_tempo_per_player`, `boss_damage_player_cap`, `boss_smash_decay`; client switch `portal_shader`
+- Speaker names and voice blips for Hekate, Brontes and Kratos; their lines (and Zeus') are prepared in `voice_lines.py` but not recorded yet
+
+### Changed — Second overhaul
+- **Stronger bosses** ([docs](docs/bosse-allgemein.md)): every boss and guardian is tougher and hits harder, +75 % health and +15 % damage per extra player (capped at 1.75), shorter pauses with more players; announcements never get shorter
+- **One scaling for all fights** (`BossScaling`): a hit cap of 4 % of the base health (6 % while open, guardians 1.5×) so no single blow skips a phase
+- **Defense against mace smashes**: repeated smashes deal 100 / 60 / 30 / 10 %, then the boss answers with an announced counter that throws you off, and smashes bounce off for 5 seconds. A smash into an open window always counts fully. Pillars, lightning and impacts also hit in the air; ground waves can be jumped. `/hha toggle boss_anti_air false` turns it off
+- **Tartarus chain** ([docs](docs/tartaros.md)): five guardians hold the chain on the palace; every win breaks a link and makes the rest stronger, the palace seal only opens at five of five. Guardians are much stronger and have their own counters; neighbouring punishment sites now always show different sinners
+- **Hermes** is the first boss of the Olympus path: started by the riddle in his temple on island B, rewards only through the relic table, throws you the Black Letter at the end
+- **Hermes in Tartarus** only shows the way as a ghost (next link, distance, golden beacon)
+- **Hades and Kronos** are tougher (Hades 1600, Kronos 4160 effective health per phase) and hit 20 % harder; Kronos' time stop is Slowness I without a screen flash
+- **Effects calmer, same look**: at most 64 effects at once, less glow, fewer particles, camera shake capped at 3 (room-wide 5, outside fights 2), screen flash only in cutscenes and Zeus' phase changes; Divine Shield and Ultra Mode no longer flash the screen. Announcements are drawn opaque with a dark outline, safe gold areas have a double border
+- **Bosses' health bars** use the boss' danger colour instead of gold
+- **Items and armor** redrawn in the style of HHA Blood and HHA Void: animated icons, Heaven's Sword as a winged sword, both swords and maces as 3D hand models with 32 px icons, and a glow layer on the worn armor
+- **Portals**: the Tartarus gate opens row by row and shows a parallax window into the red sky with the palace dome and chains
+- **Smithing the set pieces is off by default** (`relic_crafting`); ingots and the upgrade template stay craftable
+- `/hha kit` always works in creative mode, even with `kit_mode` off
+- Default `hermes_health_per_player` 0.6 → 0.75 and `hermes_damage_per_player` 0.2 → 0.15 (saved configs keep their values)
+
+### Removed — Second overhaul
+- The Olympus biome and the Hades hall no longer generate in the Overworld (old worlds keep theirs; old offering stones and altars only show a hint)
+- The Shade of the Messenger, with its code, textures, voice lines and music
+- Hermes hunting you through Tartarus, with his voice lines
+- The recipe of the Sealed Messenger Letter; the letter only points to the cloud gate now
+
+### Added — Control center
+- **New in-game menu (key K or `/hhac menu`)** with its own look instead of vanilla buttons: glass panels, animated switches and sliders, sliding tabs, toasts and floating sparks behind a blurred world
+- **Overview**: your character in 3D with the worn armor, slowly turning and draggable, flanked by spinning weapons; the worn set with its pieces, every ability cooldown live and the Ultra Mode timer
+- **Abilities and values**: every server toggle and number in groups (Heaven, Hell, set, bosses, particles, addons) with names, short descriptions and units (seconds, hearts, blocks); changed values glow and reset with one click. Only admins (OP level 2) can change them, everyone else sees them read-only
+- **Visuals**: all client options (3D effects, camera shake, Tartarus filter, cooldown bar, Ultra bar, scale, offset, particle density) with a live preview of the cooldown bar
+- **Tools**: trust or untrust online players with one switch, take kits from cards with spinning 3D weapons, and for admins start, skip or stop the Hermes fight, stop a Hades fight, save, reload or reset the config and reload recipes
+
 ### Changed — Boss overhaul
 - **Every fight is a readable duel now.** Each attack is announced on the floor (circle, ring, line or the new cone) with a border that is there from the first tick, a fill that grows until the hit and a short white flash right before it. Announcements have minimum durations that no phase undercuts; later phases only shorten the pauses. After each attack the boss stands open for a moment, and a **golden rune** under him means every hit counts almost double. Gold always means "safe" or "open", danger always carries the enemy's colour
 - **Far fewer effects at once**: one area effect per hit, no camera shake during an announcement, at most one room hazard at a time per player, 96 instead of 256 client effects, and the permanent glow on the bosses is cut down to two or three spots each. Announcements are drawn even with `/hhac vfx false`, because they are game information

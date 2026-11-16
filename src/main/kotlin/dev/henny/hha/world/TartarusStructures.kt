@@ -151,7 +151,9 @@ class TartarusStructure(config: Config, private val kind: TartarusKind) : Struct
         val surface = context.chunkGenerator().getHeightOnGround(chunk.centerX, chunk.centerZ, Heightmap.Type.WORLD_SURFACE_WG, context.world(), context.noiseConfig())
         // Auf Gipfeln wäre kein Platz nach oben, in Schluchten nichts zum Draufstellen: Die Höhe bleibt im Rahmen.
         val pos = BlockPos(chunk.centerX, surface.coerceIn(MIN_HEIGHT, MAX_HEIGHT), chunk.centerZ)
-        return Optional.of(StructurePosition(pos) { collector -> collector.addPiece(TartarusPiece(kind, pos)) })
+        // Strafstätten: Die Variante kommt aus der Rasterzelle der Platzierung und wird im Bauwerk gespeichert (PLAN 5.7).
+        val variant = if (kind == TartarusKind.PUNISHMENT) TartarusPlans.cellVariant(chunk.x, chunk.z) else TartarusPiece.NO_VARIANT
+        return Optional.of(StructurePosition(pos) { collector -> collector.addPiece(TartarusPiece(kind, pos, variant)) })
     }
 
     override fun getType(): StructureType<*> = HhaWorldgen.tartarusType(kind)
@@ -169,30 +171,47 @@ class TartarusPiece : StructurePiece {
     val kind: TartarusKind
     val middle: BlockPos
 
-    constructor(kind: TartarusKind, center: BlockPos) : super(
+    /**
+     * Gespeicherte Variante einer Strafstätte (0 Sisyphos, 1 Ixion, 2 Tantalos), [NO_VARIANT] bei anderen Bauwerken und
+     * bei Strafstätten alter Welten (die rechnen mit der alten Formel, siehe [siteVariant]).
+     */
+    val variant: Int
+
+    constructor(kind: TartarusKind, center: BlockPos, variant: Int = NO_VARIANT) : super(
         HhaWorldgen.TARTARUS_PIECE, 0,
         BlockBox(center.x - kind.reach, center.y - kind.below, center.z - kind.reach, center.x + kind.reach, center.y + kind.above, center.z + kind.reach),
     ) {
         this.kind = kind
         this.middle = center
+        this.variant = variant
     }
 
     constructor(nbt: NbtCompound) : super(HhaWorldgen.TARTARUS_PIECE, nbt) {
         kind = TartarusKind.entries[nbt.getInt("kind", 0)]
         middle = BlockPos(nbt.getInt("cx", 0), nbt.getInt("cy", 0), nbt.getInt("cz", 0))
+        variant = nbt.getInt("variant", NO_VARIANT)
     }
+
+    /** Welche Strafstätte das ist: gespeichert, sonst (alte Welt) nach der alten Streuformel. Bauplan und Wächter lesen hier. */
+    fun siteVariant(): Int = if (variant in 0..2) variant else TartarusPlans.siteVariant(middle)
 
     override fun writeNbt(context: StructureContext, nbt: NbtCompound) {
         nbt.putInt("kind", kind.ordinal)
         nbt.putInt("cx", middle.x)
         nbt.putInt("cy", middle.y)
         nbt.putInt("cz", middle.z)
+        if (variant in 0..2) nbt.putInt("variant", variant)
     }
 
     override fun generate(
         world: StructureWorldAccess, structureAccessor: StructureAccessor, chunkGenerator: ChunkGenerator, random: Random,
         chunkBox: BlockBox, chunkPos: ChunkPos, pivot: BlockPos,
     ) {
-        TartarusPlans.draw(WorldCanvas(world, chunkBox, random), kind, middle)
+        TartarusPlans.draw(WorldCanvas(world, chunkBox, random), kind, middle, siteVariant())
+    }
+
+    companion object {
+        /** Keine gespeicherte Variante. */
+        const val NO_VARIANT = -1
     }
 }

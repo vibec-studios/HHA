@@ -1,11 +1,13 @@
 package dev.henny.hha
 
+import dev.henny.hha.block.BossAltarBlock
 import dev.henny.hha.block.GreenFireBlock
 import dev.henny.hha.block.HadesAltarBlock
 import dev.henny.hha.block.HadesPortalBlock
 import dev.henny.hha.block.InscribedBlock
 import dev.henny.hha.block.HadesSealBlock
 import dev.henny.hha.block.OfferingPedestalBlock
+import dev.henny.hha.block.OlympusPortalBlock
 import dev.henny.hha.block.SteleBlock
 import net.minecraft.block.AbstractBlock
 import net.minecraft.block.Block
@@ -27,6 +29,10 @@ object HhaBlocks {
     lateinit var HADES_ALTAR: Block; private set
     lateinit var STELE: Block; private set
     lateinit var HADES_SEAL: Block; private set
+
+    // Überarbeitung 2 (PLAN 10.1)
+    lateinit var OLYMPUS_PORTAL: Block; private set
+    lateinit var BOSS_ALTAR: Block; private set
 
     private fun <T : Block> register(name: String, settings: AbstractBlock.Settings, make: (AbstractBlock.Settings) -> T): T {
         val key = RegistryKey.of(RegistryKeys.BLOCK, Hha.id(name))
@@ -72,5 +78,20 @@ object HhaBlocks {
 
         STELE = register("stele", sacred(MapColor.BLACK, 3), ::SteleBlock)
         HADES_SEAL = register("hades_seal", sacred(MapColor.EMERALD_GREEN, 11), ::HadesSealBlock)
+
+        // Wolkentor: wie das Höllentor ohne Kollision und von Hand unzerstörbar, Licht 11 (PLAN 7.1).
+        OLYMPUS_PORTAL = register(
+            "olympus_portal",
+            AbstractBlock.Settings.create()
+                .mapColor(MapColor.LIGHT_BLUE)
+                .noCollision()
+                .strength(-1f, 3600000f)
+                .dropsNothing()
+                .luminance { 11 }
+                .sounds(BlockSoundGroup.GLASS)
+                .pistonBehavior(PistonBehavior.BLOCK),
+            ::OlympusPortalBlock,
+        )
+        BOSS_ALTAR = register("boss_altar", sacred(MapColor.GOLD, 7), ::BossAltarBlock)
     }
 }

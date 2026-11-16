@@ -3,6 +3,7 @@ package dev.henny.hha.client
 import dev.henny.hha.Hha
 import dev.henny.hha.HhaItems
 import dev.henny.hha.api.client.HudCooldowns
+import dev.henny.hha.client.gui.Ui
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback
 import net.minecraft.client.MinecraftClient
 import net.minecraft.client.gl.RenderPipelines
@@ -10,20 +11,31 @@ import net.minecraft.client.gui.DrawContext
 import net.minecraft.entity.EquipmentSlot
 import net.minecraft.item.ItemStack
 import net.minecraft.text.Text
-import net.minecraft.util.Formatting
 import net.minecraft.util.Identifier
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
- * Cooldown-HUD: zentrierte Slot-Leiste über der Hotbar. Bereite Fähigkeiten
- * pulsieren golden/feurig, laufende Cooldowns dunkeln von oben ab und zeigen
- * einen Fortschrittsbalken. Oben mittig der Ultra-Status.
+ * Cooldown-HUD im Stil der Studio-Website: zentrierte Reihe eckiger Felder über der Hotbar (wie die Hotbar der
+ * Website: dunkler Grund, 1-px-Rahmen, Akzent-Unterkante). Bereite Fähigkeiten tragen Rahmen und Unterkante in der
+ * Set-Farbe wie auf der Website (Gold = Heaven, Seelenblau = Hell), laufende Cooldowns dunkeln von oben ab und füllen
+ * die Unterkante grau.
+ * Oben mittig der Ultra-Status auf einer dunklen Platte mit zehn Segmenten. Die Menü-Vorschau zeichnet über
+ * [drawSlot] genau dasselbe.
  */
 object CooldownHud {
 
-    private const val SLOT = 22
-    private const val GOLD = 0x00FFD75E
-    private const val FIRE = 0x00FF7B1F
+    /** Feld: Symbol 16 px plus je 2 px Rand. */
+    const val SLOT = 20
+
+    /** Abstand von Feld zu Feld wie bisher (22), damit `hud_offset_x/y` ihre Bedeutung behalten. */
+    const val STEP = 22
+
+    const val GOLD_COLOR = Ui.GOLD
+    const val SOUL_COLOR = Ui.SOUL
+
+    private const val ULTRA_W = 132
+    private const val ULTRA_H = 24
 
     private val ICON_BEAM_LIGHT: Identifier = Hha.id("hud/beam_light")
     private val ICON_BEAM_LAVA: Identifier = Hha.id("hud/beam_lava")
@@ -52,11 +64,64 @@ object CooldownHud {
             stack.isOf(HhaItems.HEAVEN_LEGGINGS) || stack.isOf(HhaItems.HEAVEN_BOOTS) ||
             stack.isOf(HhaItems.HEAVENS_SWORD) || stack.isOf(HhaItems.HEAVENS_MACE)
 
-    /** Ein Eintrag in der Cooldown-Leiste: Stack, Icon, Akzentfarbe (0xRRGGBB). */
+    /** Ein Eintrag in der Cooldown-Leiste: Stack, Icon, Akzentfarbe (ARGB). */
     private class Slot(val stack: ItemStack, val icon: Identifier, val color: Int)
 
     private fun builtin(stack: ItemStack, icon: Identifier): Slot =
-        Slot(stack, icon, if (isHeaven(stack)) GOLD else FIRE)
+        Slot(stack, icon, if (isHeaven(stack)) GOLD_COLOR else SOUL_COLOR)
+
+    /**
+     * Ein Feld bei ([x], [y]) mit Größe [SLOT]. [progress] 0 = bereit, sonst Anteil der Restzeit; [pulse] 0…1 lässt
+     * den Rahmen bereiter Felder atmen (nur wenn `hud_pulse` an ist); [a] blendet alles aus.
+     */
+    fun drawSlot(context: DrawContext, x: Int, y: Int, icon: Identifier, color: Int, progress: Float, pulse: Float, a: Float = 1f) {
+        val s = SLOT
+        if (HhaClientConfig.enabled("hud_background")) context.fill(x, y, x + s, y + s, Ui.alpha(0xA0000000.toInt(), a))
+        val ready = progress <= 0f
+        val frame = if (ready) {
+            Ui.alpha(color, (if (HhaClientConfig.enabled("hud_pulse")) 0.55f + 0.45f * pulse else 0.9f) * a)
+        } else {
+            Ui.alpha(Ui.LINE_2, a)
+        }
+        Ui.frame(context, x, y, x + s, y + s, frame)
+        context.drawGuiTexture(RenderPipelines.GUI_TEXTURED, icon, x + 2, y + 2, 16, 16, a)
+        if (ready) {
+            context.fill(x + 1, y + s - 3, x + s - 1, y + s - 1, Ui.alpha(color, a))
+        } else {
+            val covered = (progress * 16f).toInt().coerceIn(0, 16)
+            context.fill(x + 2, y + 2, x + 18, y + 2 + covered, Ui.alpha(0xB0101010.toInt(), a))
+            context.fill(x + 1, y + s - 3, x + s - 1, y + s - 1, Ui.alpha(0x30FFFFFF, a))
+            context.fill(x + 1, y + s - 3, x + 1 + ((s - 2) * (1f - progress)).roundToInt(), y + s - 1, Ui.alpha(Ui.MUTED, a))
+        }
+    }
+
+    /** Ultra-Status oben mittig (Website: .bossbar), auf dunkler Platte, damit er vor hellem Himmel lesbar bleibt. */
+    private fun drawUltra(client: MinecraftClient, context: DrawContext, cx: Int, y: Int) {
+        val tr = client.textRenderer
+        val x = cx - ULTRA_W / 2
+        val x2 = x + ULTRA_W
+        context.fill(x, y, x2, y + ULTRA_H, 0xB4000000.toInt())
+        Ui.frame(context, x, y, x2, y + ULTRA_H, Ui.LINE_2)
+        context.drawGuiTexture(RenderPipelines.GUI_TEXTURED, ICON_ULTRA, x + 4, y + 4, 16, 16)
+        Ui.label(context, tr, Text.translatableWithFallback("hha.hud.ultra", "Ultra").string, x + 25, y + 4, Ui.GOLD)
+        val secs = "${(ultraRemainingTicks + 19) / 20} s"
+        Ui.label(context, tr, secs, x2 - 6 - Ui.labelWidth(tr, secs), y + 4, Ui.TEXT)
+        val total = ClientConfigCache.num("ultra_duration").coerceAtLeast(1.0).toFloat()
+        val frac = (ultraRemainingTicks / total).coerceIn(0f, 1f)
+        val segs = 10
+        val gap = 2
+        val bx = x + 25
+        val bw = x2 - 6 - bx
+        val by = y + 14
+        val sw = (bw - (segs - 1) * gap) / segs.toFloat()
+        for (i in 0 until segs) {
+            val sx = (bx + i * (sw + gap)).roundToInt()
+            val ex = (bx + i * (sw + gap) + sw).roundToInt()
+            val f = (frac * segs - i).coerceIn(0f, 1f)
+            context.fill(sx, by, ex, by + 4, 0x40FFFFFF)
+            if (f > 0f) context.fill(sx, by, sx + ((ex - sx) * f).roundToInt(), by + 4, Ui.GOLD)
+        }
+    }
 
     private fun render(client: MinecraftClient, context: DrawContext) {
         val player = client.player ?: return
@@ -84,7 +149,7 @@ object CooldownHud {
         }
         for (entry in HudCooldowns.all()) {
             val stack = entry.provider(player) ?: continue
-            if (!stack.isEmpty) candidates.add(Slot(stack, entry.icon, entry.accentColor and 0xFFFFFF))
+            if (!stack.isEmpty) candidates.add(Slot(stack, entry.icon, 0xFF000000.toInt() or (entry.accentColor and 0xFFFFFF)))
         }
 
         val time = client.world?.time ?: 0L
@@ -94,8 +159,6 @@ object CooldownHud {
         val scale = HhaClientConfig.numF("hud_scale")
         val offsetX = HhaClientConfig.num("hud_offset_x").toInt()
         val offsetY = HhaClientConfig.num("hud_offset_y").toInt()
-        val pulseOn = HhaClientConfig.enabled("hud_pulse")
-        val backgroundOn = HhaClientConfig.enabled("hud_background")
 
         val matrices = context.matrices
         matrices.pushMatrix()
@@ -105,76 +168,22 @@ object CooldownHud {
             val viewH = context.scaledWindowHeight / scale
 
             if (candidates.isNotEmpty()) {
-                val total = candidates.size * SLOT - (SLOT - 18)
+                val total = candidates.size * STEP - (STEP - SLOT)
                 var x = ((viewW - total) / 2).toInt() + offsetX
-                val y = (viewH - 82).toInt() + offsetY
-
+                // Rahmen oben bei viewH − 84: dieselbe Lage wie die alte Leiste (Symbol bei viewH − 82)
+                val y = (viewH - 84).toInt() + offsetY
+                val pulse = (sin(time * 0.35) * 0.5 + 0.5).toFloat()
                 for (slot in candidates) {
-                    val stack = slot.stack
-                    val icon = slot.icon
-                    val base = slot.color
-                    val progress = manager.getCooldownProgress(stack, 0f)
-
-                    if (backgroundOn) {
-                        context.fill(x - 1, y - 1, x + 17, y + 17, 0x90000000.toInt())
-                    }
-
-                    val border = if (progress <= 0f) {
-                        val alpha = if (pulseOn) {
-                            val pulse = sin(time * 0.35) * 0.5 + 0.5
-                            (140 + pulse * 115).toInt()
-                        } else {
-                            220
-                        }
-                        (alpha shl 24) or base
-                    } else {
-                        0xFF3A3A3A.toInt()
-                    }
-                    context.fill(x - 2, y - 2, x + 18, y - 1, border)
-                    context.fill(x - 2, y + 17, x + 18, y + 18, border)
-                    context.fill(x - 2, y - 1, x - 1, y + 17, border)
-                    context.fill(x + 17, y - 1, x + 18, y + 17, border)
-
-                    context.drawGuiTexture(RenderPipelines.GUI_TEXTURED, icon, x, y, 16, 16)
-
-                    if (progress > 0f) {
-                        val covered = (progress * 16f).toInt().coerceIn(0, 16)
-                        context.fill(x, y, x + 16, y + covered, 0xB0101010.toInt())
-                        context.fill(x - 2, y + 19, x + 18, y + 22, 0xAA000000.toInt())
-                        val w = ((1f - progress) * 20f).toInt()
-                        context.fill(x - 2, y + 20, x - 2 + w, y + 21, 0xFF000000.toInt() or base)
-                    }
-                    x += SLOT
+                    drawSlot(context, x, y, slot.icon, slot.color, manager.getCooldownProgress(slot.stack, 0f), pulse)
+                    x += STEP
                 }
             }
 
             if (ultraRemainingTicks > 0 && HhaClientConfig.enabled("ultra_bar")) {
-                val cx = (viewW / 2).toInt() + offsetX
-                val seconds = (ultraRemainingTicks + 19) / 20
-                val pulse = sin(time * 0.5) * 0.5 + 0.5
-                val titleColor = if (pulse > 0.5) 0xFFFFD75E.toInt() else 0xFFFF7B1F.toInt()
-                val title = Text.translatable("hha.hud.ultra_active", seconds)
-                    .formatted(Formatting.BOLD)
-                val titleWidth = client.textRenderer.getWidth(title)
-                val icon = 16
-                val gap = 3
-                val left = cx - (icon + gap + titleWidth) / 2
-                context.drawGuiTexture(RenderPipelines.GUI_TEXTURED, ICON_ULTRA, left, 8 + offsetY, icon, icon)
-                context.drawTextWithShadow(
-                    client.textRenderer, title, left + icon + gap, 12 + offsetY, titleColor,
-                )
-
-                val total = 1200f
-                val fraction = (ultraRemainingTicks / total).coerceIn(0f, 1f)
-                val barWidth = 140
-                val barX = cx - barWidth / 2
-                context.fill(barX - 2, 23 + offsetY, barX + barWidth + 2, 32 + offsetY, 0xAA000000.toInt())
-                context.fill(barX - 1, 24 + offsetY, barX + barWidth + 1, 31 + offsetY, 0xFF1A120B.toInt())
-                val fill = (barWidth * fraction).toInt()
-                context.fill(barX, 25 + offsetY, barX + fill, 30 + offsetY, 0xFFFF7B1F.toInt())
-                if (fill > 2) {
-                    context.fill(barX, 25 + offsetY, barX + fill - 2, 27 + offsetY, 0xFFFFD75E.toInt())
-                }
+                // Läuft ein Bosskampf, steht oben mittig die Phasenleiste; Ultra rückt dann darunter.
+                val bossBottom = dev.henny.hha.client.cine.PhaseBar.bottom()
+                val top = if (bossBottom > 0) ((bossBottom + 4) / scale).toInt() else 6
+                drawUltra(client, context, (viewW / 2).toInt() + offsetX, top + offsetY)
             }
         } finally {
             matrices.popMatrix()

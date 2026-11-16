@@ -13,6 +13,12 @@ import java.nio.file.Path
  */
 object HhaConfig {
 
+    /**
+     * Standard des Schalters `relic_crafting` (Schmiederezepte der zwölf Set-Teile, PLAN 6.2). Offene Frage an den
+     * Nutzer (PLAN 14, Frage 3): Nur hier ändern, alles andere liest den Schalter.
+     */
+    const val RELIC_CRAFTING_DEFAULT = false
+
     /** Feature-Toggles (true = aktiv). */
     private val toggleDefaults: LinkedHashMap<String, Boolean> = linkedMapOf(
         "undying_rage" to true,
@@ -49,6 +55,12 @@ object HhaConfig {
         "kit_mode" to true,
         "hermes_fight" to true,
         "heaven_ingot_free_recipe" to false,
+        // Überarbeitung 2 (PLAN 10.1)
+        "olympus_portal" to true,
+        "tartaros_chain" to true,
+        "relic_drops" to true,
+        "relic_crafting" to RELIC_CRAFTING_DEFAULT,
+        "boss_anti_air" to true,
     )
 
     /** Zahlenwerte: Schaden und Trigger-Schwellen. */
@@ -91,9 +103,15 @@ object HhaConfig {
         "hermes_damage" to 1.0,
         "hermes_toughness" to 1.0,
         "hermes_max_hit" to 40.0,
-        "hermes_health_per_player" to 0.6,
-        "hermes_damage_per_player" to 0.2,
+        // Gelten für alle Bosse, Wächter und Gegner (PLAN 4.1); die Namen bleiben wegen der GUI.
+        "hermes_health_per_player" to 0.75,
+        "hermes_damage_per_player" to 0.15,
         "hades_damage" to 1.0,
+        // Überarbeitung 2 (PLAN 10.1): gemeinsame Kampfsysteme, siehe logic/boss/BossScaling.kt und BossDefense.kt.
+        "boss_strength" to 1.0,
+        "boss_tempo_per_player" to 0.05,
+        "boss_damage_player_cap" to 1.75,
+        "boss_smash_decay" to 120.0,
     )
 
     /** Alle bekannten Toggles (eingebaute + von Addons registrierte). */

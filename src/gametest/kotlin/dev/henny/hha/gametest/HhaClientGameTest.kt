@@ -26,6 +26,7 @@ class HhaClientGameTest : FabricClientGameTest {
                 if (mode == "all" || mode == "boss") bossFight(context, world)
                 if (mode == "intro") intro(context, world)
                 if (mode == "soak") soak(context, world)
+                if (mode == "gui") gui(context, world)
             }
     }
 
@@ -111,6 +112,63 @@ class HhaClientGameTest : FabricClientGameTest {
         shots("opened", 3, 40)
         context.waitTicks(140)
         context.takeScreenshot("back_on_ground")
+    }
+
+    /** Kontrollzentrum: mit Heaven-Rüstung öffnen, alle Tabs und gescrollte Ansichten fotografieren. */
+    private fun gui(context: ClientGameTestContext, world: TestSingleplayerContext) {
+        val server = world.server
+        for ((slot, item) in listOf("armor.head" to "heaven_helmet", "armor.chest" to "heaven_chestplate",
+            "armor.legs" to "heaven_leggings", "armor.feet" to "heaven_boots", "weapon.mainhand" to "heavens_sword")) {
+            server.runCommand("item replace entity @p $slot with hha:$item")
+        }
+        context.waitTicks(20)
+        context.setScreen { dev.henny.hha.client.gui.HhaMenuScreen() }
+        context.waitTicks(6)
+        context.takeScreenshot("gui_opening")
+        context.waitTicks(30)
+        context.takeScreenshot("gui_overview")
+        fun screen(c: net.minecraft.client.MinecraftClient) = c.currentScreen as? dev.henny.hha.client.gui.HhaMenuScreen
+        for (tab in 1 until dev.henny.hha.client.gui.HhaMenuScreen.TABS) {
+            context.runOnClient<RuntimeException> { screen(it)?.selectTab(tab) }
+            context.waitTicks(4)
+            context.takeScreenshot("gui_tab${tab}_switch")
+            context.waitTicks(20)
+            context.takeScreenshot("gui_tab$tab")
+            context.runOnClient<RuntimeException> { screen(it)?.mouseScrolled(0.0, 0.0, 0.0, -12.0) }
+            context.waitTicks(16)
+            context.takeScreenshot("gui_tab${tab}_scrolled")
+        }
+        // Kompakte Seitenleiste: Maus über das zweite Icon, damit das Namensschild erscheint
+        context.runOnClient<RuntimeException> { screen(it)?.selectTab(0) }
+        context.getInput().setCursorPos(56.0, 188.0)
+        context.waitTicks(20)
+        context.takeScreenshot("gui_compact_hover")
+        // Echte Server-Aktion: Meldung als Toast, danach zurückstellen
+        context.runOnClient<RuntimeException> { dev.henny.hha.client.gui.GuiClient.send("toggle", "halo", "false") }
+        context.waitTicks(12)
+        context.takeScreenshot("gui_toast")
+        context.runOnClient<RuntimeException> { dev.henny.hha.client.gui.GuiClient.send("toggle", "halo", "true") }
+        context.waitTicks(6)
+        context.runOnClient<RuntimeException> { screen(it)?.close() }
+        context.waitTicks(10)
+        context.takeScreenshot("gui_closed")
+
+        // Große GUI-Fläche: breites Layout mit beschrifteter Seitenleiste
+        context.runOnClient<RuntimeException> {
+            it.options.guiScale.value = 1
+            it.onResolutionChanged()
+        }
+        context.waitTicks(4)
+        context.setScreen { dev.henny.hha.client.gui.HhaMenuScreen() }
+        context.waitTicks(30)
+        context.takeScreenshot("gui_wide_overview")
+        for (tab in listOf(1, 4)) {
+            context.runOnClient<RuntimeException> { screen(it)?.selectTab(tab) }
+            context.waitTicks(24)
+            context.takeScreenshot("gui_wide_tab$tab")
+        }
+        context.runOnClient<RuntimeException> { screen(it)?.close() }
+        context.waitTicks(10)
     }
 
     private fun setup(world: TestSingleplayerContext) {

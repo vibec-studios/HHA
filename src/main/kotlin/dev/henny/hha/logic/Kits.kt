@@ -46,6 +46,13 @@ object Kits {
         ),
     }
 
+    /**
+     * Darf [player] ein Kit nehmen? Ja, wenn `kit_mode` an ist **oder** er im Kreativmodus ist (PLAN 6.3): So können
+     * mehrere Spieler dieselbe Rüstung tragen, ohne das Reliquien-Register zu berühren. Für `/hha kit` und das Menü.
+     */
+    fun allowed(player: ServerPlayerEntity): Boolean =
+        dev.henny.hha.config.HhaConfig.enabled("kit_mode") || player.isCreative
+
     /** Generiert und gibt das Kit für ein registriertes Set. */
     fun give(player: ServerPlayerEntity, set: ArmorSet) {
         equip(

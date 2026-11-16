@@ -60,7 +60,7 @@ import kotlin.math.sqrt
  * wait(slam.ticks)                                         // angehobene Dauer, nicht die Konstante!
  * for (player in slam.hits(fight.targets())) if (fight.grounded(player)) fight.hurt(player, 24f)
  * Vfx.shockwave(world, Vfx.Style.HADES, spot, BossTimings.Hades.SLAM_RADIUS)   // genau ein Flächeneffekt
- * fight.telegraph.hitShake(spot, 4f)                       // optional ein Rütteln
+ * fight.telegraph.hitShake(spot, 3f)                       // optional ein Rütteln (≤ 3)
  * ```
  *
  * ### Kegel und Linie
@@ -390,13 +390,13 @@ object Telegraph {
 
         // --- Treffer-Helfer (Plan 3.3) ---------------------------------------------------------------
 
-        /** Rütteln eines normalen Treffers: höchstens [Vfx.SHAKE_HIT_MAX], [HIT_SHAKE_TICKS] Ticks. */
+        /** Rütteln eines normalen Treffers: höchstens [Vfx.SHAKE_HIT_MAX] (3), [HIT_SHAKE_TICKS] (8) Ticks. */
         fun hitShake(at: Vec3d, strength: Float = 3f, radius: Float = 32f) = during {
             Vfx.shake(world, at, strength.coerceAtMost(Vfx.SHAKE_HIT_MAX), HIT_SHAKE_TICKS, radius)
         }
 
-        /** Rütteln für Phasenwechsel und Saalweites: höchstens [Vfx.SHAKE_MAX], [Vfx.SHAKE_MAX_TICKS] Ticks. */
-        fun roomShake(at: Vec3d, strength: Float = 6f, radius: Float = 60f) = during {
+        /** Rütteln für Phasenwechsel und Saalweites: höchstens [Vfx.SHAKE_MAX] (5), [Vfx.SHAKE_MAX_TICKS] (8) Ticks. */
+        fun roomShake(at: Vec3d, strength: Float = 4f, radius: Float = 60f) = during {
             Vfx.shake(world, at, strength.coerceAtMost(Vfx.SHAKE_MAX), Vfx.SHAKE_MAX_TICKS, radius)
         }
 
@@ -592,6 +592,23 @@ object Telegraph {
             fun end() {
                 until = now()
                 groups.remove(this)
+            }
+
+            /**
+             * Bricht die Gruppe ab: Ihre Formen verschwinden beim Client (nur diese, andere Ansagen und Effekte bleiben),
+             * dann wie [end]. Für Angriffe, die mitten in der Ansage enden (z. B. Hekates Dreigestalt, wenn die Echte
+             * getroffen wird).
+             */
+            fun cancel() {
+                for (shape in list) {
+                    val origin = when (shape) {
+                        is Ring -> shape.center
+                        is Line -> shape.from
+                        is Cone -> shape.apex
+                    }
+                    Vfx.telegraphClear(world, origin)
+                }
+                end()
             }
         }
     }

@@ -16,7 +16,8 @@ object InfoCommand {
     private data class Page(val id: String, val lines: Int)
 
     private val OVERVIEW = Page("overview", 5)
-    private val COMMANDS = Page("commands", 8)
+    // 9–12: Reliquien, Fortschritt, Kämpfe und Teleport (Überarbeitung 2, PLAN 6.3).
+    private val COMMANDS = Page("commands", 13)
     private val GENERAL = Page("general", 7)
     private val HELL = Page("hell", 10)
     private val HEAVEN = Page("heaven", 10)

@@ -166,7 +166,35 @@ class HadesAttacks(private val fight: HadesFight) {
                 yieldAll(pick(hypot(after.x - entity.x, after.z - entity.z)))
             }
         }
-        wait(pause())
+        // PLAN 4.3: Wer ihn von oben bearbeitet, bekommt statt der Pause den Konter. Pausen sonst nach Spielerzahl (4.1).
+        if (fight.counterDue()) yieldAll(antiAir()) else wait(BossScaling.pause(pause(), fight.crowd))
+    }
+
+    /**
+     * Der Konter gegen Spieler über ihm (PLAN 4.3): Er stößt den Bident senkrecht nach oben ([HadesPose.SLAM] rückwärts
+     * gespielt, [dev.henny.hha.entity.boss.HadesEntity.antiAir]). Kreis um ihn, [BossDefense.COUNTER_TICKS] Ticks, Höhe
+     * unbegrenzt; wer darin ist, bekommt [ANTI_AIR_DAMAGE] und wird nach unten geworfen. Danach ist er wachsam:
+     * Sturztreffer prallen ab, Treffer vom Boden zählen normal.
+     */
+    private fun antiAir(): Sequence<Unit> = sequence {
+        val entity = fight.boss ?: return@sequence
+        val guard = fight.guard ?: return@sequence
+        guard.beginCounter()
+        entity.cloaked = false
+        entity.antiAir = true
+        entity.pose = HadesPose.SLAM
+        val ring = calls.ring(floorAt(entity.entityPos), guard.counterRadius().toFloat(), BossDefense.COUNTER_TICKS)
+        sound(HhaSounds.CHARGE, entity.entityPos, 2.2f, 1.2f)
+        wait(ring.ticks)
+        for (player in ring.hits(fight.targets())) {
+            fight.hurt(player, ANTI_AIR_DAMAGE, reach = BossDefense.Reach.SKY)
+            guard.counterHit(player)
+        }
+        sound(HhaSounds.IMPACT, entity.entityPos, 2.6f, 1.1f)
+        guard.endCounter()
+        wait(BossDefense.COUNTER_TICKS)
+        entity.antiAir = false
+        entity.pose = HadesPose.IDLE
     }
 
     /** Ein Höhepunkt: Solange er läuft, beginnt keine Saal-Gefahr. */
@@ -350,8 +378,7 @@ class HadesAttacks(private val fight: HadesFight) {
     /** Ein Hieb fällt: wer im Kegel steht, ein Flächeneffekt, beim Schlusshieb ein kurzes Rütteln. */
     private fun strike(cone: Telegraph.Cone, damage: Float, final: Boolean) {
         for (player in cone.hits(fight.targets())) {
-            if (player.y > center.y + 3.0) continue
-            fight.hurt(player, damage)
+            if (!fight.hurt(player, damage)) continue
             shove(player, cone.apex, 0.9, 0.35)
         }
         Vfx.crescent(world, Vfx.Style.HADES, cone.apex.add(cone.direction.multiply(2.0)).add(0.0, 1.6, 0.0), cone.direction, H.SWEEP_RADIUS, 7f, 8)
@@ -403,7 +430,7 @@ class HadesAttacks(private val fight: HadesFight) {
             entity.setPosition(at)
             for (player in fight.targets()) {
                 if (player.uuid in struck || !line.contains(player)) continue
-                if (hypot(player.x - at.x, player.z - at.z) < 2.6 && player.y < center.y + 3.5) {
+                if (hypot(player.x - at.x, player.z - at.z) < 2.6 && fight.reaches(player, BossDefense.Reach.BODY)) {
                     struck.add(player.uuid)
                     fight.hurt(player, 22f)
                     Fx.launchPlayer(player, dir.multiply(1.5).add(0.0, 0.55, 0.0))
@@ -430,8 +457,8 @@ class HadesAttacks(private val fight: HadesFight) {
     private fun slamImpact(ring: Telegraph.Ring): Sequence<Unit> = sequence {
         val entity = fight.boss ?: return@sequence
         for (player in ring.hits(fight.targets())) {
-            if (!fight.grounded(player)) continue
-            fight.hurt(player, 24f)
+            // Bodenschlag: nur am Boden (LOW), darüber springt man.
+            if (!fight.grounded(player) || !fight.hurt(player, 24f, reach = BossDefense.Reach.LOW)) continue
             shove(player, ring.center, 1.2, 0.7)
         }
         Vfx.shockwave(world, Vfx.Style.HADES, ring.center, H.SLAM_RADIUS, 16, 3f)
@@ -471,9 +498,9 @@ class HadesAttacks(private val fight: HadesFight) {
             if (bolt != null) fight.steer(bolt, hand.lerp(stuck, i.toDouble() / flight), path)
             yield(Unit)
         }
-        // Einschlag.
+        // Einschlag von oben (PLAN 4.3: SKY).
         for (player in ring.hits(fight.targets())) {
-            fight.hurt(player, 22f)
+            if (!fight.hurt(player, 22f, reach = BossDefense.Reach.SKY)) continue
             shove(player, landing, 1.2, 0.6)
         }
         Vfx.shockwave(world, Vfx.Style.HADES, landing, H.THROW_RADIUS, 14, 2.4f)
@@ -607,7 +634,7 @@ class HadesAttacks(private val fight: HadesFight) {
         sound(HhaSounds.BLINK, appear, 2.6f, 0.6f)
         wait(ring.remaining)
         for (player in ring.hits(fight.targets())) {
-            fight.hurt(player, 22f)
+            if (!fight.hurt(player, 22f)) continue
             shove(player, appear, 1.0, 0.4)
         }
         Vfx.crescent(world, Vfx.Style.HADES, appear.add(0.0, 1.4, 0.0), forward(), H.AMBUSH_RADIUS, 6f, 10)
@@ -697,7 +724,7 @@ class HadesAttacks(private val fight: HadesFight) {
         for (player in fight.targets()) {
             if (exposed(eye, player)) {
                 Vfx.beam(world, Vfx.Style.HADES, eye, player.eyePos.subtract(0.0, 0.3, 0.0), 2.6f, 14)
-                fight.hurt(player, 32f, magic = true)
+                fight.hurt(player, 32f, magic = true, reach = BossDefense.Reach.SKY)
             } else {
                 pillarBetween(entity.entityPos, player.entityPos)?.let { fallen.add(it) }
             }
@@ -741,7 +768,7 @@ class HadesAttacks(private val fight: HadesFight) {
         entity.pose = HadesPose.JUDGE
         wait(group.ticks)
         for (player in fight.targets()) {
-            if (safe.none { it.contains(player) }) fight.hurt(player, 34f, magic = true)
+            if (safe.none { it.contains(player) }) fight.hurt(player, 34f, magic = true, reach = BossDefense.Reach.SKY)
         }
         Vfx.shockwave(world, Vfx.Style.HADES, center, fight.safeRadius.toFloat(), 22, 6f)
         calls.roomShake(center, 7f)
@@ -985,6 +1012,7 @@ class HadesAttacks(private val fight: HadesFight) {
     private fun hermesHurt(ghost: HermesEntity, player: ServerPlayerEntity, base: Float) {
         if (fight.inCutscene) return
         if (!fight.isParticipant(player) || player.entityWorld !== world) return
+        if (!fight.reaches(player, BossDefense.Reach.BODY)) return
         player.damage(world, world.damageSources.mobAttack(ghost), fight.scaledDamage(base))
     }
 
@@ -1156,7 +1184,7 @@ class HadesAttacks(private val fight: HadesFight) {
                 val drop = iterator.next()
                 val left = drop.ring.remaining
                 if (left <= 0) {
-                    for (player in drop.ring.hits(fight.targets())) fight.hurt(player, 12f, magic = true)
+                    for (player in drop.ring.hits(fight.targets())) fight.hurt(player, 12f, magic = true, reach = BossDefense.Reach.SKY)
                     Vfx.pillar(world, Vfx.Style.HADES, drop.ring.center, H.HELLFIRE_RADIUS * 0.8f, 6f, 14)
                     drop.bolt?.discard()
                     iterator.remove()
@@ -1259,7 +1287,8 @@ class HadesAttacks(private val fight: HadesFight) {
         var anyone = false
         for (player in fight.targets()) {
             if (player.uuid !in spots || player.uuid in saved) continue
-            fight.hurt(player, 24f, magic = true)
+            // Wer seinen goldenen Kreis nicht erreicht, wird gerichtet, auch in der Luft (saalweites Urteil, SKY).
+            fight.hurt(player, 24f, magic = true, reach = BossDefense.Reach.SKY)
             Vfx.nova(world, Vfx.Style.HADES, player.entityPos.add(0.0, 1.0, 0.0), 3f, 12)
             anyone = true
         }
@@ -1307,6 +1336,9 @@ class HadesAttacks(private val fight: HadesFight) {
 
         /** Höchstens so viele sichere Kreise beim Urteil (drei laut Plan, Zusatzkreise nur für verteilte Gruppen). */
         const val JUDGE_MAX_CIRCLES = 6
+
+        /** Konter: Bident senkrecht nach oben, Schaden vor Skalierung (PLAN 4.3). */
+        const val ANTI_AIR_DAMAGE = 18f
 
         val SWEEPS = listOf(
             Sweep(HadesPose.SWEEP, BossTimings.Hades.SWEEP_A_WINDUP, 16f),

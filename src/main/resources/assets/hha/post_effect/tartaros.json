@@ -26,9 +26,9 @@
                     { "name": "HazeColor", "type": "vec4", "value": [ 0.16, 0.2, 0.19, 1.0 ] },
                     { "name": "HazeStart", "type": "float", "value": 28.0 },
                     { "name": "HazeEnd", "type": "float", "value": 150.0 },
-                    { "name": "Shimmer", "type": "float", "value": 2.6 },
-                    { "name": "Glow", "type": "float", "value": 0.9 },
-                    { "name": "Vignette", "type": "float", "value": 0.42 }
+                    { "name": "Shimmer", "type": "float", "value": 0.7 },
+                    { "name": "Glow", "type": "float", "value": 0.3 },
+                    { "name": "Vignette", "type": "float", "value": 0.21 }
                 ]
             }
         },

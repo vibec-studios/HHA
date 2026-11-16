@@ -162,14 +162,6 @@
       }
     ]
   },
-  "music.shade": {
-    "sounds": [
-      {
-        "name": "hha:music/shade",
-        "stream": true
-      }
-    ]
-  },
   "music.hades": {
     "sounds": [
       {
@@ -343,56 +335,6 @@
       "hha:voice/de/hades_wealth"
     ]
   },
-  "voice.de.hunter_ambush": {
-    "sounds": [
-      "hha:voice/de/hunter_ambush"
-    ]
-  },
-  "voice.de.hunter_close": {
-    "sounds": [
-      "hha:voice/de/hunter_close"
-    ]
-  },
-  "voice.de.hunter_first": {
-    "sounds": [
-      "hha:voice/de/hunter_first"
-    ]
-  },
-  "voice.de.hunter_last": {
-    "sounds": [
-      "hha:voice/de/hunter_last"
-    ]
-  },
-  "voice.de.hunter_personal": {
-    "sounds": [
-      "hha:voice/de/hunter_personal"
-    ]
-  },
-  "voice.de.hunter_return": {
-    "sounds": [
-      "hha:voice/de/hunter_return"
-    ]
-  },
-  "voice.de.hunter_steal": {
-    "sounds": [
-      "hha:voice/de/hunter_steal"
-    ]
-  },
-  "voice.de.hunter_struck": {
-    "sounds": [
-      "hha:voice/de/hunter_struck"
-    ]
-  },
-  "voice.de.hunter_warn": {
-    "sounds": [
-      "hha:voice/de/hunter_warn"
-    ]
-  },
-  "voice.de.hunter_wrong": {
-    "sounds": [
-      "hha:voice/de/hunter_wrong"
-    ]
-  },
   "voice.de.prologue_altar": {
     "sounds": [
       "hha:voice/de/prologue_altar"
@@ -423,79 +365,9 @@
       "hha:voice/de/prologue_pull"
     ]
   },
-  "voice.de.prologue_seal": {
-    "sounds": [
-      "hha:voice/de/prologue_seal"
-    ]
-  },
   "voice.de.prologue_sender": {
     "sounds": [
       "hha:voice/de/prologue_sender"
-    ]
-  },
-  "voice.de.shade_ash": {
-    "sounds": [
-      "hha:voice/de/shade_ash"
-    ]
-  },
-  "voice.de.shade_breath": {
-    "sounds": [
-      "hha:voice/de/shade_breath"
-    ]
-  },
-  "voice.de.shade_coin": {
-    "sounds": [
-      "hha:voice/de/shade_coin"
-    ]
-  },
-  "voice.de.shade_contract": {
-    "sounds": [
-      "hha:voice/de/shade_contract"
-    ]
-  },
-  "voice.de.shade_contract_end": {
-    "sounds": [
-      "hha:voice/de/shade_contract_end"
-    ]
-  },
-  "voice.de.shade_gate": {
-    "sounds": [
-      "hha:voice/de/shade_gate"
-    ]
-  },
-  "voice.de.shade_open": {
-    "sounds": [
-      "hha:voice/de/shade_open"
-    ]
-  },
-  "voice.de.shade_snakes": {
-    "sounds": [
-      "hha:voice/de/shade_snakes"
-    ]
-  },
-  "voice.de.shade_stay": {
-    "sounds": [
-      "hha:voice/de/shade_stay"
-    ]
-  },
-  "voice.de.shade_voice": {
-    "sounds": [
-      "hha:voice/de/shade_voice"
-    ]
-  },
-  "voice.de.shade_warning": {
-    "sounds": [
-      "hha:voice/de/shade_warning"
-    ]
-  },
-  "voice.de.shade_who": {
-    "sounds": [
-      "hha:voice/de/shade_who"
-    ]
-  },
-  "voice.de.shade_wings": {
-    "sounds": [
-      "hha:voice/de/shade_wings"
     ]
   },
   "voice.de.zeus_breath": {
@@ -698,56 +570,6 @@
       "hha:voice/en/hades_wealth"
     ]
   },
-  "voice.en.hunter_ambush": {
-    "sounds": [
-      "hha:voice/en/hunter_ambush"
-    ]
-  },
-  "voice.en.hunter_close": {
-    "sounds": [
-      "hha:voice/en/hunter_close"
-    ]
-  },
-  "voice.en.hunter_first": {
-    "sounds": [
-      "hha:voice/en/hunter_first"
-    ]
-  },
-  "voice.en.hunter_last": {
-    "sounds": [
-      "hha:voice/en/hunter_last"
-    ]
-  },
-  "voice.en.hunter_personal": {
-    "sounds": [
-      "hha:voice/en/hunter_personal"
-    ]
-  },
-  "voice.en.hunter_return": {
-    "sounds": [
-      "hha:voice/en/hunter_return"
-    ]
-  },
-  "voice.en.hunter_steal": {
-    "sounds": [
-      "hha:voice/en/hunter_steal"
-    ]
-  },
-  "voice.en.hunter_struck": {
-    "sounds": [
-      "hha:voice/en/hunter_struck"
-    ]
-  },
-  "voice.en.hunter_warn": {
-    "sounds": [
-      "hha:voice/en/hunter_warn"
-    ]
-  },
-  "voice.en.hunter_wrong": {
-    "sounds": [
-      "hha:voice/en/hunter_wrong"
-    ]
-  },
   "voice.en.prologue_altar": {
     "sounds": [
       "hha:voice/en/prologue_altar"
@@ -778,79 +600,9 @@
       "hha:voice/en/prologue_pull"
     ]
   },
-  "voice.en.prologue_seal": {
-    "sounds": [
-      "hha:voice/en/prologue_seal"
-    ]
-  },
   "voice.en.prologue_sender": {
     "sounds": [
       "hha:voice/en/prologue_sender"
-    ]
-  },
-  "voice.en.shade_ash": {
-    "sounds": [
-      "hha:voice/en/shade_ash"
-    ]
-  },
-  "voice.en.shade_breath": {
-    "sounds": [
-      "hha:voice/en/shade_breath"
-    ]
-  },
-  "voice.en.shade_coin": {
-    "sounds": [
-      "hha:voice/en/shade_coin"
-    ]
-  },
-  "voice.en.shade_contract": {
-    "sounds": [
-      "hha:voice/en/shade_contract"
-    ]
-  },
-  "voice.en.shade_contract_end": {
-    "sounds": [
-      "hha:voice/en/shade_contract_end"
-    ]
-  },
-  "voice.en.shade_gate": {
-    "sounds": [
-      "hha:voice/en/shade_gate"
-    ]
-  },
-  "voice.en.shade_open": {
-    "sounds": [
-      "hha:voice/en/shade_open"
-    ]
-  },
-  "voice.en.shade_snakes": {
-    "sounds": [
-      "hha:voice/en/shade_snakes"
-    ]
-  },
-  "voice.en.shade_stay": {
-    "sounds": [
-      "hha:voice/en/shade_stay"
-    ]
-  },
-  "voice.en.shade_voice": {
-    "sounds": [
-      "hha:voice/en/shade_voice"
-    ]
-  },
-  "voice.en.shade_warning": {
-    "sounds": [
-      "hha:voice/en/shade_warning"
-    ]
-  },
-  "voice.en.shade_who": {
-    "sounds": [
-      "hha:voice/en/shade_who"
-    ]
-  },
-  "voice.en.shade_wings": {
-    "sounds": [
-      "hha:voice/en/shade_wings"
     ]
   },
   "voice.en.zeus_breath": {
@@ -886,6 +638,163 @@
   "voice.en.zeus_yes_father": {
     "sounds": [
       "hha:voice/en/zeus_yes_father"
+    ]
+  },
+  "olympus_portal_hum": {
+    "subtitle": "subtitles.hha.olympus_portal_hum",
+    "sounds": [
+      {
+        "name": "hha:boss/portal_hum",
+        "pitch": 1.25
+      }
+    ]
+  },
+  "olympus_portal_enter": {
+    "subtitle": "subtitles.hha.olympus_portal_enter",
+    "sounds": [
+      {
+        "name": "hha:boss/portal_enter",
+        "pitch": 1.2
+      }
+    ]
+  },
+  "boss.thunder_call": {
+    "subtitle": "subtitles.hha.boss.thunder_call",
+    "sounds": [
+      {
+        "name": "hha:boss/thunder",
+        "pitch": 1.15
+      }
+    ]
+  },
+  "boss.anvil": {
+    "subtitle": "subtitles.hha.boss.anvil",
+    "sounds": [
+      {
+        "name": "hha:boss/impact",
+        "pitch": 1.3
+      }
+    ]
+  },
+  "boss.forge": {
+    "subtitle": "subtitles.hha.boss.forge",
+    "sounds": [
+      {
+        "name": "hha:boss/charge",
+        "pitch": 0.8
+      }
+    ]
+  },
+  "boss.command": {
+    "subtitle": "subtitles.hha.boss.command",
+    "sounds": [
+      {
+        "name": "hha:boss/roar",
+        "pitch": 1.1
+      }
+    ]
+  },
+  "boss.shield": {
+    "subtitle": "subtitles.hha.boss.shield",
+    "sounds": [
+      {
+        "name": "hha:boss/deflect",
+        "pitch": 0.8
+      }
+    ]
+  },
+  "boss.torch": {
+    "subtitle": "subtitles.hha.boss.torch",
+    "sounds": [
+      {
+        "name": "hha:boss/whoosh",
+        "pitch": 0.85
+      }
+    ]
+  },
+  "boss.howl": {
+    "subtitle": "subtitles.hha.boss.howl",
+    "sounds": [
+      {
+        "name": "hha:boss/roar",
+        "pitch": 1.45
+      }
+    ]
+  },
+  "boss.key": {
+    "subtitle": "subtitles.hha.boss.key",
+    "sounds": [
+      {
+        "name": "hha:boss/chime",
+        "pitch": 0.7
+      }
+    ]
+  },
+  "mob.kurete_clash": {
+    "subtitle": "subtitles.hha.mob.kurete_clash",
+    "sounds": [
+      {
+        "name": "hha:boss/deflect",
+        "pitch": 1.3
+      }
+    ]
+  },
+  "mob.griffin_cry": {
+    "subtitle": "subtitles.hha.mob.griffin_cry",
+    "sounds": [
+      {
+        "name": "hha:boss/hiss",
+        "pitch": 1.4
+      }
+    ]
+  },
+  "mob.automaton_wake": {
+    "subtitle": "subtitles.hha.mob.automaton_wake",
+    "sounds": [
+      {
+        "name": "hha:boss/charge",
+        "pitch": 1.3
+      }
+    ]
+  },
+  "music.olympus": {
+    "sounds": [
+      {
+        "name": "hha:music/messenger",
+        "stream": true
+      }
+    ]
+  },
+  "music.hekate": {
+    "sounds": [
+      {
+        "name": "hha:music/guide",
+        "stream": true
+      }
+    ]
+  },
+  "music.brontes": {
+    "sounds": [
+      {
+        "name": "hha:music/hades",
+        "stream": true
+      }
+    ]
+  },
+  "music.kratos": {
+    "sounds": [
+      {
+        "name": "hha:music/thief",
+        "stream": true
+      }
+    ]
+  },
+  "music.zeus": {
+    "sounds": [
+      {
+        "name": "hha:music/finale",
+        "stream": true
+      }
     ]
   }
 }

@@ -41,6 +41,11 @@ object Cine {
     const val SPEAKER_HADES = 4
     const val SPEAKER_KRONOS = 5
 
+    /** Neue Bosse des Olymp (sprechen vorerst nur als Text mit Stimm-Lauten, PLAN 14 Entscheidung 4). */
+    const val SPEAKER_HEKATE = 6
+    const val SPEAKER_BRONTES = 7
+    const val SPEAKER_KRATOS = 8
+
     /** Wer gerade in einer Cutscene steckt. Nur dann darf er sie überspringen. */
     private val playing = HashSet<UUID>()
 

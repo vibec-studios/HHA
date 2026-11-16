@@ -63,6 +63,12 @@ object HhaClientCommands {
                         }
                     )
                     .then(
+                        ClientCommandManager.literal("menu").executes {
+                            dev.henny.hha.client.gui.GuiClient.openNextTick = true
+                            1
+                        }
+                    )
+                    .then(
                         ClientCommandManager.literal("reset").executes { ctx ->
                             HhaClientConfig.reset()
                             ctx.source.sendFeedback(Text.translatable("hha.clientcmd.reset"))

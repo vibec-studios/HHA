@@ -91,8 +91,21 @@ object TartarusPlans {
         Pair(Math.round(cos(a) * PILLAR_RING).toInt(), Math.round(sin(a) * PILLAR_RING).toInt())
     }
 
-    /** Welche Strafstätte an dieser Stelle steht: 0 Sisyphos, 1 Ixion, 2 Tantalos. */
+    /**
+     * Alte Streuformel: welche Strafstätte an dieser Stelle steht (0 Sisyphos, 1 Ixion, 2 Tantalos). Gilt nur noch für
+     * Bauwerke alter Welten, die ihre Variante nicht gespeichert haben (siehe [TartarusPiece.siteVariant]).
+     */
     fun siteVariant(o: BlockPos): Int = Math.floorMod(o.x / 16 * 31 + o.z / 16 * 17, 3)
+
+    /** Rasterzelle der Strafstätten in Chunks, wie `spacing` in `structure_set/punishment_sites.json`. */
+    const val SITE_CELL = 22
+
+    /**
+     * Variante neuer Strafstätten (Überarbeitung 2, PLAN 5.7) aus der Rasterzelle ihres Start-Chunks:
+     * `floorMod(cellX + 2 · cellZ, 3)`. So sind Nachbarn in Ost-West- und Nord-Süd-Richtung immer verschieden.
+     */
+    fun cellVariant(chunkX: Int, chunkZ: Int): Int =
+        Math.floorMod(Math.floorDiv(chunkX, SITE_CELL) + 2 * Math.floorDiv(chunkZ, SITE_CELL), 3)
 
     // --- Sisyphos: Werte für den Wächterkampf ------------------------------------------------------------
 
@@ -129,12 +142,16 @@ object TartarusPlans {
 
     private fun stele(story: Int): BlockState = HhaBlocks.STELE.defaultState.with(SteleBlock.STORY, story)
 
-    fun draw(c: BlockCanvas, kind: TartarusKind, center: BlockPos) {
+    /**
+     * Zeichnet ein Bauwerk. [variant] ist die gespeicherte Variante einer Strafstätte ([TartarusPiece.siteVariant]);
+     * ohne Angabe (Prüflauf, alte Bauwerke) gilt die alte Streuformel [siteVariant].
+     */
+    fun draw(c: BlockCanvas, kind: TartarusKind, center: BlockPos, variant: Int = -1) {
         when (kind) {
             TartarusKind.PALACE -> PalacePlan.draw(c, center)
             TartarusKind.FORTRESS -> fortress(c, center)
             TartarusKind.PRISON -> prison(c, center)
-            TartarusKind.PUNISHMENT -> when (siteVariant(center)) {
+            TartarusKind.PUNISHMENT -> when (if (variant in 0..2) variant else siteVariant(center)) {
                 0 -> sisyphus(c, center)
                 1 -> ixion(c, center)
                 else -> tantalus(c, center)

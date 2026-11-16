@@ -34,7 +34,9 @@ object HermesPose {
     const val ASCEND = 9
     const val SNAP = 10
     const val FALL = 11
-    const val LETTER = 12
+
+    /** Hält den zweiten Brief (Absender: Hades) vor sich, bevor er ihn zuwirft. */
+    const val MESSAGE = 12
 
     /** Geduckt vor dem Kurierstoß; danach [DASH]. */
     const val DASH_WINDUP = 13
@@ -57,10 +59,10 @@ object HermesPose {
     /** Stage IV: Sturzflug. */
     const val DIVE = 19
 
-    /** Schatten: tritt aus der Rauchsäule und schlägt. */
+    /** Entfallen (Rauchschritt des früheren Schattens); Wert bleibt belegt, das Modell zeigt die Grundhaltung. */
     const val SMOKE = 20
 
-    /** Schatten: schnippt den Obolus. */
+    /** Entfallen (Münzwurf des früheren Schattens); Wert bleibt belegt. */
     const val COIN = 21
 }
 
@@ -133,7 +135,10 @@ class HermesEntity(type: EntityType<out HermesEntity>, world: World) : PuppetEnt
         get() = dataTracker.get(VULNERABLE)
         set(value) = dataTracker.set(VULNERABLE, value)
 
-    /** Der Schatten des Boten aus der Hades-Halle: gleiches Skelett, verdorbene Textur und grünes Licht. */
+    /**
+     * Hermes im Dienst des Hades (Geist im dritten Kampfabschnitt von Hades, `HadesFight`): grün getöntes Trugbild mit
+     * grünem Licht. Seit Überarbeitung 2 ohne eigene Textur und ohne eigene Teile.
+     */
     var corrupted: Boolean
         get() = dataTracker.get(CORRUPTED)
         set(value) = dataTracker.set(CORRUPTED, value)
@@ -170,7 +175,7 @@ class HermesEntity(type: EntityType<out HermesEntity>, world: World) : PuppetEnt
     override fun damage(world: ServerWorld, source: DamageSource, amount: Float): Boolean {
         if (guide) {
             if (dev.henny.hha.logic.boss.HadesFights.of(world)?.onHermesStruck(this) != true) {
-                dev.henny.hha.logic.world.TartarosHunter.onStruck(this, world)
+                dev.henny.hha.logic.world.TartarosGuide.onStruck(this, world)
             }
             return false
         }
@@ -180,7 +185,10 @@ class HermesEntity(type: EntityType<out HermesEntity>, world: World) : PuppetEnt
         }
         val allowed = fight.onBossDamaged(this, source, amount)
         if (allowed <= 0f) return false
-        return super.damage(world, source, allowed)
+        val hurt = super.damage(world, source, allowed)
+        // Erst ein angenommener Treffer zählt für die Smash-Folge der Abwehr (PLAN 4.3).
+        if (hurt) fight.onBossLanded(this, source)
+        return hurt
     }
 
     companion object {
@@ -203,7 +211,7 @@ class HermesEntity(type: EntityType<out HermesEntity>, world: World) : PuppetEnt
 /**
  * Eine Caduceus-Schlange mit langem Körper; den Körper rechnet der Client aus der Flugbahn.
  *
- * Variante 0 (golden) und 1 (silberblau) gehören zu Hermes, mit [corrupted] zum Schatten. Seit Plan 4.1 sind sie
+ * Variante 0 (golden) und 1 (silberblau) gehören zu Hermes. Seit Plan 4.1 sind sie
  * **eine Attacke** („Die Zwillinge"), kein Gegner: keine Lebensleiste, keine Trefferzonen, nicht anvisierbar, kein
  * Gift. Die Kampflogik bewegt nur den Kopf; Treffer prüft die Ansage der Attacke.
  */
@@ -216,7 +224,6 @@ class SerpentEntity(type: EntityType<out SerpentEntity>, world: World) : PuppetE
         builder.add(VARIANT, 0)
         builder.add(BITING, false)
         builder.add(GIRTH, 1f)
-        builder.add(CORRUPTED, false)
     }
 
     /** Dicke und Länge relativ zur Grundschlange. */
@@ -231,11 +238,6 @@ class SerpentEntity(type: EntityType<out SerpentEntity>, world: World) : PuppetE
     var biting: Boolean
         get() = dataTracker.get(BITING)
         set(value) = dataTracker.set(BITING, value)
-
-    /** Schlange am Stab des Schattens: verkohlte Schuppen und grünes Licht statt Gold und Silber. */
-    var corrupted: Boolean
-        get() = dataTracker.get(CORRUPTED)
-        set(value) = dataTracker.set(CORRUPTED, value)
 
     /** Glieder-Positionen (aktuell und Vortick), nur auf dem Client für den Renderer. */
     val body = ArrayList<Vec3d>()
@@ -292,7 +294,6 @@ class SerpentEntity(type: EntityType<out SerpentEntity>, world: World) : PuppetE
 
         private val VARIANT: TrackedData<Int> = DataTracker.registerData(SerpentEntity::class.java, TrackedDataHandlerRegistry.INTEGER)
         private val BITING: TrackedData<Boolean> = DataTracker.registerData(SerpentEntity::class.java, TrackedDataHandlerRegistry.BOOLEAN)
-        private val CORRUPTED: TrackedData<Boolean> = DataTracker.registerData(SerpentEntity::class.java, TrackedDataHandlerRegistry.BOOLEAN)
 
         fun attributes(): DefaultAttributeContainer.Builder = MobEntity.createMobAttributes()
             .add(EntityAttributes.MAX_HEALTH, 120.0)

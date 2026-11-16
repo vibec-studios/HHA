@@ -1,6 +1,7 @@
 package dev.henny.hha.client.model
 
 import dev.henny.hha.entity.miniboss.TantalusAction
+import dev.henny.hha.logic.boss.BossDefense
 import dev.henny.hha.logic.boss.BossTimings
 import net.minecraft.client.model.ModelPart
 import kotlin.math.PI
@@ -120,6 +121,7 @@ class TantalusModel(root: ModelPart) : GuardianModel(root) {
             TantalusAction.DRINK -> drink(out, t)
             TantalusAction.PARCHED -> parched(out, t)
             TantalusAction.RAGE -> rage(out, t)
+            BossDefense.ANTI_AIR -> antiAir(out, t)
             else -> snap(out, age)
         }
     }
@@ -156,6 +158,22 @@ class TantalusModel(root: ModelPart) : GuardianModel(root) {
         val last = hits[T.THRUST_COUNT - 1]
         mix(out, TantalusPoses.THRUST_RECOVER, step(t, last + 3f, last + 12f))
         mix(out, TantalusPoses.IDLE, step(t, T.THRUST_END - 6f, T.THRUST_END.toFloat()))
+    }
+
+    /**
+     * Konter (Überarbeitung 2, PLAN 4.3): der Dreizack senkrecht nach oben wie beim Geysir (GEYSER_RAISE), ein harter Stoß
+     * in die Luft beim Ende der Ansage, Kopf im Nacken.
+     */
+    private fun antiAir(out: FloatArray, t: Float) {
+        val g = BossTimings.Guardian
+        val raise = step(t, 0f, g.ANTI_AIR_RAISE.toFloat())
+        mix(out, TantalusPoses.GEYSER_RAISE, raise)
+        val jab = hold(t - (g.ANTI_AIR_HIT - 1f), 2f, 4f, 10f)
+        out[TantalusPoses.ARM_R * 6 + 4] -= 4f * jab
+        out[TantalusPoses.CHEST * 6] -= 0.15f * jab
+        out[TantalusPoses.HEAD * 6] -= 0.25f * raise
+        jolt = jab
+        mix(out, TantalusPoses.IDLE, step(t, g.ANTI_AIR_END - 8f, g.ANTI_AIR_END.toFloat()))
     }
 
     /** GEYSER: Dreizack senkrecht nach oben, drei kurze Stöße in die Luft (die Rufe), Kopf im Nacken. */

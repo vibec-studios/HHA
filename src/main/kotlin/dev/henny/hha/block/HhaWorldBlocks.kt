@@ -2,9 +2,9 @@ package dev.henny.hha.block
 
 import com.mojang.serialization.MapCodec
 import dev.henny.hha.HhaBlocks
-import dev.henny.hha.logic.boss.HermesFights
 import dev.henny.hha.logic.world.HadesGate
 import dev.henny.hha.logic.world.OlympusPuzzle
+import dev.henny.hha.world.olymp.OlympusLayout
 import net.minecraft.block.AbstractFireBlock
 import net.minecraft.block.Block
 import net.minecraft.block.BlockState
@@ -61,31 +61,7 @@ class GreenFireBlock(settings: Settings) : AbstractFireBlock(settings, 3f) {
     }
 }
 
-/** Das Tor zwischen dem Reich unter der Erde und dem Tartaros; steht immer quer zur z-Achse. */
-class HadesPortalBlock(settings: Settings) : Block(settings), Portal {
-
-    override fun getOutlineShape(state: BlockState, world: BlockView, pos: BlockPos, context: ShapeContext): VoxelShape = SHAPE
-
-    override fun onEntityCollision(state: BlockState, world: World, pos: BlockPos, entity: Entity, handler: EntityCollisionHandler, bl: Boolean) {
-        if (entity.canUsePortals(false)) {
-            entity.tryUsePortal(this, pos)
-            if (entity is ServerPlayerEntity) HadesGate.touching(entity, pos)
-        }
-    }
-
-    override fun getPortalDelay(world: ServerWorld, entity: Entity): Int = if (entity is PlayerEntity) 30 else 0
-
-    override fun createTeleportTarget(world: ServerWorld, entity: Entity, pos: BlockPos): TeleportTarget? = HadesGate.target(world, entity, pos)
-
-    /** Läuft nur auf dem Client und meldet das Tor beim Effekt-System an: Dort entsteht der Sog. */
-    override fun randomDisplayTick(state: BlockState, world: World, pos: BlockPos, random: Random) {
-        dev.henny.hha.client.vfx.PortalVfx.note(world, pos)
-    }
-
-    private companion object {
-        val SHAPE: VoxelShape = createCuboidShape(0.0, 0.0, 6.0, 16.0, 16.0, 10.0)
-    }
-}
+// HadesPortalBlock und OlympusPortalBlock stehen seit Überarbeitung 2 in PortalBlocks.kt.
 
 /** Dekoblock mit Inschrift: Rechtsklick zeigt einen Text. */
 class InscribedBlock(settings: Settings, private val key: String) : Block(settings) {
@@ -97,7 +73,8 @@ class InscribedBlock(settings: Settings, private val key: String) : Block(settin
 
 /**
  * Opferstein im Olymp-Tempel. Die vier Steine stehen in den vier Himmelsrichtungen; der Tempel will die Gaben in der
- * Reihenfolge von Hermes' erstem Lebenstag. Die Logik steht in [OlympusPuzzle].
+ * Reihenfolge von Hermes' erstem Lebenstag. Die Logik steht in [OlympusPuzzle]. Seit Überarbeitung 2 gilt das Rätsel
+ * nur noch im Olymp; alte Opfersteine in der Oberwelt verweisen auf das Wolkentor (`hha.olympus.moved`).
  */
 class OfferingPedestalBlock(settings: Settings) : Block(settings) {
 
@@ -110,14 +87,23 @@ class OfferingPedestalBlock(settings: Settings) : Block(settings) {
     }
 
     override fun onUse(state: BlockState, world: World, pos: BlockPos, player: PlayerEntity, hit: BlockHitResult): ActionResult {
-        if (world is ServerWorld) OlympusPuzzle.riddle(state, player)
+        if (world is ServerWorld) {
+            if (world.registryKey == OlympusLayout.WORLD) OlympusPuzzle.riddle(state, player) else moved(player)
+        }
         return ActionResult.SUCCESS
     }
 
     override fun onUseWithItem(stack: ItemStack, state: BlockState, world: World, pos: BlockPos, player: PlayerEntity, hand: Hand, hit: BlockHitResult): ActionResult {
         if (stack.isEmpty) return ActionResult.PASS_TO_DEFAULT_BLOCK_ACTION
-        if (world is ServerWorld && player is ServerPlayerEntity) OlympusPuzzle.offer(world, pos, state, stack, player)
+        if (world is ServerWorld && player is ServerPlayerEntity) {
+            if (world.registryKey == OlympusLayout.WORLD) OlympusPuzzle.offer(world, pos, state, stack, player) else moved(player)
+        }
         return ActionResult.SUCCESS
+    }
+
+    /** Der Tempel der Oberwelt ist verlassen: Hermes wartet jetzt im Olymp hinter dem Wolkentor. */
+    private fun moved(player: PlayerEntity) {
+        player.sendMessage(Text.translatable("hha.olympus.moved").formatted(Formatting.GOLD, Formatting.ITALIC), false)
     }
 
     companion object {
@@ -126,28 +112,31 @@ class OfferingPedestalBlock(settings: Settings) : Block(settings) {
     }
 }
 
-/** Altar im Reich des Hades. Der Fährmann nimmt nur eine Währung: den Obolus, eine einzelne Goldmünze. */
+/**
+ * Altar in der alten Hades-Halle der Oberwelt. Seit Überarbeitung 2 (PLAN 3) ist der Fährmann fort: Das Tor steht jetzt
+ * am Dreiweg im Olymp. Schon offene Tore alter Welten führen weiter in den Tartaros.
+ */
 class HadesAltarBlock(settings: Settings) : Block(settings) {
 
     override fun onUse(state: BlockState, world: World, pos: BlockPos, player: PlayerEntity, hit: BlockHitResult): ActionResult {
-        if (!world.isClient) player.sendMessage(Text.translatable("hha.hades.altar").formatted(Formatting.GREEN, Formatting.ITALIC), false)
+        if (!world.isClient) player.sendMessage(Text.translatable("hha.hades.altar.moved").formatted(Formatting.GREEN, Formatting.ITALIC), false)
         return ActionResult.SUCCESS
     }
 
     override fun onUseWithItem(stack: ItemStack, state: BlockState, world: World, pos: BlockPos, player: PlayerEntity, hand: Hand, hit: BlockHitResult): ActionResult {
         if (!stack.isOf(Items.GOLD_NUGGET)) return ActionResult.PASS_TO_DEFAULT_BLOCK_ACTION
         if (world is ServerWorld && player is ServerPlayerEntity) {
-            if (HadesGate.isOpen(world, HadesGate.centerFromAltar(pos))) {
-                player.sendMessage(Text.translatable("hha.hades.already_open").formatted(Formatting.GREEN), true)
-            } else if (HermesFights.startShade(player, HadesGate.centerFromAltar(pos)) && !player.isCreative) {
-                stack.decrement(1)
-            }
+            val key = if (HadesGate.isOpen(world, HadesGate.centerFromAltar(pos))) "hha.hades.already_open" else "hha.hades.altar.moved"
+            player.sendMessage(Text.translatable(key).formatted(Formatting.GREEN), true)
         }
         return ActionResult.SUCCESS
     }
 }
 
-/** Steinerne Tafel an den Bauwerken des Tartaros: Rechtsklick erzählt, wer hier büßt. */
+/**
+ * Steinerne Tafel an den Bauwerken: Rechtsklick erzählt, wer hier büßt bzw. wacht. [STORY] 0–5 Tartaros
+ * (`hha.tartaros.stele.<n>`), 6–15 die Inseln des Olymp (`hha.olympus.stele.<n>`, Belegung durch P04).
+ */
 class SteleBlock(settings: Settings) : Block(settings) {
 
     init {
@@ -163,12 +152,19 @@ class SteleBlock(settings: Settings) : Block(settings) {
     override fun getCollisionShape(state: BlockState, world: BlockView, pos: BlockPos, context: ShapeContext): VoxelShape = SHAPE
 
     override fun onUse(state: BlockState, world: World, pos: BlockPos, player: PlayerEntity, hit: BlockHitResult): ActionResult {
-        if (!world.isClient) player.sendMessage(Text.translatable("hha.tartaros.stele.${state.get(STORY)}").formatted(Formatting.GRAY, Formatting.ITALIC), false)
+        if (!world.isClient) {
+            val story = state.get(STORY)
+            val key = if (story <= LAST_TARTAROS) "hha.tartaros.stele.$story" else "hha.olympus.stele.$story"
+            player.sendMessage(Text.translatable(key).formatted(Formatting.GRAY, Formatting.ITALIC), false)
+        }
         return ActionResult.SUCCESS
     }
 
     companion object {
-        val STORY: IntProperty = IntProperty.of("story", 0, 5)
+        val STORY: IntProperty = IntProperty.of("story", 0, 15)
+
+        /** 0–5 gehören dem Tartaros, ab 6 dem Olymp. */
+        const val LAST_TARTAROS = 5
         private val SHAPE: VoxelShape = createCuboidShape(3.0, 0.0, 3.0, 13.0, 16.0, 13.0)
     }
 }

@@ -1,7 +1,11 @@
 {
   "variants": {
-    "": {
+    "axis=x": {
       "model": "hha:block/hades_portal"
+    },
+    "axis=z": {
+      "model": "hha:block/hades_portal",
+      "y": 90
     }
   }
 }

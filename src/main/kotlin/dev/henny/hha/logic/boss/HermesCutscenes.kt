@@ -1,6 +1,7 @@
 package dev.henny.hha.logic.boss
 
 import dev.henny.hha.HhaEntities
+import dev.henny.hha.HhaItems
 import dev.henny.hha.HhaParticles
 import dev.henny.hha.HhaSounds
 import dev.henny.hha.entity.boss.DivineParcelEntity
@@ -8,10 +9,15 @@ import dev.henny.hha.entity.boss.HermesEntity
 import dev.henny.hha.entity.boss.HermesPose
 import dev.henny.hha.logic.Fx
 import dev.henny.hha.logic.Vfx
+import dev.henny.hha.logic.world.OlympusPath
 import net.minecraft.entity.SpawnReason
 import net.minecraft.entity.effect.StatusEffectInstance
 import net.minecraft.entity.effect.StatusEffects
 import net.minecraft.entity.player.PlayerEntity
+import net.minecraft.item.ItemStack
+import net.minecraft.particle.ItemStackParticleEffect
+import net.minecraft.particle.ParticleTypes
+import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.sound.SoundCategory
 import net.minecraft.sound.SoundEvent
 import net.minecraft.sound.SoundEvents
@@ -28,6 +34,13 @@ class HermesCutscenes(private val fight: HermesFight) {
     private companion object {
         /** So lange kehren die Schlangen am Ende des Abstiegs in den Stab zurück. */
         const val RETURN_TICKS = 14
+
+        /** Ungeöffnet öffnet sich das Götterpaket nach so vielen Ticks selbst (5 Minuten). */
+        const val PARCEL_TIMEOUT = 20 * 300
+
+        /** Der zugeworfene Brief fliegt so lange, mit so hohem Bogen. */
+        const val TOSS_FLIGHT = 16
+        const val TOSS_ARC = 1.6
     }
 
     private val world get() = fight.world
@@ -90,13 +103,14 @@ class HermesCutscenes(private val fight: HermesFight) {
         Cine.fade(everyone, 0x000000, 1.0, 0.0, 20)
         fight.setMusic(null)
 
-        // Der Brief verbrennt am Boden, der Himmel öffnet sich.
+        // Die Gaben verglühen auf dem Altar, der Himmel öffnet sich.
         Cine.orbit(everyone, origin, 7.0, 2.4, 30.0, 95.0, 110, 62.0, 56.0, summoner, 1.2, 4.5, 1.6)
         Vfx.flare(world, Vfx.Style.GOLD, origin.add(0.0, 1.3, 0.0), 2.4f, 18)
         Vfx.feathers(world, Vfx.Style.HEAVEN, origin.add(0.0, 1.5, 0.0), 24, 1.4f, 90)
         sound(HhaSounds.CHIME, 2f, 0.8f, origin)
         wait(10)
-        say(Cine.SPEAKER_NARRATOR, if (fight.mode == HermesFight.Mode.TEMPLE) "prologue.altar" else "prologue.seal", 56)
+        // Der Test am Standort (außerhalb des Olymp) hat keinen Altar: dort fehlt die erste Zeile.
+        if (fight.mode == HermesFight.Mode.TEMPLE) say(Cine.SPEAKER_NARRATOR, "prologue.altar", 56)
         Vfx.rift(world, Vfx.Style.GOLD, origin.add(0.0, 26.0, 0.0), Vec3d(0.0, -1.0, 0.0), 13f, 120)
         Vfx.skyMood(world, Vfx.Style.STORM, origin, 1f, 130, 64f)
         Vfx.clouds(world, Vfx.Style.STORM, origin, 60f, 30f, 150)
@@ -466,77 +480,39 @@ class HermesCutscenes(private val fight: HermesFight) {
         faceBossToPlayers()
         Cine.orbit(everyone, boss.entityPos, 4.0, 1.0, 100.0, 130.0, 170, 52.0, 48.0, boss, 2.1)
         say(Cine.SPEAKER_HERMES, "finale.delivered", 84)
-        // Der zweite Brief: Es wird kurz kalt auf dem Forum.
-        boss.pose = HermesPose.LETTER
-        val letter = letterPosition()
-        var smoldering = true
-        fight.runTask(sequence {
-            var tick = 0
-            while (smoldering) {
-                if (tick % 2 == 0) Fx.spawn(world, HhaParticles.SOUL_MOTE, letter.x, letter.y + 0.2, letter.z, 1, 0.12, 0.08, 0.12, 0.01)
-                if (tick % 5 == 0) Fx.spawn(world, HhaParticles.SOUL_FLAME, letter.x, letter.y - 0.1, letter.z, 1, 0.1, 0.05, 0.1, 0.005)
-                if (tick % 9 == 0) Fx.spawn(world, HhaParticles.SOOT, letter.x, letter.y + 0.3, letter.z, 1, 0.1, 0.1, 0.1, 0.005)
-                tick++
-                yield(Unit)
-            }
-        })
-        Vfx.flare(world, Vfx.Style.SOUL, letter, 1.1f, 12)
-        Vfx.skyMood(world, Vfx.Style.HELL, center, 0.55f, 190, 64f)
-        sound(SoundEvents.ENTITY_WARDEN_HEARTBEAT, 2.5f, 0.7f, letter)
-        sound(HhaSounds.SOUL, 1.4f, 0.55f, letter)
-        val toward = fight.targets().firstOrNull()?.entityPos?.subtract(boss.entityPos)?.let { Vec3d(it.x, 0.0, it.z).normalize() } ?: Vec3d(0.0, 0.0, 1.0)
-        val eye = letter.add(toward.multiply(2.8)).add(0.2, 0.1, 0.0)
-        Cine.camera(everyone, eye, letter.add(toward.multiply(1.9)).add(0.2, 0.05, 0.0), letter, letter, 150, 44.0, 34.0)
-        say(Cine.SPEAKER_HERMES, "finale.second_letter", 74)
-        sound(SoundEvents.ENTITY_WARDEN_HEARTBEAT, 3f, 0.6f, letter)
-        Vfx.rune(world, Vfx.Style.HELL, boss.entityPos.add(0.0, 0.06, 0.0), 2.4f, 70)
-        say(Cine.SPEAKER_HERMES, "finale.hades_seal", 58)
 
-        // Er lässt ihn in der Hand verglühen und tut, als wäre nichts gewesen.
-        smoldering = false
-        boss.pose = HermesPose.TAUNT
-        Vfx.flare(world, Vfx.Style.SOUL, letter, 1.8f, 10)
-        Fx.spawn(world, HhaParticles.SOUL_FLAME, letter.x, letter.y, letter.z, 12, 0.18, 0.2, 0.18, 0.02)
-        Fx.spawn(world, HhaParticles.EMBER_SPARK, letter.x, letter.y, letter.z, 8, 0.15, 0.2, 0.15, 0.03)
-        Fx.spawn(world, HhaParticles.SOOT, letter.x, letter.y + 0.2, letter.z, 6, 0.15, 0.15, 0.15, 0.01)
-        sound(SoundEvents.BLOCK_FIRE_EXTINGUISH, 1.2f, 0.8f, letter)
-        Cine.orbit(everyone, boss.entityPos, 4.0, 1.0, 130.0, 150.0, 70, 52.0, 50.0, boss, 2.1)
-        say(Cine.SPEAKER_HERMES, "finale.another_day", 56)
-
-        // Abgang: ein Windstoß und ein paar Federn.
-        boss.pose = HermesPose.DASH
-        fight.face(boss, boss.entityPos.add(0.0, 0.0, 10.0))
-        Vfx.trail(world, Vfx.Style.GOLD, boss, 0.8f, 40)
-        sound(HhaSounds.DASH, 3f, 1.1f)
-        val leave = boss.entityPos.add(0.0, 60.0, 90.0)
-        val stay = boss.entityPos
-        glide(stay.lerp(leave, 0.5), 8, smooth = false)
-        Vfx.feathers(world, Vfx.Style.HEAVEN, stay.add(0.0, 1.5, 0.0), 40, 2f, 90)
-        boss.discard()
-        wait(30)
-
+        // Er bleibt neben dem Paket stehen, bis jemand es öffnet; der zweite Brief kommt dann (parcelOpened).
         Cine.title(everyone, "hha.hermes.title.delivered", "hha.hermes.title.delivered.sub", 70)
         Cine.end(players)
         fight.inCutscene = false
+        boss.pose = HermesPose.IDLE
         // Wer nicht öffnet, bekommt das Paket spätestens nach fünf Minuten geöffnet.
-        wait(20 * 300)
+        for (t in 0 until PARCEL_TIMEOUT) {
+            if (t % 20 == 0) faceBossToPlayers()
+            yield(Unit)
+        }
         val pending = fight.parcel
         if (pending != null && pending.openAge < 0) {
             fight.onParcelOpened(pending, fight.targets().firstOrNull() ?: return@sequence)
         }
     }
 
-    /** Öffnen: Licht, Belohnung, dann sinkt alles zurück zur Erde. */
+    /**
+     * Öffnen: Licht, Belohnung ([HermesFight.grantRewards]: Reliquie bzw. Ersatz, Federn, Apfel, Level und für jeden
+     * ohne den Schwarzen Brief), dann der zweite Brief: Hermes wirft ihn dem Öffner zu und geht. Danach sinkt alles
+     * zurück zur Erde.
+     */
     fun parcelOpened(entity: DivineParcelEntity, opener: PlayerEntity): Sequence<Unit> = sequence {
         val pos = entity.entityPos
         Vfx.pillar(world, Vfx.Style.GOLD, pos, 2.4f, 36f, 80)
-        Vfx.nova(world, Vfx.Style.GOLD, pos.add(0.0, 1.0, 0.0), 7f, 18)
-        Vfx.feathers(world, Vfx.Style.HEAVEN, pos.add(0.0, 1.6, 0.0), 50, 2f, 90)
+        Vfx.feathers(world, Vfx.Style.HEAVEN, pos.add(0.0, 1.6, 0.0), 40, 2f, 90)
         sound(HhaSounds.CHIME, 3f, 1f, pos)
         sound(SoundEvents.ITEM_TOTEM_USE, 1.2f, 1.2f, pos)
-        fight.grantRewards()
-        for (player in fight.targets()) Vfx.wings(world, Vfx.Style.HEAVEN, player, 60, 1f)
-        wait(100)
+        fight.grantRewards(pos)
+        wait(40)
+        val messenger = fight.boss
+        if (messenger != null && !messenger.isRemoved) yieldAll(blackLetter(messenger, opener))
+        wait(20)
         Cine.fade(players, 0xFFF6D8, 0.0, 1.0, 24)
         wait(26)
         val everyone = players
@@ -544,7 +520,7 @@ class HermesCutscenes(private val fight: HermesFight) {
         val scenes = everyone.associate { it.uuid to Cine.sceneOf(it.uuid) }
         fight.finish(success = true)
         Cine.fade(everyone, 0xFFF6D8, 1.0, 0.0, 30)
-        // Letzter Nachklapp, sobald alle wieder am Boden stehen.
+        // Letzter Nachklapp, sobald alle wieder am Boden stehen; dazu die Fernsäule zum nächsten Ziel des Olymp.
         val level = world
         HermesFights.after(46) {
             // Nur wer noch in dieser Welt ist und nicht schon in einer neuen Szene steckt (anderer Kampf), hört den Nachklapp.
@@ -556,11 +532,70 @@ class HermesCutscenes(private val fight: HermesFight) {
             for (player in alive) {
                 val feet = player.entityPos
                 level.playSound(null, feet.x, feet.y, feet.z, SoundEvents.ENTITY_WARDEN_HEARTBEAT, SoundCategory.HOSTILE, 1.6f, 0.55f)
-                Fx.spawn(level, HhaParticles.SOUL_MOTE, feet.x, feet.y + 0.15, feet.z, 14, 1.4, 0.05, 1.4, 0.015)
-                Fx.spawn(level, HhaParticles.SOUL_FLAME, feet.x, feet.y + 0.1, feet.z, 5, 1.1, 0.02, 1.1, 0.005)
-                Vfx.skyMood(level, Vfx.Style.HELL, feet, 0.35f, 70, 24f)
-                Vfx.shake(level, feet, 0.7f, 20, 8f)
+                Fx.spawn(level, HhaParticles.SOUL_MOTE, feet.x, feet.y + 0.15, feet.z, 8, 1.4, 0.05, 1.4, 0.015)
+                Vfx.skyMood(level, Vfx.Style.HELL, feet, 0.3f, 70, 24f)
+                OlympusPath.pointNext(player)
             }
         }
+    }
+
+    /**
+     * Der zweite Brief (Absender: Hades). Früher verglühte er in Hermes' Hand; jetzt wirft er ihn dem Öffner zu: Der
+     * Schwarze Brief ist das Pfand für Hekates Altar am Dreiweg. Das Item selbst kam schon mit dem Paket
+     * ([BossRewards.grant]); hier fliegt er sichtbar hinüber.
+     */
+    private fun blackLetter(messenger: HermesEntity, opener: PlayerEntity): Sequence<Unit> = sequence {
+        val target = (opener as? ServerPlayerEntity)?.takeIf { it.isAlive && it.entityWorld === world } ?: fight.targets().firstOrNull()
+        target?.let { fight.face(messenger, it.entityPos) }
+        messenger.pose = HermesPose.MESSAGE
+        val letter = letterPosition()
+        var smoldering = true
+        fight.runTask(sequence {
+            var tick = 0
+            while (smoldering) {
+                if (tick % 3 == 0) Fx.spawn(world, HhaParticles.SOUL_MOTE, letter.x, letter.y + 0.2, letter.z, 1, 0.12, 0.08, 0.12, 0.01)
+                if (tick % 9 == 0) Fx.spawn(world, HhaParticles.SOOT, letter.x, letter.y + 0.3, letter.z, 1, 0.1, 0.1, 0.1, 0.005)
+                tick++
+                yield(Unit)
+            }
+        })
+        Vfx.skyMood(world, Vfx.Style.HELL, center, 0.4f, 170, 64f)
+        sound(SoundEvents.ENTITY_WARDEN_HEARTBEAT, 2.5f, 0.7f, letter)
+        say(Cine.SPEAKER_HERMES, "finale.second_letter", 74)
+        sound(SoundEvents.ENTITY_WARDEN_HEARTBEAT, 3f, 0.6f, letter)
+        say(Cine.SPEAKER_HERMES, "finale.hades_seal", 58)
+
+        // Er wirft ihn zu: Der Brief segelt im Bogen hinüber.
+        smoldering = false
+        messenger.pose = HermesPose.TAUNT
+        sound(HhaSounds.WHOOSH, 1.6f, 1.3f, letter)
+        if (target != null) {
+            val item = ItemStackParticleEffect(ParticleTypes.ITEM, ItemStack(HhaItems.HADES_MAP))
+            for (k in 1..TOSS_FLIGHT) {
+                val t = k.toDouble() / TOSS_FLIGHT
+                val goal = target.eyePos.add(0.0, -0.4, 0.0)
+                val p = letter.lerp(goal, t).add(0.0, TOSS_ARC * 4.0 * t * (1.0 - t), 0.0)
+                Fx.spawn(world, item, p.x, p.y, p.z, 1, 0.0, 0.0, 0.0, 0.0)
+                if (k % 2 == 0) Fx.spawn(world, HhaParticles.SOUL_MOTE, p.x, p.y, p.z, 1, 0.05, 0.05, 0.05, 0.0)
+                yield(Unit)
+            }
+            sound(HhaSounds.CHIME, 1.6f, 0.7f, target.entityPos)
+        }
+        // Keine Kamerafahrt: Nach dem Finale haben alle wieder die Kontrolle (nur Untertitel).
+        say(Cine.SPEAKER_HERMES, "finale.another_day", 56)
+
+        // Abgang: ein Windstoß und ein paar Federn.
+        messenger.pose = HermesPose.DASH
+        fight.face(messenger, messenger.entityPos.add(0.0, 0.0, 10.0))
+        Vfx.trail(world, Vfx.Style.GOLD, messenger, 0.8f, 40)
+        sound(HhaSounds.DASH, 3f, 1.1f)
+        val stay = messenger.entityPos
+        val leave = stay.add(0.0, 60.0, 90.0)
+        for (i in 1..8) {
+            messenger.setPosition(stay.lerp(stay.lerp(leave, 0.5), i / 8.0))
+            yield(Unit)
+        }
+        Vfx.feathers(world, Vfx.Style.HEAVEN, stay.add(0.0, 1.5, 0.0), 30, 2f, 90)
+        messenger.discard()
     }
 }

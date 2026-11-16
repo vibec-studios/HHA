@@ -5,8 +5,11 @@ import net.minecraft.server.world.ServerWorld
 import net.minecraft.util.math.Vec3d
 
 /**
- * Vorschau aller 3D-Effekte für `/hha vfx <name>` — praktisch, um Partikel-/Effekt-Einstellungen zu
- * prüfen oder als Addon-Entwickler die vorhandenen Effekte anzusehen.
+ * Vorschau aller 3D-Effekte für `/hha vfx <name> [stil]` — praktisch, um Partikel-/Effekt-Einstellungen zu
+ * prüfen oder als Addon-Entwickler die vorhandenen Effekte anzusehen. Jede Art aus [Vfx.Kind] hat mindestens einen
+ * Eintrag; mit `[stil]` läuft jeder Eintrag in jedem [Vfx.Style] (auch THUNDER, MOON, CRIMSON).
+ * `telegraph_styles` legt alle Stile als Ansage-Reihe nebeneinander, mit einer goldenen sicheren Fläche in der Mitte:
+ * so lässt sich der Kontrast Gold gegen jede Gefahrfarbe auf dem eigenen Boden (Marmor, Schwarzstein) prüfen.
  */
 object VfxDemo {
 
@@ -70,6 +73,32 @@ object VfxDemo {
             Vfx.shockwave(w, Vfx.Style.AEON, front.add(flat.multiply(6.0)).add(flat.crossProduct(Vec3d(0.0, 1.0, 0.0)).multiply(7.0)), 6f, 24, 2f)
         },
         "rings" to { w, p, _, _ -> Vfx.orbitRings(w, Vfx.Style.GOLD, p, 1.25f, 80) },
+        // Überarbeitung 2: die übrigen Arten, damit jede Art einzeln prüfbar ist.
+        "trail" to { w, p, _, _ -> Vfx.trail(w, Vfx.Style.HEAVEN, p, 0.5f, 100) },
+        "flare" to { w, _, front, _ -> Vfx.flare(w, Vfx.Style.HEAVEN, front.add(0.0, 1.5, 0.0), 2.5f, 20) },
+        "falling_feather" to { w, _, front, _ -> Vfx.fallingFeather(w, Vfx.Style.HEAVEN, front.add(0.0, 4.0, 0.0), 3.5f, 120) },
+        "zeus_eyes" to { w, p, _, _ -> Vfx.zeusEyes(w, p.entityPos.add(0.0, 0.0, 60.0), 60f, 200) },
+        "far_beacon" to { _, p, _, flat ->
+            // Säule weit voraus; ohne Stil grün (Tartaros), mit Stil in dessen Palette (GOLD = Olymp-Ziel).
+            Vfx.farBeacon(p, p.entityPos.add(flat.multiply(600.0)), 200, false, Vfx.styleOverride ?: Vfx.Style.HADES)
+        },
+        "hit_shake" to { w, _, front, _ ->
+            Vfx.shockwave(w, Vfx.Style.HEAVEN, front, 6f, 20, 2f)
+            Vfx.shake(w, front, Vfx.SHAKE_HIT_MAX, 8, 32f)
+        },
+        "screen_flash" to { _, p, _, _ -> Vfx.screenFlash(p, Vfx.styleOverride ?: Vfx.Style.GOLD, Vfx.FLASH_MAX, 14) },
+        "telegraph_styles" to { w, _, front, flat ->
+            // Eine Reihe Kreise quer zum Blick: links und rechts die Gefahrstile, in der Mitte Gold (sicher).
+            val side = flat.crossProduct(Vec3d(0.0, 1.0, 0.0))
+            val styles = Vfx.Style.entries.filter { it != Vfx.Style.GOLD }
+            val start = front.add(flat.multiply(4.0)).subtract(side.multiply((styles.size - 1) * 2.6 / 2.0))
+            for ((i, s) in styles.withIndex()) {
+                val at = start.add(side.multiply(i * 2.6))
+                Vfx.telegraphRingRaw(w, s, at, 1.2f, 0f, 100, forceStyle = true)
+            }
+            Vfx.telegraphRingRaw(w, Vfx.Style.GOLD, front, 2f, 0f, 100, forceStyle = true)
+            Vfx.telegraphLineRaw(w, Vfx.Style.THUNDER, front.subtract(side.multiply(6.0)).subtract(flat.multiply(2.0)), front.add(side.multiply(6.0)).subtract(flat.multiply(2.0)), 0.8f, 100, forceStyle = true)
+        },
         "storm_clouds" to { w, p, _, _ ->
             Vfx.clouds(w, Vfx.Style.STORM, p.entityPos, 60f, 30f, 300)
             Vfx.skyMood(w, Vfx.Style.STORM, p.entityPos, 1f, 300)
@@ -103,7 +132,7 @@ object VfxDemo {
         val rotation = player.getRotationVec(1.0f)
         val flat = Vec3d(rotation.x, 0.0, rotation.z).let { if (it.lengthSquared() < 1e-4) Vec3d(0.0, 0.0, 1.0) else it.normalize() }
         val front = player.entityPos.add(flat.multiply(8.0))
-        val dir = if (name.startsWith("telegraph_") || name == "aeon") flat else rotation
+        val dir = if (name.startsWith("telegraph_") || name == "aeon" || name == "far_beacon") flat else rotation
         if (style == null) {
             action(world, player, front, dir)
             return true

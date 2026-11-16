@@ -1,0 +1,8 @@
+{
+  "parent": "minecraft:block/cube_bottom_top",
+  "textures": {
+    "top": "hha:block/boss_altar_2_top",
+    "bottom": "hha:block/boss_altar_2_side",
+    "side": "hha:block/boss_altar_2_side"
+  }
+}

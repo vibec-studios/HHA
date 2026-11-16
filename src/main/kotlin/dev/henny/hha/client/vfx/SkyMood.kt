@@ -39,6 +39,10 @@ object SkyMood {
         Vfx.Style.HELL to Mood(0xFF06202A.toInt(), 0xFF0F5A6A.toInt(), 0xE6123A44.toInt(), 0, 170f, 0.7f, 0.65f, 0f, 0f, 0f, 0f),
         // Kronos: Indigo-Nacht mit hellen Sternen (Phasenwechsel und Cutscenes, nicht pro Attacke).
         Vfx.Style.AEON to Mood(0xFF080A24.toInt(), 0xFF1C2250.toInt(), 0xCC26346C.toInt(), 0, 175f, 1f, 0.5f, 0f, 0f, 0f, 0f),
+        // Hekate: Mondfinsternis, nachtblau-violett mit Sternen, gedämpftes Licht, kein Regen (Stimmung, keine Blindheit).
+        Vfx.Style.MOON to Mood(0xFF0E0A2A.toInt(), 0xFF2A2152.toInt(), 0xCC3A3168.toInt(), 0, 178f, 1f, 0.55f, 0f, 0f, 0f, 0f),
+        // Zeus: dunkles Sturmblau über dem Thronhof, Regen und Gewitter (Phase II und III).
+        Vfx.Style.THUNDER to Mood(0xFF1B2438.toInt(), 0xFF44526C.toInt(), 0xE6465266.toInt(), 0, 40f, 0f, 0.62f, 1f, 0.8f, 34f, 140f),
     )
 
     private fun mix(a: Mood, b: Mood, t: Float) = Mood(

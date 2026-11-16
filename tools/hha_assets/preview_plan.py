@@ -2,7 +2,12 @@
 
 Aufruf:
     python preview_plan.py build/run/verifyWorldgen/plan_palace.txt <ausgabe.png> [scale] [yaw 0..3] [ymin] [ymax]
-        [--side] [--silhouette] [--no-terrain]
+        [--side] [--silhouette] [--no-terrain] [--sky]
+    python preview_plan.py build/run/verifyWorldgen/olymp_top.txt <karte.png> [scale] --map
+
+- `--sky` zeichnet auf hellem Himmelblau statt auf dem dunklen Rot des Tartaros (für den Olymp).
+- `--map` liest die Draufsicht des Olymp (`x z y block` je Spalte) und zeichnet eine Karte von oben mit Höhenschattierung
+  und den Namen der Inseln (Text über ffmpeg drawtext).
 
 - Der Schnitt mit ymax zeigt das Innere; so lässt sich etwa der Thronsaal unter der Kuppel prüfen.
 - `--side` zeichnet eine Ansicht von der Seite (Blick nach Norden, mit yaw gedreht), `--silhouette` dazu nur den
@@ -35,6 +40,12 @@ FIXED = {
     'skeleton_skull': (220, 216, 200), 'wither_skeleton_skull': (40, 40, 40), 'skeleton_wall_skull': (220, 216, 200),
     'cave_vines': (90, 120, 40), 'cave_vines_plant': (90, 120, 40), 'short_dry_grass': (176, 150, 100), 'tall_dry_grass': (176, 150, 100),
     'dead_bush': (120, 86, 50), 'end_rod': (240, 236, 220),
+    # Olymp: eingefärbte Pflanzen, Flüssigkeiten und Funktionsblöcke.
+    'grass_block': ((112, 176, 70), (130, 104, 72)), 'short_grass': (104, 168, 64), 'tall_grass': (104, 168, 64), 'fern': (90, 150, 60),
+    'spruce_leaves': (58, 98, 60), 'birch_leaves': (110, 150, 80), 'vine': (74, 120, 44), 'lava': (236, 110, 30),
+    'decorated_pot': (150, 84, 62), 'campfire': (150, 96, 50), 'heavy_weighted_pressure_plate': (200, 200, 205),
+    'light_weighted_pressure_plate': (240, 200, 60), 'olympus_portal': (196, 226, 255), 'hay_block': (190, 160, 50),
+    'soul_campfire': (80, 200, 220), 'boss_altar': (230, 196, 90),
 }
 
 # Blöcke, deren Textur anders heißt.
@@ -141,10 +152,20 @@ def average(pixels):
     return [int(v / weight) for v in total]
 
 
+def mod_textures(table):
+    """Mod-Texturen immer frisch dazu (neue Funktionsblöcke kommen nach dem ersten Lauf hinzu)."""
+    for path in glob.glob(os.path.join(ROOT, 'src', 'main', 'resources', 'assets', 'hha', 'textures', 'block', '*.png')):
+        with open(path, 'rb') as f:
+            color = average(decode_png(f.read()))
+        if color:
+            table[os.path.basename(path)[:-4]] = color
+    return table
+
+
 def texture_table():
     if os.path.exists(CACHE):
         with open(CACHE, encoding='utf8') as f:
-            return json.load(f)
+            return mod_textures(json.load(f))
     table = {}
     jars = glob.glob(os.path.expanduser('~/.gradle/caches/fabric-loom/*/minecraft-client.jar'))
     for jar in sorted(jars)[-1:]:
@@ -175,7 +196,7 @@ def stems(name):
     for suffix in ('_stairs', '_slab', '_wall', '_fence', '_fence_gate', '_pressure_plate', '_button', '_carpet'):
         if base.endswith(suffix):
             stem = base[:-len(suffix)]
-            out += [stem, stem + 's', stem + '_block', stem + '_planks']
+            out += [stem, stem + 's', stem + '_block', stem + '_planks', stem + '_wool']
             if stem.endswith('brick'):
                 out.append(stem + 's')
             if stem.endswith('tile'):
@@ -194,6 +215,8 @@ def colors(name):
         TEX = texture_table()
     if name in FIXED:
         c = FIXED[name]
+        if isinstance(c[0], tuple):
+            return c[0], c[1]
         return c, c
     candidates = []
     if name in ALIAS:
@@ -226,6 +249,12 @@ def main():
     ymin = int(args[4]) if len(args) > 4 else -10**9
     ymax = int(args[5]) if len(args) > 5 else 10**9
     terrain = '--no-terrain' not in flags
+    if '--map' in flags:
+        draw_map(src, out, scale)
+        return
+    global BACKGROUND
+    if '--sky' in flags:
+        BACKGROUND = (178, 212, 246)
     blocks = {}
     for line in open(src, encoding='utf8'):
         x, y, z, name = line.split()
@@ -263,7 +292,7 @@ def main():
     limit = 2600
     if width > limit * 2 or height > limit * 2:
         raise SystemExit(f'Bild zu groß: {width}x{height}, kleinere Skala wählen')
-    pix = bytearray(bytes((18, 8, 10)) * (width * height))
+    pix = bytearray(bytes(BACKGROUND) * (width * height))
 
     def span(px, y0, y1, c):
         if 0 <= px < width:
@@ -315,7 +344,7 @@ def side_view(blocks, out, scale, silhouette):
     z_far, z_near = min(zs), max(zs)
     width = (max_x - min_x + 1) * scale
     height = (max_y - min_y + 1) * scale
-    sky = (196, 178, 170) if silhouette else (18, 8, 10)
+    sky = (196, 178, 170) if silhouette else BACKGROUND
     pix = bytearray(bytes(sky) * (width * height))
     for (x, y), (z, name) in front.items():
         if silhouette:
@@ -331,6 +360,59 @@ def side_view(blocks, out, scale, silhouette):
             pix[i:i + scale * 3] = bytes(c) * scale
     save(pix, width, height, out)
     print(f'Seitenansicht {width}x{height}')
+
+
+BACKGROUND = (18, 8, 10)
+
+# Namen auf der Karte des Olymp (Mitte x, z aus OlympusLayout).
+MAP_LABELS = [
+    ('A  Wolkentor der Horen', 0, 0), ('B  Tempel des Boten', 0, -130), ('C  Dreiweg der Hekate', 0, -280),
+    ('D  Schmiede der Kyklopen', 150, -390), ('E  Stufen der Macht', 150, -560), ('F  Thron des Zeus', 0, -680),
+]
+
+
+def draw_map(src, out, scale):
+    """Draufsicht: Farbe der obersten Fläche, nach Höhe aufgehellt, mit Schatten nach Südosten; dazu die Inselnamen."""
+    cols = {}
+    for line in open(src, encoding='utf8'):
+        x, z, y, name = line.split()
+        cols[(int(x), int(z))] = (int(y), name)
+    xs = [k[0] for k in cols]
+    zs = [k[1] for k in cols]
+    min_x, max_x, min_z, max_z = min(xs) - 24, max(xs) + 24, min(zs) - 24, max(zs) + 24
+    ys = [v[0] for v in cols.values()]
+    low, high = min(ys), max(ys)
+    width = (max_x - min_x + 1) * scale
+    height = (max_z - min_z + 1) * scale
+    pix = bytearray(bytes((150, 190, 232)) * (width * height))
+    for (x, z), (y, name) in cols.items():
+        top, _ = colors(name)
+        lift = 0.78 + 0.32 * (y - low) / max(1, high - low)
+        west = cols.get((x - 1, z), (y, ''))[0]
+        north = cols.get((x, z - 1), (y, ''))[0]
+        shade = 1.0 + 0.06 * max(-3, min(3, (y - west) + (y - north)))
+        c = bytes(max(0, min(255, int(v * lift * shade))) for v in top)
+        px = (x - min_x) * scale
+        pz = (z - min_z) * scale
+        for dz in range(scale):
+            i = ((pz + dz) * width + px) * 3
+            pix[i:i + scale * 3] = c * scale
+    tmp = tempfile.mktemp(suffix='.png')
+    save(pix, width, height, tmp)
+    font = r'C\:/Windows/Fonts/arialbd.ttf'
+    filters = []
+    size = max(14, scale * 9)
+    for text, x, z in MAP_LABELS:
+        # Rechts von der Insel, außer am Ostrand: dort links davon.
+        tx = (x - min_x + 30) * scale
+        if tx + len(text) * size * 0.6 > width:
+            tx = int((x - min_x - 44) * scale - len(text) * size * 0.6)
+        tz = (z - min_z - 6) * scale
+        safe = text.replace(':', r'\:')
+        filters.append(f"drawtext=fontfile='{font}':text='{safe}':x={tx}:y={tz}:fontsize={size}:fontcolor=0x20304a:box=1:boxcolor=0xffffffb0:boxborderw={max(3, scale * 2)}")
+    subprocess.run([shutil.which('ffmpeg'), '-hide_banner', '-loglevel', 'error', '-y', '-i', tmp, '-vf', ','.join(filters), out], check=True)
+    os.remove(tmp)
+    print(f'Karte {width}x{height}, Höhen {low} bis {high}')
 
 
 def save(pix, width, height, out):

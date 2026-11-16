@@ -770,13 +770,6 @@ def shade_textures(model):
     return albedo, glow
 
 
-def variants(model, albedo, glow):
-    """Der Schatten des Boten: gleiche UVs, eigene Maler (Ruß, Glutrisse, zerfetzter Stoff, Rauchbeine)."""
-    a, g = shade_textures(model)
-    save(a, 'textures/entity/boss/hermes_shade.png')
-    save(g, 'textures/entity/boss/hermes_shade_glow.png')
-
-
 # --- Posen ------------------------------------------------------------------------------------------------
 # Knochen, deren Winkel die Kotlin-Animation aus den Schlüsselposen liest (Reihenfolge = Datenlayout in Kotlin).
 BONES = ['root', 'torso', 'head', 'arm_r', 'fore_r', 'caduceus', 'arm_l', 'fore_l', 'leg_r', 'shin_r', 'leg_l', 'shin_l',

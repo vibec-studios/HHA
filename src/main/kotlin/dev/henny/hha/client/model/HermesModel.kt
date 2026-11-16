@@ -31,6 +31,8 @@ class HermesRenderState : LivingEntityRenderState() {
     var previousPose = HermesPose.IDLE
     var poseTime = 0f
     var illusion = false
+
+    /** Hermes im Dienst des Hades (siehe [HermesEntity.corrupted]): grün getöntes Trugbild, grünes Licht. */
     var corrupted = false
     var entityId = 0
     var stage = 1
@@ -40,16 +42,14 @@ class HermesRenderState : LivingEntityRenderState() {
     var loot = false
     var speed = 0f
     var afterimages: List<net.minecraft.util.math.Vec3d> = emptyList()
-
-    /** Rauchschritt des Schattens: 0 sichtbar, 1 nur die Augen glimmen, 2 ganz im Rauch verborgen. */
-    var smoke = 0
 }
 
 /**
- * Hermes und sein Schatten auf einem Skelett (Geometrie: tools/hha_assets/hermes_model.py).
+ * Hermes (Geometrie: tools/hha_assets/hermes_model.py). Die Teile des früheren Schattens stehen noch im generierten
+ * Modell, bleiben aber immer verborgen (Überarbeitung 2: Der Schatten des Boten entfällt).
  *
  * Jede Pose ist eine Zeitachse aus Schlüsselposen ([HermesKeys], generiert aus `POSES` der Python-Datei, also exakt
- * dieselben Winkel wie in der Vorschau). Die Zeitmarken kommen aus [BossTimings.Hermes] und [BossTimings.Shade].
+ * dieselben Winkel wie in der Vorschau). Die Zeitmarken kommen aus [BossTimings.Hermes].
  * Beim Posenwechsel wird von der Endhaltung der alten Pose weich (Ausholen) oder hart (Schlag, Stoß) übergeblendet.
  * Darüber laufen Schweben, Atmen, Flügelschlag, Chlamys-Welle und das Zucken der kleinen Flügel.
  */
@@ -94,10 +94,6 @@ class HermesModel(root: ModelPart) : EntityModel<HermesRenderState>(root) {
     private val scroll = foreL.getChild("scroll")
     private val letter = foreL.getChild("letter")
     private val cape1 = bones[B_CAPE1]
-
-    /** Alles außer Kopf (für „nur die Augen" im Rauchschritt). */
-    private val bodyParts = listOf(armR, armL, cape1, backR, backL, legR, legL) +
-        listOf("skirt_f", "skirt_b", "skirt_r", "skirt_l", "shade_coins").map { body.getChild(it) }
 
     private val from = FloatArray(SIZE)
     private val to = FloatArray(SIZE)
@@ -213,27 +209,18 @@ class HermesModel(root: ModelPart) : EntityModel<HermesRenderState>(root) {
     }
 
     private fun visibility(state: HermesRenderState, blend: Float) {
-        for (p in lightParts) p.visible = !state.corrupted
-        for (p in shadeParts) p.visible = state.corrupted
-        // Der Schatten hat einen Stabflügel verloren.
-        cadWingL.visible = !state.corrupted
+        for (p in lightParts) p.visible = true
+        // Teile des früheren Schattens (Kapuze, Rauchbeine, Münzen …): immer verborgen.
+        for (p in shadeParts) p.visible = false
+        cadWingL.visible = true
         lootOrb.visible = state.loot
         scroll.visible = state.bossPose == HermesPose.READ || (state.previousPose == HermesPose.READ && blend < 0.5f)
-        letter.visible = state.bossPose == HermesPose.LETTER
-        val eyesOnly = state.smoke == 1
-        body.hidden = eyesOnly
-        torso.hidden = eyesOnly
-        for (p in bodyParts) p.visible = !eyesOnly && (p !== bodyParts.last() || state.corrupted)
-        if (eyesOnly) {
-            head.getChild("shade_cowl").visible = false
-            head.getChild("hat").visible = false
-        }
+        letter.visible = state.bossPose == HermesPose.MESSAGE
     }
 
     /** Endhaltung bzw. aktuelle Haltung einer Pose nach [e] Ticks. */
     private fun sample(pose: Int, e: Float, out: FloatArray) {
         val H = BossTimings.Hermes
-        val S = BossTimings.Shade
         val hard = BossTimings.Anim.BLEND_HARD.toFloat()
         when (pose) {
             HermesPose.DASH_WINDUP -> copy(HermesKeys.DASH_WINDUP, out)
@@ -282,22 +269,8 @@ class HermesModel(root: ModelPart) : EntityModel<HermesRenderState>(root) {
             }
             HermesPose.KNEEL -> copy(HermesKeys.KNEEL, out)
             HermesPose.STAGGER -> copy(HermesKeys.STAGGER, out)
-            HermesPose.SMOKE -> {
-                val hit = S.SMOKE_WINDUP.toFloat()
-                seg(e, hit - hard, hit, HermesKeys.SMOKE_EMERGE, HermesKeys.SMOKE_SLASH, out)
-            }
-            HermesPose.COIN -> {
-                // Schnippen 0–6, Blick der Münze nach, Fangen bei COIN_AIR.
-                val flick = S.COIN_FLICK.toFloat()
-                val air = S.COIN_AIR.toFloat()
-                when {
-                    e < flick -> copy(HermesKeys.COIN_FLIP, out)
-                    e < air - hard -> seg(e, flick, flick + 6f, HermesKeys.COIN_FLIP, HermesKeys.COIN_LOOK, out)
-                    else -> seg(e, air - hard, air, HermesKeys.COIN_LOOK, HermesKeys.COIN_CATCH, out)
-                }
-            }
             HermesPose.READ -> copy(HermesKeys.READ, out)
-            HermesPose.LETTER -> copy(HermesKeys.LETTER, out)
+            HermesPose.MESSAGE -> copy(HermesKeys.LETTER, out)
             HermesPose.FALL -> copy(HermesKeys.FALL, out)
             else -> copy(HermesKeys.IDLE, out)
         }
@@ -307,9 +280,9 @@ class HermesModel(root: ModelPart) : EntityModel<HermesRenderState>(root) {
     private fun enter(pose: Int): Float = when (pose) {
         HermesPose.DASH_WINDUP -> BossTimings.Hermes.DASH_WINDUP_BLEND.toFloat()
         HermesPose.SLAM -> BossTimings.Hermes.SLAM_WINDUP_BLEND.toFloat()
-        HermesPose.DASH, HermesPose.SKID, HermesPose.STUMBLE, HermesPose.THROW, HermesPose.COIN -> BossTimings.Anim.BLEND_HARD.toFloat()
+        HermesPose.DASH, HermesPose.SKID, HermesPose.STUMBLE, HermesPose.THROW -> BossTimings.Anim.BLEND_HARD.toFloat()
         HermesPose.STUCK -> BossTimings.Hermes.STUCK_IMPACT.toFloat()
-        HermesPose.FAN, HermesPose.SNAP, HermesPose.PLANT, HermesPose.DIVE, HermesPose.SMOKE -> BossTimings.Anim.BLEND_SOFT_MIN.toFloat()
+        HermesPose.FAN, HermesPose.SNAP, HermesPose.PLANT, HermesPose.DIVE -> BossTimings.Anim.BLEND_SOFT_MIN.toFloat()
         else -> BossTimings.Anim.BLEND_SOFT.toFloat()
     }
 
@@ -323,14 +296,14 @@ class HermesModel(root: ModelPart) : EntityModel<HermesRenderState>(root) {
             HermesPose.DASH, HermesPose.DASH_WINDUP, HermesPose.DIVE -> { o[A_HOVER] = 0f; o[A_BEAT] = 0f; o[A_LOOK] = 0f }
             HermesPose.ASCEND -> { o[A_BEAT] = 1.4f; o[A_LOOK] = 0f }
             HermesPose.CAST -> o[A_BEAT] = 0.7f
-            HermesPose.SLAM, HermesPose.FAN, HermesPose.THROW, HermesPose.SNAP, HermesPose.SMOKE -> { o[A_BEAT] = 0.15f; o[A_LOOK] = 0f }
+            HermesPose.SLAM, HermesPose.FAN, HermesPose.THROW, HermesPose.SNAP -> { o[A_BEAT] = 0.15f; o[A_LOOK] = 0f }
             HermesPose.SKID, HermesPose.STUCK, HermesPose.PLANT, HermesPose.KNEEL -> {
                 o[A_HOVER] = 0f; o[A_BEAT] = 0.05f; o[A_LOOK] = 0.3f; o[A_BREATH] = 1f
             }
             HermesPose.STUMBLE -> { o[A_HOVER] = 0f; o[A_BEAT] = 0.1f; o[A_LOOK] = 0f; o[A_BREATH] = 1f }
             HermesPose.STAGGER -> { o[A_BEAT] = 0.9f; o[A_LOOK] = 0f; o[A_BREATH] = 0.6f }
             HermesPose.FALL -> { o[A_HOVER] = 0f; o[A_BEAT] = 0.2f; o[A_LOOK] = 0f }
-            HermesPose.READ, HermesPose.LETTER -> o[A_BEAT] = 0.1f
+            HermesPose.READ, HermesPose.MESSAGE -> o[A_BEAT] = 0.1f
         }
     }
 
@@ -465,27 +438,20 @@ class HermesRenderer(context: EntityRendererFactory.Context) :
     LivingEntityRenderer<HermesEntity, HermesRenderState, HermesModel>(context, HermesModel(context.getPart(BossLayers.HERMES)), 0.7f) {
 
     private val texture = boss("hermes")
-    private val shadeTexture = boss("hermes_shade")
     private val ghostLayer = RenderLayers.entityTranslucentEmissive(texture)
-    private val shadeGhostLayer = RenderLayers.entityTranslucentEmissive(shadeTexture)
     private val glowLayer = RenderLayers.eyes(boss("hermes_glow"))
-    private val shadeGlowLayer = RenderLayers.eyes(boss("hermes_shade_glow"))
     private val feathers = FeatherRig(model.rootPart, HhaModelData.hermesFeathers())
 
     /** Leuchtmaske der Federn nur an den Sandalenflügeln (schmale Kante), nicht an den großen Flügeln. */
     private val sandalFeathers = FeatherRig(model.rootPart, HhaModelData.hermesFeathers().filter { it.path.last().startsWith("wing_foot_") })
 
     init {
-        addFeature(GlowFeature(this, { if (it.corrupted) shadeGlowLayer else glowLayer }, ::glowTint))
+        addFeature(GlowFeature(this, { glowLayer }, ::glowTint))
         addFeature(object : FeatureRenderer<HermesRenderState, HermesModel>(this) {
             override fun render(matrices: MatrixStack, queue: OrderedRenderCommandQueue, light: Int, state: HermesRenderState, limbAngle: Float, limbDistance: Float) {
                 if (state.invisibleToPlayer) return
-                // Der Schatten trägt verbrannte, rußschwarze Federn.
-                val feather = if (state.corrupted) SHADE_FEATHER else -1
-                feathers.submit(matrices, queue, FeatherDraw.LAYER, feather, LivingEntityRenderer.getOverlay(state, 0f), light)
-                if (!state.corrupted) {
-                    sandalFeathers.submit(matrices, queue.getBatchingQueue(1), FeatherDraw.GLOW_LAYER, sandalTint(state), OverlayTexture.DEFAULT_UV, FULL_BRIGHT)
-                }
+                feathers.submit(matrices, queue, FeatherDraw.LAYER, -1, LivingEntityRenderer.getOverlay(state, 0f), light)
+                sandalFeathers.submit(matrices, queue.getBatchingQueue(1), FeatherDraw.GLOW_LAYER, sandalTint(state), OverlayTexture.DEFAULT_UV, FULL_BRIGHT)
                 publishGlow(state, matrices)
             }
         })
@@ -523,7 +489,7 @@ class HermesRenderer(context: EntityRendererFactory.Context) :
 
     override fun createRenderState() = HermesRenderState()
 
-    override fun getTexture(state: HermesRenderState): Identifier = if (state.corrupted) shadeTexture else texture
+    override fun getTexture(state: HermesRenderState): Identifier = texture
 
     override fun updateRenderState(entity: HermesEntity, state: HermesRenderState, tickDelta: Float) {
         super.updateRenderState(entity, state, tickDelta)
@@ -536,16 +502,6 @@ class HermesRenderer(context: EntityRendererFactory.Context) :
         state.stage = entity.stage
         state.vulnerable = entity.vulnerable
         state.loot = entity.loot
-        // Rauchschritt: erst unsichtbar in der Säule, ab SMOKE_EYES nur die Augen, kurz vor dem Hieb tritt er heraus.
-        state.smoke = if (state.corrupted && state.bossPose == HermesPose.SMOKE) {
-            when {
-                state.poseTime < BossTimings.Shade.SMOKE_EYES -> 2
-                state.poseTime < BossTimings.Shade.SMOKE_WINDUP - BossTimings.Anim.BLEND_HARD -> 1
-                else -> 0
-            }
-        } else {
-            0
-        }
         val history = entity.history
         state.speed = if (history.size >= 2) history.last().distanceTo(history[history.size - 2]).toFloat().coerceAtMost(2f) else 0f
         // Nachbilder nur bei echtem Tempo; relativ zur aktuellen Position.
@@ -562,19 +518,6 @@ class HermesRenderer(context: EntityRendererFactory.Context) :
     }
 
     override fun render(state: HermesRenderState, matrices: MatrixStack, queue: OrderedRenderCommandQueue, cameraState: CameraRenderState) {
-        if (state.smoke == 2) return
-        if (state.smoke == 1) {
-            // Nur die Augen glimmen im Rauch: Modell ohne Körper, nur Leuchtmaske.
-            matrices.push()
-            matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180f - state.bodyYaw))
-            matrices.scale(-SCALE, -SCALE, SCALE)
-            matrices.translate(0f, -1.501f, 0f)
-            queue.getBatchingQueue(1).submitModel(model, state, matrices, shadeGlowLayer, FULL_BRIGHT, OverlayTexture.DEFAULT_UV, glowTint(state), null, 0, null)
-            model.setAngles(state)
-            publishGlow(state, matrices)
-            matrices.pop()
-            return
-        }
         for ((i, offset) in state.afterimages.withIndex()) {
             matrices.push()
             matrices.translate(offset.x, offset.y, offset.z)
@@ -596,7 +539,7 @@ class HermesRenderer(context: EntityRendererFactory.Context) :
         matrices.translate(0f, -1.501f, 0f)
         val color = (MathHelper.clamp((alpha * 255f).toInt(), 0, 255) shl 24) or (if (state.corrupted) 0x9CFFA8 else 0xFFE9B0)
         val ghosts = queue.getBatchingQueue(2)
-        ghosts.submitModel(model, state, matrices, if (state.corrupted) shadeGhostLayer else ghostLayer, FULL_BRIGHT, OverlayTexture.DEFAULT_UV, color, null, 0, null)
+        ghosts.submitModel(model, state, matrices, ghostLayer, FULL_BRIGHT, OverlayTexture.DEFAULT_UV, color, null, 0, null)
         // Das Modell wird später gezeichnet; für die Federn und Anker muss die Pose schon jetzt stehen.
         model.setAngles(state)
         feathers.submit(matrices, ghosts, FeatherDraw.GHOST_LAYER, color, OverlayTexture.DEFAULT_UV, FULL_BRIGHT)
@@ -609,7 +552,6 @@ class HermesRenderer(context: EntityRendererFactory.Context) :
     private companion object {
         /** Modellhöhe 64 Einheiten → 2,7 Blöcke. */
         const val SCALE = 0.675f
-        const val SHADE_FEATHER = 0xFF2C3530.toInt()
     }
 }
 

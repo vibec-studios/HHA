@@ -7,6 +7,13 @@ wird über Text, Stimme und Einstellungen), nachträgliche Läufe kosten also nu
 Ausgabe: assets/hha/sounds/voice/<sprache>/<zeile>.ogg, Einträge in sounds.json und HhaVoiceLengths.kt.
 Ohne Sprachdatei fällt das Spiel automatisch auf die alten Stimm-Blips zurück.
 
+Zeilen: alle `hha.hermes.line.*` (Hermes, Zeus im Hermes-Kampf, Hades, Kronos, Erzähler; Kurzname ohne Vorsilbe) und die
+Olymp-Bosse `hha.zeus.line.*`, `hha.hekate.line.*`, `hha.brontes.line.*`, `hha.kratos.line.*` (voller Schlüssel als
+Kurzname, die Datei heißt dann z. B. `hha_zeus_line_intro_1.ogg`, genau wie `CinePlayer.speak` sie sucht).
+Stand Überarbeitung 2 (16.11.2026): Die Olymp-Zeilen sind nur vorbereitet, **nicht erzeugt** (Entscheidung des Nutzers:
+vorerst nur Text mit Stimm-Lauten). `--dry-run` zeigt, was ein Lauf kosten würde. Die Stimmen von Hekate, Brontes und
+Kratos sind Platzhalter (vorgefertigte ElevenLabs-Stimmen); vor dem ersten echten Lauf anhören und bei Bedarf tauschen.
+
 Hinweis zur Lizenz: Audio aus dem kostenlosen ElevenLabs-Plan darf nur nicht-kommerziell und mit Namensnennung
 verwendet werden. Wer die Mod kommerziell veröffentlicht, sollte die Zeilen mit einem bezahlten Plan neu erzeugen.
 """
@@ -31,6 +38,8 @@ KOTLIN = os.path.abspath(os.path.join(ASSETS, '..', '..', '..', 'kotlin', 'dev',
 LANG_FILES = {'de': 'de_de.json', 'en': 'en_us.json'}
 MODEL = 'eleven_multilingual_v2'
 PREFIX = 'hha.hermes.line.'
+# Weitere Zeilen-Vorsilben (Olymp-Bosse): Kurzname = voller Schlüssel.
+EXTRA_PREFIXES = ('hha.zeus.line.', 'hha.hekate.line.', 'hha.brontes.line.', 'hha.kratos.line.')
 TARGET_LUFS = -14.0
 
 # Wer spricht, mit welcher Stimme und welcher Nachbearbeitung. Die Voice-IDs stammen aus der Liste von GET /v1/voices.
@@ -46,7 +55,9 @@ CAST = {
         # Tiefer und mit Hall: Die Stimme kommt aus dem ganzen Himmel.
         'filter': 'asetrate=44100*0.84,aresample=44100,atempo=1.05,aecho=0.8:0.75:90|170|300:0.45|0.32|0.2,bass=g=5,alimiter=limit=0.95',
     },
-    'shade': {
+    # Hermes im Dienst des Hades (früher „Schatten des Boten“; der Schatten entfällt, die Stimme spricht nur noch
+    # `hades.pact`). Stimme und Filter unverändert, damit die vorhandene Aufnahme nicht neu erzeugt wird.
+    'hermes_ghost': {
         'voice': 'N2lVS1w4EtoT3dr4eOWO',  # Derselbe Mann, nur falsch: tiefer, flacher, mit einem Echo aus der Halle.
         'settings': {'stability': 0.62, 'similarity_boost': 0.82, 'style': 0.2, 'use_speaker_boost': True},
         'filter': 'asetrate=44100*0.88,aresample=44100,atempo=1.04,aecho=0.8:0.6:45|120:0.35|0.22,lowpass=f=6500,alimiter=limit=0.95',
@@ -61,6 +72,22 @@ CAST = {
         'settings': {'stability': 0.6, 'similarity_boost': 0.8, 'style': 0.3, 'use_speaker_boost': True},
         'filter': 'asetrate=44100*0.78,aresample=44100,atempo=1.08,aecho=0.8:0.8:120|260|420:0.5|0.35|0.22,bass=g=7,alimiter=limit=0.95',
     },
+    # --- Olymp-Bosse: PLATZHALTER-Stimmen (vorgefertigte Stimmen, noch nicht angehört, nichts erzeugt) ---
+    'hekate': {
+        'voice': 'XB0fDUnXU5powFXDhCwa',  # Platzhalter: Charlotte; Hekate spricht ruhig, kühl, wie von drei Seiten.
+        'settings': {'stability': 0.6, 'similarity_boost': 0.78, 'style': 0.25, 'use_speaker_boost': True},
+        'filter': 'asetrate=44100*0.94,aresample=44100,atempo=1.02,aecho=0.8:0.55:35|70:0.28|0.2,alimiter=limit=0.95',
+    },
+    'brontes': {
+        'voice': '2EiwWnXFnvU5JabPnv8n',  # Platzhalter: Clyde; wortkarg, müde, stolz auf sein Werk, sehr tief.
+        'settings': {'stability': 0.66, 'similarity_boost': 0.8, 'style': 0.2, 'use_speaker_boost': True},
+        'filter': 'asetrate=44100*0.8,aresample=44100,atempo=1.06,aecho=0.8:0.6:60|130:0.25|0.15,bass=g=6,alimiter=limit=0.95',
+    },
+    'kratos': {
+        'voice': 'pqHfZKP75CvOlQylNhV4',  # Platzhalter: Bill; Befehlston, kurz und hart.
+        'settings': {'stability': 0.7, 'similarity_boost': 0.8, 'style': 0.3, 'use_speaker_boost': True},
+        'filter': 'asetrate=44100*0.9,aresample=44100,atempo=1.04,acompressor=threshold=-16dB:ratio=4:attack=5:release=90,alimiter=limit=0.95',
+    },
     'narrator': {
         'voice': 'JBFqnCBsd6RMkjVDRZzb',  # George, "Warm, Captivating Storyteller"
         'settings': {'stability': 0.6, 'similarity_boost': 0.75, 'style': 0.15, 'use_speaker_boost': True},
@@ -69,20 +96,26 @@ CAST = {
 }
 
 NARRATOR_KEYS = {
-    'prologue.seal', 'prologue.pull', 'prologue.altar', 'feather.falls', 'zeus.feather', 'finale.catch', 'finale.stinger',
-    'shade.coin', 'shade.voice', 'shade.open', 'hades.enter',
+    'prologue.pull', 'prologue.altar', 'feather.falls', 'zeus.feather', 'finale.catch', 'finale.stinger', 'hades.enter',
+    'hha.zeus.line.end.2',
 }
 
 
 def speaker_of(key):
     if key in NARRATOR_KEYS:
         return 'narrator'
-    if key.startswith('shade.'):
-        return 'shade'
+    if key.startswith('hha.zeus.line.'):
+        return 'zeus'
+    if key.startswith('hha.hekate.line.'):
+        return 'hekate'
+    if key.startswith('hha.brontes.line.'):
+        return 'brontes'
+    if key.startswith('hha.kratos.line.'):
+        return 'kratos'
     if key.startswith('kronos.'):
         return 'kronos'
     if key == 'hades.pact':
-        return 'shade'
+        return 'hermes_ghost'
     if key.startswith('hades.') and key not in ('hades.excuse', 'hades.sign', 'hades.never'):
         return 'hades'
     if key in ('zeus.name', 'zeus.end_it'):
@@ -113,7 +146,14 @@ def file_name(key):
 def load_lines(lang):
     with open(os.path.join(LANG_DIR, LANG_FILES[lang]), encoding='utf8') as f:
         data = json.load(f)
-    return {k[len(PREFIX):]: v for k, v in data.items() if k.startswith(PREFIX)}
+    lines = {k[len(PREFIX):]: v for k, v in data.items() if k.startswith(PREFIX)}
+    lines.update({k: v for k, v in data.items() if k.startswith(EXTRA_PREFIXES)})
+    return lines
+
+
+def lang_key(key):
+    """Voller Sprachschlüssel zum Kurznamen (Hermes-Zeilen ohne Vorsilbe, Olymp-Zeilen mit vollem Schlüssel)."""
+    return key if key.startswith(EXTRA_PREFIXES) else PREFIX + key
 
 
 def fingerprint(text, cast):
@@ -194,7 +234,7 @@ def write_lengths(manifest):
         for key, info in lines.items():
             ticks = int(info['seconds'] * 20) + 12
             longest[key] = max(longest.get(key, 0), ticks)
-    rows = ',\n'.join(f'        "{PREFIX}{key}" to {ticks}' for key, ticks in sorted(longest.items()))
+    rows = ',\n'.join(f'        "{lang_key(key)}" to {ticks}' for key, ticks in sorted(longest.items()))
     table = f'mapOf(\n{rows},\n    )' if rows else 'emptyMap()'
     source = f'''package dev.henny.hha.logic.boss
 

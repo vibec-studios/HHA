@@ -2,7 +2,6 @@ package dev.henny.hha.logic.boss
 
 import dev.henny.hha.Hha
 import dev.henny.hha.HhaEntities
-import dev.henny.hha.HhaItems
 import dev.henny.hha.HhaSounds
 import dev.henny.hha.config.HhaConfig
 import dev.henny.hha.entity.boss.HadesEntity
@@ -14,6 +13,8 @@ import dev.henny.hha.entity.boss.KronosEntity
 import dev.henny.hha.entity.boss.KronosPose
 import dev.henny.hha.logic.Fx
 import dev.henny.hha.logic.Vfx
+import dev.henny.hha.logic.world.TartarosChain
+import dev.henny.hha.logic.world.TartarosMinibosses
 import dev.henny.hha.world.TartarusPlans
 import net.fabricmc.fabric.api.entity.event.v1.ServerEntityWorldChangeEvents
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents
@@ -26,8 +27,6 @@ import net.minecraft.entity.SpawnReason
 import net.minecraft.entity.damage.DamageSource
 import net.minecraft.entity.effect.StatusEffectInstance
 import net.minecraft.entity.effect.StatusEffects
-import net.minecraft.item.ItemStack
-import net.minecraft.item.Items
 import net.minecraft.registry.RegistryKey
 import net.minecraft.registry.tag.DamageTypeTags
 import net.minecraft.server.MinecraftServer
@@ -36,6 +35,7 @@ import net.minecraft.server.world.ServerWorld
 import net.minecraft.sound.SoundCategory
 import net.minecraft.sound.SoundEvent
 import net.minecraft.text.Text
+import net.minecraft.text.Texts
 import net.minecraft.util.Formatting
 import net.minecraft.util.math.BlockPos
 import net.minecraft.util.math.Vec3d
@@ -98,12 +98,28 @@ object HadesFights {
         active.remove(fight.world.registryKey)
     }
 
-    /** Vom Siegel aufgerufen. [center] ist die Mitte des Hallenbodens. */
+    /**
+     * Vom Siegel aufgerufen. [center] ist die Mitte des Hallenbodens. Überarbeitung 2 (PLAN 5.7): Das Siegel gibt erst
+     * nach, wenn alle fünf Glieder der Kette gesprengt sind (`/hha toggle tartaros_chain false` schaltet das ab); sonst
+     * nennt es die Wächter, die ihr Glied noch halten, und es bleibt bei einem dumpfen Schlag.
+     */
     fun start(player: ServerPlayerEntity, center: BlockPos): Boolean {
         val world = player.entityWorld as? ServerWorld ?: return false
         if (active.containsKey(world.registryKey)) {
             player.sendMessage(Text.translatable("hha.hermes.msg.busy").formatted(Formatting.RED), true)
             return false
+        }
+        val server = world.server ?: return false
+        if (HhaConfig.enabled("tartaros_chain")) {
+            val chain = TartarosChain.of(server)
+            val missing = chain.missing()
+            if (missing.isNotEmpty()) {
+                val names = Texts.join(missing.map { Text.translatable(TartarosMinibosses.guardianName(it)) }, Text.literal(", "))
+                val total = TartarosChain.Link.entries.size
+                player.sendMessage(Text.translatable("hha.tartaros.chain.missing", names, total - missing.size, total).formatted(Formatting.GRAY), false)
+                world.playSound(null, player.x, player.y, player.z, HhaSounds.IMPACT, SoundCategory.BLOCKS, 1.2f, 0.45f)
+                return false
+            }
         }
         val fight = HadesFight(world, center, player)
         active[world.registryKey] = fight
@@ -176,9 +192,21 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
     private val tasks = ArrayList<Iterator<Unit>>()
     private var transitionQueued = false
     private var noPlayersFor = 0
+
+    /** `H(n)` aus [BossScaling.health]: teilt eingehenden Schaden (Sanduhren-Leben × H(n)). */
     var healthScale = 1f
         private set
+
+    /** `D(n)` samt Regler `hades_damage` aus [BossScaling.damage]. */
     private var damageScale = 1f
+
+    /** Mitkämpfer `n` für [BossScaling] (lebend, nicht Kreativ/Zuschauer, höchstens 8). */
+    var crowd = 1
+        private set
+
+    /** Abwehr gegen Mace-Sprünge (PLAN 4.3), je Körper eine: Hades in Phase I–III, Kronos in Phase IV–V. */
+    private var hadesGuard: BossDefense.Guard? = null
+    private var kronosGuard: BossDefense.Guard? = null
     private var ended = false
 
     /** Ticks seit Beginn der laufenden Phase. */
@@ -226,23 +254,42 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         tasks.add(task.iterator())
     }
 
+    /** Skalierung nach Spielerzahl, jeden Tick neu (Config-Werte können sich live ändern): nur über [BossScaling]. */
     private fun scale() {
-        val crowd = max(1, targets().size)
-        healthScale = 1f + HhaConfig.numF("hermes_health_per_player") * (crowd - 1)
-        damageScale = 1f + HhaConfig.numF("hermes_damage_per_player") * (crowd - 1)
+        crowd = BossScaling.crowd(targets())
+        healthScale = BossScaling.health(crowd)
+        damageScale = BossScaling.damage(crowd, BossScaling.Family.TARTAROS)
     }
 
-    fun scaledDamage(base: Float): Float = base * HhaConfig.numF("hades_damage") * damageScale
+    /** Schaden eines Angriffs: Grundschaden × [DAMAGE_FACTOR] (PLAN 4.1) × `D(n)` × `hades_damage`. */
+    fun scaledDamage(base: Float): Float = base * DAMAGE_FACTOR * damageScale
 
-    /** Schwere Treffer: über `hades_damage` einstellbar. Mit [magic] hilft keine Rüstung. */
-    fun hurt(player: ServerPlayerEntity, base: Float, magic: Boolean = false) {
-        if (inCutscene) return
+    /**
+     * Schwere Treffer: über `hades_damage` einstellbar. Mit [magic] hilft keine Rüstung. [reach] ist die Höhenregel
+     * (PLAN 4.3, [BossDefense.reaches]) über dem Hallenboden; ohne Angabe [BossDefense.Reach.BODY].
+     */
+    fun hurt(player: ServerPlayerEntity, base: Float, magic: Boolean = false, reach: BossDefense.Reach = BossDefense.Reach.BODY): Boolean {
+        if (inCutscene) return false
         // Ziele, die ein Ablauf früher gemerkt hat, können inzwischen ausgeschieden oder in einer anderen Welt sein.
-        if (player.uuid !in participants || player.entityWorld !== world) return
+        if (player.uuid !in participants || player.entityWorld !== world) return false
         val attacker = if (stage >= 4) kronos else boss
+        if (!reaches(player, reach)) return false
         val source: DamageSource = if (magic || attacker == null) world.damageSources.magic() else world.damageSources.mobAttack(attacker)
-        player.damage(world, source, scaledDamage(base))
+        return player.damage(world, source, scaledDamage(base))
     }
+
+    /** Höhenregel (PLAN 4.3) über dem Hallenboden, mit der Höhe des Körpers, der gerade kämpft. */
+    fun reaches(player: ServerPlayerEntity, reach: BossDefense.Reach): Boolean {
+        val attacker = if (stage >= 4) kronos else boss
+        return BossDefense.reaches(player, center.y, reach, (attacker?.height ?: 4f).toDouble())
+    }
+
+    /** Die Abwehr des Körpers, der gerade kämpft (Hades in I–III, Kronos in IV–V). */
+    val guard: BossDefense.Guard?
+        get() = if (stage >= 4) kronosGuard else hadesGuard
+
+    /** Ist nach dem laufenden Angriff der Konter fällig (PLAN 4.3)? Nie in Szenen. */
+    fun counterDue(): Boolean = !inCutscene && guard?.counterDue() == true
 
     fun grounded(player: ServerPlayerEntity): Boolean = player.y <= center.y + 0.7
 
@@ -323,16 +370,38 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         return Vec3d(center.x + clamped.x, center.y, center.z + clamped.z)
     }
 
-    private fun toughness(): Float = HhaConfig.numF("hermes_toughness") * healthScale * TOUGHNESS
+    /** Zähigkeit von Hades (ohne Spielerzahl): `hermes_toughness` × [TOUGHNESS]. Kronos zusätzlich × [KRONOS_TOUGHNESS]. */
+    private fun toughness(): Float = HhaConfig.numF("hermes_toughness") * TOUGHNESS
+
+    /**
+     * Eingehender Schaden in der festen Reihenfolge aller Kämpfe (`tmp/overhaul2/API.md`, Abschnitt 0): Faktor des
+     * offenen Fensters ([OPENING_BONUS]), Abwehr ([BossDefense.Guard.onHit]: Smash-Folge, Wachsamkeit), Deckel
+     * ([BossScaling.hitCap], Stufe `BOSS`, bezogen auf das effektive Grundleben einer Phase solo), dann ÷ Zähigkeit × `H(n)`
+     * ([BossScaling.toBar]). Liefert, was die Leiste verliert; 0 = abgeprallt oder Szene.
+     */
+    private fun incoming(entity: net.minecraft.entity.LivingEntity, guard: BossDefense.Guard?, source: DamageSource, amount: Float, toughness: Float): Float {
+        val open = openingFor > 0
+        var effective = if (open) amount * OPENING_BONUS else amount
+        if (guard != null) effective = guard.onHit(source, effective, open)
+        if (effective <= 0f) return 0f
+        effective = effective.coerceAtMost(BossScaling.hitCap(entity.maxHealth * toughness, BossScaling.Tier.BOSS, open))
+        return BossScaling.toBar(effective, toughness, crowd)
+    }
+
+    /** Der Treffer ist durchgegangen (vom Körper gemeldet): Ein Sturztreffer zählt für die Abwehr. */
+    fun onHitLanded(entity: net.minecraft.entity.LivingEntity, source: DamageSource) {
+        val guard = if (entity === kronos) kronosGuard else if (entity === boss) hadesGuard else null
+        guard?.landed(source, openingFor > 0)
+    }
 
     /** Vom Boss gemeldet: wie viel Schaden tatsächlich ankommt. Jede Phase hat ihren eigenen vollen Abschnitt der Leiste. */
     fun onDamaged(entity: HadesEntity, source: DamageSource, amount: Float): Float {
         if (inCutscene || stage !in 1..3) return 0f
         val open = openingFor > 0
+        val dealt = incoming(entity, hadesGuard, source, amount, toughness())
+        if (dealt <= 0f) return 0f
         sound(HhaSounds.HIT, 1.8f, if (open) 1.05f else 0.75f, entity.entityPos)
         if (open) Vfx.flare(world, Vfx.Style.GOLD, entity.entityPos.add(0.0, 2.4, 0.0), 2.2f, 5)
-        val raw = amount / toughness()
-        val dealt = (if (open) raw * OPENING_BONUS else raw).coerceAtMost(HhaConfig.numF("hermes_max_hit") * (if (open) 1.5f else 1f))
         val allowed = min(dealt, entity.health - 1f)
         if (allowed <= 0f) return 0f
         if (entity.health - allowed <= 1.01f) transitionQueued = true
@@ -351,10 +420,10 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
     fun onKronosDamaged(entity: KronosEntity, source: DamageSource, amount: Float): Float {
         if (inCutscene || stage !in 4..5) return 0f
         val open = openingFor > 0
+        val dealt = incoming(entity, kronosGuard, source, amount, toughness() * KRONOS_TOUGHNESS)
+        if (dealt <= 0f) return 0f
         sound(HhaSounds.HIT, 2f, if (open) 0.9f else 0.6f, entity.entityPos)
         if (open) Vfx.flare(world, Vfx.Style.GOLD, entity.entityPos.add(0.0, 3.4, 0.0), 2.8f, 5)
-        val raw = amount / (toughness() * KRONOS_TOUGHNESS)
-        val dealt = (if (open) raw * OPENING_BONUS else raw).coerceAtMost(HhaConfig.numF("hermes_max_hit") * (if (open) 1.5f else 1f))
         val allowed = min(dealt, entity.health - 1f)
         if (allowed <= 0f) return 0f
         if (entity.health - allowed <= 1.01f) transitionQueued = true
@@ -372,7 +441,15 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
     /** Ersetzt die laufende Attacke; Gefahren, die schon auf dem Boden liegen, laufen als eigene Aufgaben weiter. */
     fun interrupt(with: Sequence<Unit>) {
         if (inCutscene) return
+        endCounters()
         script = with.iterator()
+    }
+
+    /** Ein abgebrochener Konter (Taumeln, Phasenwechsel) darf die Abwehr nicht im Konter hängen lassen. */
+    private fun endCounters() {
+        for (guard in listOfNotNull(hadesGuard, kronosGuard)) if (guard.inCounter) guard.endCounter()
+        boss?.antiAir = false
+        kronos?.antiAir = false
     }
 
     /** Hermes als Geist lässt sich nicht töten; ein Treffer vertreibt ihn kurz. */
@@ -505,6 +582,7 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
                 in 1..3 -> attacks.tick()
                 in 4..5 -> titan.tick()
             }
+            guard?.tick(targets())
         }
         val iterator = tasks.iterator()
         while (iterator.hasNext()) {
@@ -558,6 +636,9 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         closeScars()
         openingFor = 0
         poise = 0f
+        endCounters()
+        hadesGuard?.reset()
+        kronosGuard?.reset()
         boss?.bidentOut = false
         boss?.cloaked = false
         kronos?.harpeOut = false
@@ -589,6 +670,8 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         barVisible = true
         lastBar = ""
         poise = 0f
+        hadesGuard?.reset()
+        kronosGuard?.reset()
         attacks.reset()
         titan.reset()
         hadesCalls.reset()
@@ -775,6 +858,7 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         entity.pose = HadesPose.SIT
         world.spawnEntity(entity)
         boss = entity
+        hadesGuard = BossDefense.Guard(entity)
         entity.health = entity.maxHealth
 
         // Hermes kniet neben dem Thron und möchte gerade sehr woanders sein.
@@ -1076,6 +1160,7 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         world.spawnEntity(titanEntity)
         titanEntity.health = titanEntity.maxHealth
         kronos = titanEntity
+        kronosGuard = BossDefense.Guard(titanEntity)
         val land = center.add(0.0, 0.0, -2.0)
         Cine.camera(everyone, center.add(-10.0, 1.5, 18.0), center.add(-6.0, 2.0, 13.0), oculus, land.add(0.0, 4.0, 0.0), 120, 72.0, 54.0, titanEntity, 4.0)
         val top = titanEntity.entityPos
@@ -1231,7 +1316,9 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
             Cine.camera(everyone, ally.entityPos.add(2.0, 1.8, 7.5), ally.entityPos.add(1.0, 2.0, 5.6), ally.entityPos.add(0.0, 2.6, 0.0), ally.entityPos.add(0.0, 2.6, 0.0), 140, 46.0, 40.0)
             say(Cine.SPEAKER_HADES, "hades.gift", 80)
         }
-        grantRewards()
+        // Beute nur über BossRewards (PLAN 6.1: Hadeskappe einmal je Welt, sonst Ersatz); Hades und Kronos sind besiegt.
+        BossRewards.grant(TartarosChain.HADES, players(), center)
+        world.server?.let { TartarosChain.of(it).hadesDone = true }
         Cine.title(everyone, "hha.kronos.title.end", "hha.kronos.title.end.sub", 80)
         sound(HhaSounds.STING, 2.5f, 0.85f)
         wait(80)
@@ -1242,29 +1329,18 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         Cine.fade(left, 0x000000, 1.0, 0.0, 30)
     }
 
-    /** Die Rüstung der Hölle für den Sieg über Hades, und was ein Titan so bei sich trägt. */
-    private fun grantRewards() {
-        for (player in players()) {
-            for (item in listOf(HhaItems.HELL_HELMET, HhaItems.HELL_CHESTPLATE, HhaItems.HELL_LEGGINGS, HhaItems.HELL_BOOTS)) give(player, ItemStack(item))
-            give(player, ItemStack(HhaItems.HELL_INGOT, 8))
-            give(player, ItemStack(Items.NETHER_STAR, 1))
-            give(player, ItemStack(Items.ENCHANTED_GOLDEN_APPLE, 2))
-        }
-    }
-
-    private fun give(player: ServerPlayerEntity, stack: ItemStack) {
-        if (!player.giveItemStack(stack)) player.dropItem(stack, false)
-    }
-
     companion object {
         /** Radius des Kampffelds. */
         const val ARENA = 44
 
-        /** Je größer, desto länger hält jede Phase. */
-        private const val TOUGHNESS = 1.15f
+        /** Je größer, desto länger hält jede Phase (PLAN 4.1: 1,15 → 1,6). */
+        private const val TOUGHNESS = 1.6f
 
-        /** Kronos ist noch einmal zäher als sein Sohn. */
-        private const val KRONOS_TOUGHNESS = 2.0f
+        /** Kronos ist noch einmal zäher als sein Sohn (PLAN 4.1: 2,0 → 2,6; wirkt zusätzlich zu [TOUGHNESS]). */
+        private const val KRONOS_TOUGHNESS = 2.6f
+
+        /** Schaden aller Angriffe von Hades und Kronos gegenüber der ersten Fassung (PLAN 4.1). */
+        private const val DAMAGE_FACTOR = 1.2f
 
         /** Offene Stellen sollen sich richtig lohnen. */
         private const val OPENING_BONUS = 1.8f

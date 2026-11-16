@@ -39,6 +39,9 @@ abstract class VfxEffect(val life: Int) {
     /** Ansagen sind Spielinformation: Bei vollem Effekt-Speicher fallen sie als letzte weg. */
     open val telegraph: Boolean get() = false
 
+    /** Ursprung einer Ansage (Kreismitte, Linienanfang, Kegelspitze); `Vfx.Kind.TELEGRAPH_CLEAR` entfernt danach. */
+    open val telegraphOrigin: Vec3d? get() = null
+
     abstract fun render(d: VfxDraw, time: Float)
 
     protected fun progress(time: Float): Float = (time / life).coerceIn(0f, 1f)
@@ -78,15 +81,16 @@ class BeamEffect(
         val path = List(points + 1) { along(it.toDouble() / points * tip) }
 
         // Weiches Glühen außen, dann Plasma-Hülle, dann weißer Kern.
-        d.ribbon(VfxLayers.GLOW_ADD, listOf(path.first(), path.last()), { w * 2.4 }, { withAlpha(pal.main, 0.22f * fade) })
+        // P02: Lichthof schmaler und schwächer (2,4 → 1,5; 0,22 → 0,14).
+        d.ribbon(VfxLayers.GLOW_ADD, listOf(path.first(), path.last()), { w * 1.5 }, { withAlpha(pal.main, 0.14f * fade) })
         d.ribbon(VfxLayers.ENERGY, path, { w * (1.15 + 0.15 * sin(it * 40.0 + time * 1.3)) }, { withAlpha(pal.main, 0.8f * fade) }, uScale = 0.18f)
         d.ribbon(VfxLayers.ENERGY, path, { w * 0.55 }, { withAlpha(pal.main, 0.8f * fade) }, uScale = 0.32f, uOffset = 7.3f)
-        d.ribbon(VfxLayers.GLOW_ADD, listOf(path.first(), path.last()), { w * 0.26 }, { withAlpha(pal.core, 0.9f * fade) })
+        d.ribbon(VfxLayers.GLOW_ADD, listOf(path.first(), path.last()), { w * 0.26 }, { withAlpha(pal.core, 0.7f * fade) })
 
-        // Drei Spiralbänder, die um den Strahl fräsen.
+        // Zwei Spiralbänder (früher drei), die um den Strahl fräsen.
         val (r, u) = basis
-        for (strand in 0 until 3) {
-            val offset = strand * (PI * 2.0 / 3.0)
+        for (strand in 0 until 2) {
+            val offset = strand * PI
             val helix = List(points * 2 + 1) { i ->
                 val f = i.toDouble() / (points * 2) * tip
                 val angle = f * length * 1.1 + offset - time * 0.45
@@ -97,7 +101,7 @@ class BeamEffect(
         }
 
         // Runenringe gleiten am Strahl entlang.
-        val ringCount = (length / 5.0).toInt().coerceIn(1, 8)
+        val ringCount = (length / 8.0).toInt().coerceIn(1, 4)
         for (i in 0 until ringCount) {
             val f = ((i + time * 0.14f) / ringCount) % 1f
             if (f > tip) continue
@@ -109,16 +113,16 @@ class BeamEffect(
         // Mündungskreis.
         val muzzle = start.add(dir.multiply(0.7))
         d.disc(VfxLayers.RUNE_ADD, muzzle, r, u, w * 1.5 * growth, withAlpha(pal.main, fade), time * 0.22)
-        d.billboard(VfxLayers.FLARE_ADD, muzzle, w * 1.8 * (1.0 + 0.25 * sin(time * 1.7)), withAlpha(pal.core, fade), time * 0.06)
+        d.billboard(VfxLayers.FLARE_ADD, muzzle, w * 1.1 * (1.0 + 0.1 * sin(time * 1.7)), withAlpha(pal.core, 0.7f * fade), time * 0.06)
 
         // Einschlag.
         if (tip >= 1.0) {
             val impact = end
-            val pulse = 1.0 + 0.3 * sin(time * 2.1)
-            d.billboard(VfxLayers.FLARE_ADD, impact, w * 4.6 * pulse, withAlpha(pal.core, fade), -time * 0.09)
-            d.billboard(VfxLayers.GLOW_ADD, impact, w * 4.5, withAlpha(pal.main, 0.4f * fade))
-            d.sphere(VfxLayers.ENERGY, impact, w * (1.2 + 2.4 * t), { view -> withAlpha(pal.main, (1f - view).pow(1.5f) * fade) }, 10, 16, time * 0.1f)
-            d.ring(VfxLayers.ENERGY, impact, r, u, w * (2.0 + 5.0 * t), w * (2.5 + 6.5 * t), withAlpha(pal.main, fade), withAlpha(pal.edge, 0f), 36, 4f, time * 0.03f)
+            // P02: kein pulsierender Lichtstern mehr, Einschlag kleiner.
+            d.billboard(VfxLayers.FLARE_ADD, impact, w * 2.6, withAlpha(pal.core, 0.7f * fade), -time * 0.09)
+            d.billboard(VfxLayers.GLOW_ADD, impact, w * 2.6, withAlpha(pal.main, 0.25f * fade))
+            d.sphere(VfxLayers.ENERGY, impact, w * (1.0 + 1.6 * t), { view -> withAlpha(pal.main, (1f - view).pow(1.5f) * fade * 0.8f) }, 10, 16, time * 0.1f)
+            d.ring(VfxLayers.ENERGY, impact, r, u, w * (2.0 + 3.5 * t), w * (2.5 + 4.5 * t), withAlpha(pal.main, 0.8f * fade), withAlpha(pal.edge, 0f), 36, 4f, time * 0.03f)
         }
     }
 }
@@ -167,7 +171,8 @@ class ShockwaveEffect(
     private val height: Float, life: Int, seed: Long,
 ) : VfxEffect(life) {
 
-    private val debris = Debris(seed, center, (radius * 7f).toInt().coerceIn(8, 80), radius.toDouble(), radius * 0.075)
+    // P02: Trümmer höchstens 12 je Stoß (früher bis 80).
+    private val debris = Debris(seed, center, (radius * 1.5f).toInt().coerceIn(4, 12), radius.toDouble(), radius * 0.075)
 
     override fun render(d: VfxDraw, time: Float) {
         val t = progress(time)
@@ -176,25 +181,25 @@ class ShockwaveEffect(
         val y = center.add(0.0, 0.08, 0.0)
         val band = (radius * 0.16f * (1f - t * 0.6f)).toDouble().coerceAtLeast(0.15)
 
-        d.disc(VfxLayers.GLOW_ADD, y, X, Z, r * 1.25, withAlpha(pal.main, 0.2f * fade))
+        d.disc(VfxLayers.GLOW_ADD, y, X, Z, r * 1.05, withAlpha(pal.main, 0.12f * fade))
         d.ring(VfxLayers.ENERGY, y, X, Z, max(0.0, r - band * 1.6), r + band, withAlpha(pal.main, 0f), withAlpha(pal.main, fade), 64, 6f, time * 0.04f)
         d.ring(VfxLayers.RING_ADD, y.add(0.0, 0.02, 0.0), X, Z, r * 0.72, r * 0.96, withAlpha(pal.main, fade * 0.7f), withAlpha(pal.edge, fade * 0.7f), 64, 6f, time * 0.02f)
 
         val h = height * (1f - t * 0.7f) * easeOut(t * 4f)
-        d.wall(VfxLayers.RAYS_ADD, y, X, Z, UP, r.toDouble(), r * 1.04, h.toDouble(), withAlpha(pal.main, fade * 0.65f), withAlpha(pal.main, 0f), 64, 8f, time * 0.03f)
+        d.wall(VfxLayers.RAYS_ADD, y, X, Z, UP, r.toDouble(), r * 1.04, h * 0.75, withAlpha(pal.main, fade * 0.45f), withAlpha(pal.main, 0f), 64, 8f, time * 0.03f)
         d.wall(VfxLayers.ENERGY, y, X, Z, UP, r.toDouble(), r * 1.02, h * 0.55, withAlpha(pal.main, fade * 0.6f), withAlpha(pal.edge, 0f), 64, 6f, -time * 0.05f)
 
         // Nachwelle.
         val t2 = ((time - 3f) / life).coerceIn(0f, 1f)
         if (t2 > 0f) {
             val r2 = easeOut(t2) * radius * 0.72
-            val f2 = envelope(t2, 0.01f, 0.7f) * 0.7f
+            val f2 = envelope(t2, 0.01f, 0.7f) * 0.45f
             d.ring(VfxLayers.ENERGY, y, X, Z, max(0.0, r2 - band), r2 + band * 0.6, withAlpha(pal.alt, 0f), withAlpha(pal.alt, f2), 48, 5f, -time * 0.05f)
         }
 
-        val flash = 1f - (time / 5f).coerceIn(0f, 1f)
+        val flash = 1f - (time / 4f).coerceIn(0f, 1f)
         if (flash > 0f) {
-            d.billboard(VfxLayers.FLARE_ADD, center.add(0.0, 0.8, 0.0), radius * 0.6 * (1f + (1f - flash)), withAlpha(pal.core, flash * 0.8f))
+            d.billboard(VfxLayers.FLARE_ADD, center.add(0.0, 0.8, 0.0), radius * 0.35 * (1f + (1f - flash)), withAlpha(pal.core, flash * 0.5f))
         }
         debris.render(d, time, life, pal.main)
     }
@@ -240,15 +245,16 @@ class CrescentEffect(
         val travel = easeOut(t) * range
         val fade = envelope(t, 0.01f, 0.4f)
         val w = width * (0.5 + 0.5 * easeOut(t * 3f))
-        for (i in 0 until 4) {
+        // P02: drei gestaffelte Bögen statt vier.
+        for (i in 0 until 3) {
             val back = i * 0.9
             val c = origin.add(dir.multiply(max(0.0, travel - back) - w * 0.5))
-            val f = fade * (1f - i * 0.22f)
+            val f = fade * (1f - i * 0.28f)
             arc(c, w, 2.2, w * 0.28, withAlpha(if (i == 0) pal.core else pal.main, f), time * 0.06f + i, d)
         }
         arc(origin.add(dir.multiply(max(0.0, travel - w * 0.4))).add(tiltUp.multiply(w * 0.35)), w * 0.75, 1.9, w * 0.14, withAlpha(pal.alt, fade), time * 0.1f, d)
         arc(origin.add(dir.multiply(max(0.0, travel - w * 0.4))).add(tiltUp.multiply(-w * 0.35)), w * 0.75, 1.9, w * 0.14, withAlpha(pal.alt, fade), -time * 0.1f, d)
-        d.billboard(VfxLayers.GLOW_ADD, origin.add(dir.multiply(travel + w * 0.4)), w * 1.6, withAlpha(pal.main, 0.45f * fade))
+        d.billboard(VfxLayers.GLOW_ADD, origin.add(dir.multiply(travel + w * 0.4)), w * 1.0, withAlpha(pal.main, 0.25f * fade))
     }
 }
 
@@ -309,21 +315,23 @@ class BoltEffect(
         paths = out
     }
 
+    // P02: verzweigt sich nur noch alle drei Ticks neu (weniger Zucken).
     override fun tick(world: ClientWorld) {
-        if (age % 2 == 0) regenerate()
+        if (age % 3 == 0) regenerate()
     }
 
     override fun render(d: VfxDraw, time: Float) {
         val t = progress(time)
         val fade = (1f - t).pow(0.7f)
-        val flicker = if ((time.toInt() and 1) == 0) 1f else 0.72f
+        // P02: kaum noch Flackern (0,72 → 0,9), Schein schmaler, Lichtstern am Ende kleiner.
+        val flicker = if ((time.toInt() and 1) == 0) 1f else 0.9f
         for ((i, path) in paths.withIndex()) {
             val w = width * (if (i == 0) 1.0 else 0.45)
-            d.ribbon(VfxLayers.GLOW_ADD, path, { w * 1.05 }, { withAlpha(pal.main, 0.8f * fade * flicker) })
-            d.ribbon(VfxLayers.GLOW_ADD, path, { w * 0.34 }, { withAlpha(pal.core, fade * flicker) })
+            d.ribbon(VfxLayers.GLOW_ADD, path, { w * 0.8 }, { withAlpha(pal.main, 0.6f * fade * flicker) })
+            d.ribbon(VfxLayers.GLOW_ADD, path, { w * 0.34 }, { withAlpha(pal.core, 0.9f * fade * flicker) })
         }
-        d.billboard(VfxLayers.FLARE_ADD, end, width * 3.4, withAlpha(pal.core, fade * flicker), time * 0.2)
-        d.billboard(VfxLayers.GLOW_ADD, start, width * 2.2, withAlpha(pal.main, 0.6f * fade * flicker))
+        d.billboard(VfxLayers.FLARE_ADD, end, width * 2.0, withAlpha(pal.core, 0.7f * fade * flicker), time * 0.2)
+        d.billboard(VfxLayers.GLOW_ADD, start, width * 1.4, withAlpha(pal.main, 0.35f * fade * flicker))
     }
 }
 
@@ -345,12 +353,13 @@ class PillarEffect(
         val r = radius * (0.72 + 0.28 * easeOut(t * 5f))
         val base = center.add(0.0, 0.06, 0.0)
         d.disc(VfxLayers.RUNE_ADD, base, X, Z, r * 1.7, withAlpha(pal.main, fade), time * 0.08)
-        d.disc(VfxLayers.GLOW_ADD, base, X, Z, r * 2.6, withAlpha(pal.main, 0.4f * fade))
-        d.wall(VfxLayers.RAYS_ADD, base, X, Z, UP, r, r * 0.9, h, withAlpha(pal.main, fade * 0.7f), withAlpha(pal.main, 0f), 28, 3f, time * 0.04f)
+        d.disc(VfxLayers.GLOW_ADD, base, X, Z, r * 1.8, withAlpha(pal.main, 0.22f * fade))
+        d.wall(VfxLayers.RAYS_ADD, base, X, Z, UP, r, r * 0.9, h, withAlpha(pal.main, fade * 0.45f), withAlpha(pal.main, 0f), 28, 3f, time * 0.04f)
         d.wall(VfxLayers.ENERGY, base, X, Z, UP, r * 0.8, r * 0.62, h, withAlpha(pal.main, fade * 0.65f), withAlpha(pal.edge, 0f), 28, 3f, -time * 0.08f)
-        d.ribbon(VfxLayers.GLOW_ADD, listOf(base, base.add(0.0, h, 0.0)), { r * 0.42 }, { withAlpha(pal.core, 0.55f * fade * (1f - it * 0.7f)) })
-        for (i in 0 until 4) {
-            val f = ((i * 0.25f + time * 0.03f) % 1f)
+        d.ribbon(VfxLayers.GLOW_ADD, listOf(base, base.add(0.0, h, 0.0)), { r * 0.36 }, { withAlpha(pal.core, 0.35f * fade * (1f - it * 0.7f)) })
+        // P02: drei hochgleitende Ringe statt vier.
+        for (i in 0 until 3) {
+            val f = ((i / 3f + time * 0.03f) % 1f)
             val pos = base.add(0.0, h * f, 0.0)
             val rr = r * (1.2 - 0.5 * f)
             val a = fade * envelope(f, 0.08f, 0.35f)
@@ -365,10 +374,23 @@ class PillarEffect(
 
 private const val WHITE = 0xFFFFFFFF.toInt()
 
+/** Farbe mit Faktor abdunkeln (Alpha bleibt). */
+private fun darken(argb: Int, factor: Float): Int {
+    val r = (((argb ushr 16) and 0xFF) * factor).toInt()
+    val g = (((argb ushr 8) and 0xFF) * factor).toInt()
+    val b = ((argb and 0xFF) * factor).toInt()
+    return (argb and 0xFF000000.toInt()) or (r shl 16) or (g shl 8) or b
+}
+
 /**
  * Gemeinsamer Takt aller Ansagen (Plan 3.2): Der Rand steht ab Tick 0 voll, die Füllung wächst gleichmäßig bis zum
  * Treffer, und in den letzten [BossTimings.Min.FLASH] Ticks wird die ganze Form weiß („jetzt“). Gold ([safe]) heißt
- * „hier bist du sicher“ und bekommt eine höhere Lichtwand, damit man die Stelle von weitem findet.
+ * „hier bist du sicher“ und bekommt eine höhere Randwand, damit man die Stelle von weitem findet.
+ *
+ * **Überarbeitung 2 (P02): lesbar ohne Leuchtsaum.** Alles deckend gemischt statt additiv
+ * ([VfxLayers.TELE_FILL], [VfxLayers.TELE_SOLID], [VfxLayers.TELE_WALL]), damit die Form auf hellem Marmor genauso
+ * steht wie auf Schwarzstein: Füllung Alpha 0,25 → 0,45 (wabert wie bisher), Rand als klare Linie mit dunkler Kontur
+ * (die Kontur trägt den Kontrast auf hellem Boden, die helle Linie den auf dunklem), Wachstumsfront als schmaler Strich.
  */
 abstract class TelegraphEffect(protected val pal: Palette, protected val safe: Boolean, life: Int) : VfxEffect(life) {
 
@@ -383,23 +405,63 @@ abstract class TelegraphEffect(protected val pal: Palette, protected val safe: B
     protected fun rim(flash: Float, alpha: Float = 1f): Int =
         withAlpha(lerpColor(lerpColor(pal.main, pal.core, 0.35f), WHITE, flash), alpha)
 
-    protected fun body(flash: Float, alpha: Float): Int = withAlpha(lerpColor(pal.main, WHITE, flash * 0.85f), alpha)
+    /** Dunkle Kontur um die helle Randlinie: bleibt auch im weißen Aufblitzen dunkel. */
+    protected fun outline(alpha: Float = OUTLINE_ALPHA): Int = withAlpha(darken(pal.edge, 0.55f), alpha)
+
+    /** Füllfarbe; Gold (sicher) etwas heller und gelber, damit es sich von jeder Glut-Gefahrfarbe abhebt. */
+    protected fun body(flash: Float, alpha: Float): Int {
+        val base = if (safe) lerpColor(pal.main, pal.core, 0.3f) else pal.main
+        return withAlpha(lerpColor(base, WHITE, flash * 0.85f), alpha)
+    }
 
     protected fun front(flash: Float, alpha: Float): Int = withAlpha(lerpColor(pal.core, WHITE, flash), alpha)
 
-    /** Füllung dezent am Anfang, kräftiger kurz vor dem Treffer, im Blitz hell. */
-    protected fun fillAlpha(t: Float, flash: Float): Float = (0.16f + 0.24f * t) * (1f - flash) + 0.62f * flash
+    /** Füllung 0,25 am Anfang, 0,45 kurz vor dem Treffer, im Blitz 0,55. */
+    protected fun fillAlpha(t: Float, flash: Float): Float =
+        (FILL_START + (FILL_END - FILL_START) * t) * (1f - flash) + FILL_FLASH * flash
 
     /** Halbe Randstärke: mit der Größe etwas breiter, damit große Formen aus der Ferne lesbar bleiben. */
     protected fun rimWidth(size: Double): Double = (0.07 + size * 0.008).coerceIn(0.07, 0.2)
 
-    /** Gerade Randlinie auf dem Boden: weicher Schein plus heller Kern. */
+    /** Gerade Randlinie auf dem Boden: dunkle Kontur, darauf die helle Linie. */
     protected fun rimLine(d: VfxDraw, a: Vec3d, b: Vec3d, w: Double, flash: Float) {
         val along = b.subtract(a)
         if (along.lengthSquared() < 1e-6) return
-        val across = along.normalize().crossProduct(UP).let { if (it.lengthSquared() < 1e-6) X else it.normalize() }
-        d.band(VfxLayers.GLOW_ADD, a, b, across, w * 2.6, rim(flash, 0.5f), rim(flash, 0.5f))
-        d.band(VfxLayers.ENERGY, a.add(0.0, 0.005, 0.0), b.add(0.0, 0.005, 0.0), across, w, rim(flash), rim(flash), 0.5f, 0f)
+        val dir = along.normalize()
+        val across = dir.crossProduct(UP).let { if (it.lengthSquared() < 1e-6) X else it.normalize() }
+        // Die Kontur ragt an den Enden etwas über, damit Ecken geschlossen wirken.
+        val ext = dir.multiply(w * OUTLINE_SCALE)
+        d.band(VfxLayers.TELE_SOLID, a.subtract(ext), b.add(ext), across, w * OUTLINE_SCALE, outline(), outline())
+        val lift = Vec3d(0.0, 0.005, 0.0)
+        d.band(VfxLayers.TELE_SOLID, a.add(lift), b.add(lift), across, w, rim(flash, RIM_ALPHA), rim(flash, RIM_ALPHA))
+    }
+
+    /** Kreisrand (Kontur + Linie) in der Bodenebene. */
+    protected fun rimRing(d: VfxDraw, pos: Vec3d, r: Double, w: Double, fl: Float, segments: Int) {
+        d.ring(VfxLayers.TELE_SOLID, pos, X, Z, max(0.0, r - w * OUTLINE_SCALE), r + w * OUTLINE_SCALE, outline(), outline(), segments)
+        d.ring(VfxLayers.TELE_SOLID, pos.add(0.0, 0.005, 0.0), X, Z, max(0.0, r - w), r + w, rim(fl, RIM_ALPHA), rim(fl, RIM_ALPHA), segments)
+    }
+
+    /** Niedrige Randwand: Auch auf unebenem Boden und aus flachem Winkel bleibt die Grenze lesbar. Gold höher. */
+    protected fun rimWall(d: VfxDraw, pos: Vec3d, r: Double, fl: Float, segments: Int, time: Float) {
+        val height = if (safe) SAFE_WALL else DANGER_WALL
+        val alpha = if (safe) SAFE_WALL_ALPHA else DANGER_WALL_ALPHA
+        d.wall(VfxLayers.TELE_WALL, pos, X, Z, UP, r, r, height, rim(fl, alpha), rim(fl, 0f), segments, (r * 0.5).toFloat(), time * 0.02f)
+    }
+
+    companion object {
+        const val FILL_START = 0.25f
+        const val FILL_END = 0.45f
+        const val FILL_FLASH = 0.55f
+        const val RIM_ALPHA = 0.95f
+        const val OUTLINE_ALPHA = 0.6f
+
+        /** Kontur = so viel breiter als die helle Linie. */
+        const val OUTLINE_SCALE = 1.9
+        const val SAFE_WALL = 1.1
+        const val SAFE_WALL_ALPHA = 0.5f
+        const val DANGER_WALL = 0.35
+        const val DANGER_WALL_ALPHA = 0.3f
     }
 }
 
@@ -407,6 +469,8 @@ abstract class TelegraphEffect(protected val pal: Palette, protected val safe: B
 class TelegraphRingEffect(
     private val center: Vec3d, pal: Palette, private val radius: Float, private val inner: Float, life: Int, safe: Boolean,
 ) : TelegraphEffect(pal, safe, life) {
+
+    override val telegraphOrigin: Vec3d get() = center
 
     private val segments = (radius * 5f).toInt().coerceIn(32, 128)
 
@@ -420,19 +484,18 @@ class TelegraphRingEffect(
         val reach = ri + (r - ri) * t
         if (reach > ri + 0.02) {
             val alpha = fillAlpha(t, fl)
-            d.ring(VfxLayers.FLOW_ADD, pos, X, Z, ri, reach, body(fl, alpha), body(fl, alpha), segments, (r * 0.6).toFloat())
-            d.ring(VfxLayers.GLOW_ADD, pos.add(0.0, 0.01, 0.0), X, Z, max(ri, reach - w * 3.0), reach + w * 1.5, front(fl, 0.8f), front(fl, 0.8f), segments, 0f, 0.5f)
+            d.ring(VfxLayers.TELE_FILL, pos, X, Z, ri, reach, body(fl, alpha), body(fl, alpha), segments, (r * 0.6).toFloat())
+            // Wachstumsfront: ein schmaler Strich statt eines Lichtbands.
+            d.ring(VfxLayers.TELE_SOLID, pos.add(0.0, 0.004, 0.0), X, Z, max(ri, reach - w * 1.2), reach, front(fl, 0.7f), front(fl, 0.7f), segments)
         }
-        rimRing(d, pos, r, w, fl)
-        if (ri > 0.05) rimRing(d, pos, ri, w, fl)
-        // Niedrige Lichtwand am Rand: Auch auf unebenem Boden und aus flachem Winkel bleibt die Grenze lesbar.
-        val wall = if (safe) 1.4 else 0.45
-        d.wall(VfxLayers.RAYS_ADD, pos, X, Z, UP, r, r, wall, rim(fl, if (safe) 0.55f else 0.38f), rim(fl, 0f), segments, (r * 0.5).toFloat(), time * 0.02f)
-    }
-
-    private fun rimRing(d: VfxDraw, pos: Vec3d, r: Double, w: Double, fl: Float) {
-        d.ring(VfxLayers.GLOW_ADD, pos, X, Z, max(0.0, r - w * 2.6), r + w * 2.6, rim(fl, 0.5f), rim(fl, 0.5f), segments, 0f, 0.5f)
-        d.ring(VfxLayers.ENERGY, pos.add(0.0, 0.005, 0.0), X, Z, max(0.0, r - w), r + w, rim(fl), rim(fl), segments, (r * 0.9).toFloat())
+        rimRing(d, pos.add(0.0, 0.008, 0.0), r, w, fl, segments)
+        if (ri > 0.05) rimRing(d, pos.add(0.0, 0.008, 0.0), ri, w, fl, segments)
+        // Sichere Fläche: doppelter Rand (zweite, dünnere Linie innen), so ist „sicher“ auch an der Form erkennbar.
+        if (safe && ri <= 0.05 && r > 1.2) {
+            val inner = r - max(0.35, w * 5.0)
+            d.ring(VfxLayers.TELE_SOLID, pos.add(0.0, 0.013, 0.0), X, Z, max(0.0, inner - w * 0.6), inner + w * 0.6, rim(fl, RIM_ALPHA), rim(fl, RIM_ALPHA), segments)
+        }
+        rimWall(d, pos, r, fl, segments, time)
     }
 }
 
@@ -440,6 +503,8 @@ class TelegraphRingEffect(
 class TelegraphLineEffect(
     private val from: Vec3d, private val to: Vec3d, pal: Palette, private val halfWidth: Float, life: Int, safe: Boolean,
 ) : TelegraphEffect(pal, safe, life) {
+
+    override val telegraphOrigin: Vec3d get() = from
 
     private val delta = to.subtract(from)
     private val dir = if (delta.lengthSquared() < 1e-6) Z else delta.normalize()
@@ -455,16 +520,17 @@ class TelegraphLineEffect(
         val tip = a.add(delta.multiply(t.toDouble()))
         if (t > 0.01f) {
             val alpha = fillAlpha(t, fl)
-            d.band(VfxLayers.FLOW_ADD, a, tip, side, hw, body(fl, alpha), body(fl, alpha), 0.35f, 0f)
-            // Wachstumsfront: ein Querbalken, der zum Ende wandert.
-            val lift = Vec3d(0.0, 0.01, 0.0)
-            d.band(VfxLayers.GLOW_ADD, tip.subtract(side.multiply(hw)).add(lift), tip.add(side.multiply(hw)).add(lift), dir, w * 3.0, front(fl, 0.8f), front(fl, 0.8f))
+            d.band(VfxLayers.TELE_FILL, a, tip, side, hw, body(fl, alpha), body(fl, alpha), 0.35f, 0f)
+            // Wachstumsfront: ein schmaler Querstrich, der zum Ende wandert.
+            val lift = Vec3d(0.0, 0.004, 0.0)
+            d.band(VfxLayers.TELE_SOLID, tip.subtract(side.multiply(hw)).add(lift), tip.add(side.multiply(hw)).add(lift), dir, w * 1.2, front(fl, 0.7f), front(fl, 0.7f))
         }
         val l = side.multiply(hw)
-        rimLine(d, a.add(l), b.add(l), w, fl)
-        rimLine(d, a.subtract(l), b.subtract(l), w, fl)
-        rimLine(d, a.subtract(l), a.add(l), w, fl)
-        rimLine(d, b.subtract(l), b.add(l), w, fl)
+        val lift = Vec3d(0.0, 0.008, 0.0)
+        rimLine(d, a.add(l).add(lift), b.add(l).add(lift), w, fl)
+        rimLine(d, a.subtract(l).add(lift), b.subtract(l).add(lift), w, fl)
+        rimLine(d, a.subtract(l).add(lift), a.add(l).add(lift), w, fl)
+        rimLine(d, b.subtract(l).add(lift), b.add(l).add(lift), w, fl)
     }
 }
 
@@ -475,6 +541,8 @@ class TelegraphLineEffect(
 class TelegraphConeEffect(
     private val apex: Vec3d, direction: Vec3d, pal: Palette, private val radius: Float, halfAngle: Float, life: Int,
 ) : TelegraphEffect(pal, false, life) {
+
+    override val telegraphOrigin: Vec3d get() = apex
 
     private val forward = Vec3d(direction.x, 0.0, direction.z).let { if (it.lengthSquared() < 1e-6) Z else it.normalize() }
     private val side = UP.crossProduct(forward).normalize()
@@ -492,15 +560,16 @@ class TelegraphConeEffect(
         val arcLength = (r * half).toFloat()
         if (reach > 0.02) {
             val alpha = fillAlpha(t, fl)
-            d.arc(VfxLayers.FLOW_ADD, pos, forward, side, 0.0, reach, -half, half, body(fl, alpha), body(fl, alpha), segments, arcLength * 0.6f)
-            d.arc(VfxLayers.GLOW_ADD, pos.add(0.0, 0.01, 0.0), forward, side, max(0.0, reach - w * 3.0), reach + w * 1.5, -half, half, front(fl, 0.8f), front(fl, 0.8f), segments, 0f, 0.5f)
+            d.arc(VfxLayers.TELE_FILL, pos, forward, side, 0.0, reach, -half, half, body(fl, alpha), body(fl, alpha), segments, arcLength * 0.6f)
+            d.arc(VfxLayers.TELE_SOLID, pos.add(0.0, 0.004, 0.0), forward, side, max(0.0, reach - w * 1.2), reach, -half, half, front(fl, 0.7f), front(fl, 0.7f), segments)
         }
-        d.arc(VfxLayers.GLOW_ADD, pos, forward, side, max(0.0, r - w * 2.6), r + w * 2.6, -half, half, rim(fl, 0.5f), rim(fl, 0.5f), segments, 0f, 0.5f)
-        d.arc(VfxLayers.ENERGY, pos.add(0.0, 0.005, 0.0), forward, side, max(0.0, r - w), r + w, -half, half, rim(fl), rim(fl), segments, arcLength * 0.9f)
+        val rimPos = pos.add(0.0, 0.008, 0.0)
+        d.arc(VfxLayers.TELE_SOLID, rimPos, forward, side, max(0.0, r - w * OUTLINE_SCALE), r + w * OUTLINE_SCALE, -half, half, outline(), outline(), segments)
+        d.arc(VfxLayers.TELE_SOLID, rimPos.add(0.0, 0.005, 0.0), forward, side, max(0.0, r - w), r + w, -half, half, rim(fl, RIM_ALPHA), rim(fl, RIM_ALPHA), segments)
         if (!full) {
             for (angle in doubleArrayOf(-half, half)) {
                 val edge = forward.multiply(cos(angle)).add(side.multiply(sin(angle)))
-                rimLine(d, pos, pos.add(edge.multiply(r)), w, fl)
+                rimLine(d, rimPos, rimPos.add(edge.multiply(r)), w, fl)
             }
         }
     }
@@ -554,7 +623,7 @@ class ShieldEffect(
                 val p = center.add(f.normal.multiply(r + fly))
                 val view = p.subtract(cam).normalize()
                 val rim = 1f - abs(f.normal.dotProduct(view)).toFloat()
-                val alpha = fade * (0.06f + rim * rim * 0.75f)
+                val alpha = fade * (0.05f + rim * rim * 0.55f)
                 val col = withAlpha(if (rim > 0.75f) pal.core else pal.main, alpha)
                 val rot = shatter * life * f.spin
                 val ax = f.a.multiply(cos(rot) * size).add(f.b.multiply(sin(rot) * size))
@@ -565,8 +634,8 @@ class ShieldEffect(
                 vc.put(p.subtract(ax).add(ay), time * 0.05f, 1f, col)
             }
         }
-        val flash = 1f - (time / 6f).coerceIn(0f, 1f)
-        if (flash > 0f) d.billboard(VfxLayers.FLARE_ADD, center, radius * 1.6, withAlpha(pal.core, flash * 0.7f))
+        val flash = 1f - (time / 5f).coerceIn(0f, 1f)
+        if (flash > 0f) d.billboard(VfxLayers.FLARE_ADD, center, radius * 1.0, withAlpha(pal.core, flash * 0.45f))
     }
 }
 
@@ -622,7 +691,7 @@ class WingsEffect(
                 .add(up.multiply(reach * sin(boneAngle) + f * f * scale * 0.4))
                 .add(forward.multiply(-0.28 * scale * f))
         }
-        d.ribbon(VfxLayers.GLOW_ADD, edge, { 0.1 * scale * (1.0 - it * 0.6) }, { withAlpha(pal.core, alpha * 0.55f) })
+        d.ribbon(VfxLayers.GLOW_ADD, edge, { 0.08 * scale * (1.0 - it * 0.6) }, { withAlpha(pal.core, alpha * 0.35f) })
     }
 
     override fun render(d: VfxDraw, time: Float) {
@@ -643,7 +712,7 @@ class WingsEffect(
             wing(d, shoulder.add(0.0, 0.0, 0.0).subtract(forward.multiply(0.1)), side, forward, right, -0.15 + 0.25 * unfold, s * 1.0 * unfold, flap * 0.8, alpha * 0.92f)
             wing(d, shoulder.add(0.0, -0.32, 0.0).subtract(forward.multiply(0.18)), side, forward, right, -0.75 * unfold, s * 0.72 * unfold, flap * 0.6, alpha * 0.85f)
         }
-        d.billboard(VfxLayers.GLOW_ADD, shoulder, s * 1.5, withAlpha(pal.main, 0.22f * alpha))
+        d.billboard(VfxLayers.GLOW_ADD, shoulder, s * 1.0, withAlpha(pal.main, 0.12f * alpha))
     }
 }
 
@@ -652,42 +721,133 @@ class WingsEffect(
 // -------------------------------------------------------------------------------------------------
 
 /** Echte 3D-Kette mit Gliedern; schießt heraus, glüht zum Ziel hin und zieht sich wieder ein. */
+/**
+ * Kette mit echter Seil-Physik (Verlet): [NODES] Knoten zwischen Hand und Ziel, Schwerkraft, Dämpfung und Längen-
+ * Bedingungen. Beim Auswerfen fliegt das Ende hinaus, gehalten hängt sie mit etwas Spiel durch und schwingt, wenn
+ * Werfer oder Ziel sich bewegen (Heranziehen, Enterhaken); beim Einholen wird sie kürzer. Gezeichnet werden die
+ * Glieder entlang der gekrümmten Linie, jeweils in Richtung der Kette gedreht.
+ */
 class ChainEffect(
     private val from: Entity?, private val fromFallback: Vec3d, private val toEntity: Entity?,
     private val toFallback: Vec3d, private val pal: Palette, life: Int,
 ) : VfxEffect(life) {
 
-    override fun render(d: VfxDraw, time: Float) {
+    private val pos = arrayOfNulls<Vec3d>(NODES)
+    private val prev = arrayOfNulls<Vec3d>(NODES)
+    private val shown = arrayOfNulls<Vec3d>(NODES)
+    private var ready = false
+
+    private fun startAt(tickDelta: Float): Vec3d = from?.takeIf { it.isAlive }?.let {
+        if (isSelfFirstPerson(it)) {
+            val client = MinecraftClient.getInstance()
+            val cam = client.gameRenderer.camera
+            val fwd = Vec3d.fromPolar(cam.pitch, cam.yaw)
+            val right = fwd.crossProduct(Vec3d(0.0, 1.0, 0.0)).normalize()
+            cam.cameraPos.add(fwd.multiply(0.6)).add(right.multiply(0.35)).add(0.0, -0.3, 0.0)
+        } else it.lerped(tickDelta).add(0.0, it.height * 0.65, 0.0)
+    } ?: fromFallback
+
+    private fun endAt(tickDelta: Float): Vec3d =
+        toEntity?.takeIf { it.isAlive }?.let { it.lerped(tickDelta).add(0.0, it.height * 0.5, 0.0) } ?: toFallback
+
+    /** Wohin das freie Ende gerade zeigt (Auswerfen, Halten, Einholen) und wie lang das Seil ist. */
+    private fun pins(time: Float, tickDelta: Float): Triple<Vec3d, Vec3d, Double> {
         val t = progress(time)
-        val startPos = from?.takeIf { it.isAlive }?.let {
-            if (isSelfFirstPerson(it)) d.cam.add(d.camForward.multiply(0.6)).add(d.camRight.multiply(0.35)).add(d.camUp.multiply(-0.3))
-            else it.lerped(d.tickDelta).add(0.0, it.height * 0.65, 0.0)
-        } ?: fromFallback
-        val endPos = toEntity?.takeIf { it.isAlive }?.let { it.lerped(d.tickDelta).add(0.0, it.height * 0.5, 0.0) } ?: toFallback
+        val start = startAt(tickDelta)
+        val end = endAt(tickDelta)
         val shoot = easeOut(time / 3f)
         val retract = if (t > 0.65f) ((t - 0.65f) / 0.35f) else 0f
-        val delta = endPos.subtract(startPos)
-        val len = delta.length()
-        if (len < 0.2) return
-        val dir = delta.multiply(1.0 / len)
+        val delta = end.subtract(start)
+        val len = delta.length().coerceAtLeast(0.01)
         val reach = len * shoot * (1f - retract)
-        val (ra, rb) = basisOf(dir)
-        val spacing = 0.34
-        val links = (reach / spacing).toInt().coerceAtMost(180)
-        val fade = 1f - retract * retract
-        // Lichtschein unter der Kette.
-        if (reach > 0.5) {
-            val tipPoint = startPos.add(dir.multiply(reach))
-            d.ribbon(VfxLayers.GLOW_ADD, listOf(startPos, tipPoint), { 0.42 }, { withAlpha(pal.alt, 0.34f * fade * it) })
-            d.billboard(VfxLayers.FLARE_ADD, tipPoint, 1.4, withAlpha(pal.alt, fade), time * 0.3)
+        val tip = start.add(delta.multiply(reach / len))
+        // Etwas Spiel, damit sie durchhängt; beim Auswerfen gestreckt, beim Einholen schlaff.
+        val slack = 1.0 + 0.06 * shoot + 0.18 * retract
+        return Triple(start, tip, max(reach * slack, 0.05))
+    }
+
+    private fun initNodes(start: Vec3d, tip: Vec3d) {
+        for (i in 0 until NODES) {
+            val p = start.lerp(tip, i / (NODES - 1.0))
+            pos[i] = p; prev[i] = p; shown[i] = p
         }
+        ready = true
+    }
+
+    override fun tick(world: ClientWorld) {
+        val (start, tip, rope) = pins(age.toFloat(), 1f)
+        if (!ready) initNodes(start, tip)
+        // Verlet: Trägheit mit Dämpfung plus Schwerkraft.
+        for (i in 1 until NODES - 1) {
+            val p = pos[i]!!
+            val v = p.subtract(prev[i]!!).multiply(DAMPING)
+            prev[i] = p
+            pos[i] = p.add(v).add(0.0, -GRAVITY, 0.0)
+        }
+        prev[0] = pos[0]; pos[0] = start
+        prev[NODES - 1] = pos[NODES - 1]; pos[NODES - 1] = tip
+        val rest = rope / (NODES - 1)
+        repeat(ITERATIONS) {
+            for (i in 0 until NODES - 1) {
+                val a = pos[i]!!
+                val b = pos[i + 1]!!
+                val d = b.subtract(a)
+                val dist = d.length()
+                if (dist < 1e-6) continue
+                val diff = (dist - rest) / dist
+                val pinA = i == 0
+                val pinB = i + 1 == NODES - 1
+                when {
+                    pinA && pinB -> {}
+                    pinA -> pos[i + 1] = b.subtract(d.multiply(diff))
+                    pinB -> pos[i] = a.add(d.multiply(diff))
+                    else -> {
+                        pos[i] = a.add(d.multiply(diff * 0.5))
+                        pos[i + 1] = b.subtract(d.multiply(diff * 0.5))
+                    }
+                }
+            }
+            pos[0] = start
+            pos[NODES - 1] = tip
+        }
+    }
+
+    override fun render(d: VfxDraw, time: Float) {
+        val t = progress(time)
+        val (start, tip, _) = pins(time, d.tickDelta)
+        if (!ready) initNodes(start, tip)
+        // Zwischen zwei Physik-Ticks weich interpolieren; die Enden folgen exakt Hand und Ziel.
+        val k = (time - age).coerceIn(0f, 1f).toDouble()
+        for (i in 0 until NODES) shown[i] = prev[i]!!.lerp(pos[i]!!, k)
+        shown[0] = start
+        shown[NODES - 1] = tip
+        val total = (0 until NODES - 1).sumOf { shown[it + 1]!!.distanceTo(shown[it]!!) }
+        if (total < 0.2) return
+        val retract = if (t > 0.65f) ((t - 0.65f) / 0.35f) else 0f
+        val fade = 1f - retract * retract
+        // Lichtschein unter der Kette (folgt der Krümmung).
+        if (total > 0.5) {
+            d.ribbon(VfxLayers.GLOW_ADD, shown.filterNotNull(), { 0.3 }, { withAlpha(pal.alt, 0.22f * fade * it) })
+            d.billboard(VfxLayers.FLARE_ADD, tip, 0.8, withAlpha(pal.alt, 0.6f * fade), time * 0.3)
+        }
+        val spacing = 0.34
+        val links = (total / spacing).toInt().coerceAtMost(180)
+        var seg = 0
+        var segStart = 0.0
         for (i in 0 until links) {
-            val f = i * spacing
-            val sag = sin(f / max(reach, 0.1) * PI) * reach * 0.012 * (1f - t)
-            val center = startPos.add(dir.multiply(f)).add(0.0, -sag, 0.0)
-            val odd = i % 2 == 0
-            val twistA = if (odd) ra else rb
-            val heat = (f / max(reach, 0.1)).toFloat().pow(2f)
+            val f = i * spacing + spacing * 0.5
+            while (seg < NODES - 2 && segStart + shown[seg + 1]!!.distanceTo(shown[seg]!!) < f) {
+                segStart += shown[seg + 1]!!.distanceTo(shown[seg]!!)
+                seg++
+            }
+            val a = shown[seg]!!
+            val b = shown[seg + 1]!!
+            val segLen = b.distanceTo(a).coerceAtLeast(1e-4)
+            val dir = b.subtract(a).multiply(1.0 / segLen)
+            val center = a.add(dir.multiply((f - segStart).coerceIn(0.0, segLen)))
+            val (ra, rb) = basisOf(dir)
+            val twistA = if (i % 2 == 0) ra else rb
+            val heat = (f / total).toFloat().coerceIn(0f, 1f).pow(2f)
             val color = withAlpha(lerpColor(0xFFC8CCD6.toInt(), pal.alt, heat), fade)
             val h = 0.21
             val w = 0.085
@@ -701,6 +861,13 @@ class ChainEffect(
             d.box(VfxLayers.CHAIN_ALPHA, center.add(axial), dir.multiply(th), lateral, normal, color)
             d.box(VfxLayers.CHAIN_ALPHA, center.subtract(axial), dir.multiply(th), lateral, normal, color)
         }
+    }
+
+    private companion object {
+        const val NODES = 18
+        const val ITERATIONS = 14
+        const val GRAVITY = 0.045
+        const val DAMPING = 0.94
     }
 }
 
@@ -736,7 +903,7 @@ class TrailEffect(
         path.addAll(points)
         if (entity.isAlive && !entity.isRemoved) path.add(anchor(d.tickDelta))
         d.ribbon(VfxLayers.ENERGY, path, { width * it.toDouble() }, { withAlpha(pal.main, it * fade) }, uScale = 0.3f)
-        d.ribbon(VfxLayers.GLOW_ADD, path, { width * 1.5 * it }, { withAlpha(pal.core, it * it * 0.55f * fade) }, uScale = 0.3f)
+        d.ribbon(VfxLayers.GLOW_ADD, path, { width * 1.1 * it }, { withAlpha(pal.core, it * it * 0.3f * fade) }, uScale = 0.3f)
     }
 }
 
@@ -787,8 +954,9 @@ class RiftEffect(
             }
         }
         d.ring(VfxLayers.RING_ADD, center, a, b, r, r * 1.12, withAlpha(pal.core, open), withAlpha(pal.main, open * 0.6f), 48, 6f, time * 0.04f)
-        d.ring(VfxLayers.GLOW_ADD, center, a, b, r * 0.95, r * 1.5, withAlpha(pal.main, open * 0.6f), withAlpha(pal.main, 0f), 48)
-        d.billboard(VfxLayers.FLARE_ADD, center.subtract(n.multiply(r * 0.5)), r * 1.4, withAlpha(pal.core, open), time * 0.05)
+        // P02: kein großer Lichthof mehr um den Riss, Kernstern kleiner.
+        d.ring(VfxLayers.GLOW_ADD, center, a, b, r * 0.95, r * 1.18, withAlpha(pal.main, open * 0.35f), withAlpha(pal.main, 0f), 48)
+        d.billboard(VfxLayers.FLARE_ADD, center.subtract(n.multiply(r * 0.5)), r * 0.8, withAlpha(pal.core, 0.6f * open), time * 0.05)
     }
 }
 
@@ -803,14 +971,14 @@ class NovaEffect(private val center: Vec3d, private val pal: Palette, private va
         val t = progress(time)
         val r = easeOut(t) * radius
         val fade = (1f - t).pow(1.3f)
-        d.sphere(VfxLayers.ENERGY, center, r.toDouble(), { view -> withAlpha(pal.main, (1f - view).pow(2.5f) * fade * 0.8f) }, 14, 24, time * 0.06f)
-        d.billboard(VfxLayers.FLARE_ADD, center, radius * 0.8 * (1f - t * 0.4f), withAlpha(pal.core, fade * 0.8f), time * 0.08)
-        d.billboard(VfxLayers.GLOW_ADD, center, radius * 1.3 * easeOut(t * 2f), withAlpha(pal.main, 0.3f * fade))
+        d.sphere(VfxLayers.ENERGY, center, r.toDouble(), { view -> withAlpha(pal.main, (1f - view).pow(2.5f) * fade * 0.6f) }, 14, 24, time * 0.06f)
+        d.billboard(VfxLayers.FLARE_ADD, center, radius * 0.5 * (1f - t * 0.4f), withAlpha(pal.core, fade * 0.5f), time * 0.08)
+        d.billboard(VfxLayers.GLOW_ADD, center, radius * 0.9 * easeOut(t * 2f), withAlpha(pal.main, 0.18f * fade))
         for (i in 0 until 2) {
             val tilt = (i * 2 - 1) * 0.5
             val a = X
             val b = Z.multiply(cos(tilt)).add(UP.multiply(sin(tilt)))
-            d.ring(VfxLayers.ENERGY, center, a, b, r * 0.92, r * 1.08, withAlpha(pal.main, fade), withAlpha(pal.main, fade), 56, 5f, time * 0.05f)
+            d.ring(VfxLayers.ENERGY, center, a, b, r * 0.94, r * 1.06, withAlpha(pal.main, 0.8f * fade), withAlpha(pal.main, 0.8f * fade), 56, 5f, time * 0.05f)
         }
     }
 }
@@ -836,9 +1004,9 @@ class RuneEffect(
         val r = radius * easeOut(t * 5f).toDouble()
         d.disc(VfxLayers.RUNE_ADD, pos, a, b, r, withAlpha(pal.main, alpha), time * 0.06)
         d.disc(VfxLayers.RUNE_ADD, pos.add(n.multiply(0.06)), a, b, r * 0.62, withAlpha(pal.core, alpha * 0.9f), -time * 0.1)
-        d.disc(VfxLayers.GLOW_ADD, pos, a, b, r * 1.4, withAlpha(pal.main, 0.3f * alpha))
-        d.wall(VfxLayers.RING_ADD, pos, a, b, n, r * 0.9, r * 0.9, r * 0.14, withAlpha(pal.main, alpha * 0.9f), withAlpha(pal.main, alpha * 0.9f), 40, 3f, time * 0.03f)
-        d.wall(VfxLayers.RAYS_ADD, pos, a, b, n, r, r * 0.78, r * 0.75, withAlpha(pal.main, alpha * 0.5f), withAlpha(pal.main, 0f), 40, 5f, -time * 0.03f)
+        // P02: kein Lichthof mehr um die Rune, Lichtwand halb so hoch und schwächer.
+        d.wall(VfxLayers.RING_ADD, pos, a, b, n, r * 0.9, r * 0.9, r * 0.12, withAlpha(pal.main, alpha * 0.8f), withAlpha(pal.main, alpha * 0.8f), 40, 3f, time * 0.03f)
+        d.wall(VfxLayers.RAYS_ADD, pos, a, b, n, r, r * 0.84, r * 0.4, withAlpha(pal.main, alpha * 0.3f), withAlpha(pal.main, 0f), 40, 5f, -time * 0.03f)
     }
 }
 
@@ -856,7 +1024,7 @@ class TornadoEffect(
         val t = progress(time)
         val alpha = envelope(t, 0.1f, 0.2f)
         val base = start.add(velocity.multiply(time.toDouble()))
-        val layers = 10
+        val layers = 8
         for (i in 0 until layers) {
             val f0 = i.toFloat() / layers
             val f1 = (i + 1f) / layers
@@ -866,7 +1034,7 @@ class TornadoEffect(
             val y = base.add(0.0, height * f0.toDouble(), 0.0).add(wobble)
             val a = alpha * (1f - f0 * 0.5f)
             d.wall(VfxLayers.ENERGY, y, X, Z, UP, r0, r1, height.toDouble() / layers, withAlpha(pal.main, a * 0.55f), withAlpha(pal.main, a * 0.55f), 20, 2f, time * 0.2f * (1f + i * 0.08f))
-            d.wall(VfxLayers.RAYS_ADD, y, X, Z, UP, r0 * 1.12, r1 * 1.12, height.toDouble() / layers, withAlpha(pal.main, a * 0.28f), withAlpha(pal.main, a * 0.06f), 20, 3f, -time * 0.18f)
+            d.wall(VfxLayers.RAYS_ADD, y, X, Z, UP, r0 * 1.12, r1 * 1.12, height.toDouble() / layers, withAlpha(pal.main, a * 0.16f), withAlpha(pal.main, a * 0.04f), 20, 3f, -time * 0.18f)
         }
         d.disc(VfxLayers.RUNE_ADD, base.add(0.0, 0.06, 0.0), X, Z, radius * 0.9, withAlpha(pal.main, alpha * 0.6f), time * 0.14)
     }
@@ -900,8 +1068,8 @@ class AuraEffect(private val entity: Entity, private val pal: Palette, private v
             }
         }
         val y = pos.add(0.0, 0.06, 0.0)
-        d.disc(VfxLayers.RUNE_ADD, y, X, Z, radius * 1.15, withAlpha(pal.main, alpha * 0.85f), time * 0.05)
-        d.ring(VfxLayers.RING_ADD, y.add(0.0, 0.03, 0.0), X, Z, radius * 1.25, radius * 1.5, withAlpha(pal.main, alpha * 0.7f), withAlpha(pal.edge, 0f), 36, 3f, -time * 0.03f)
+        d.disc(VfxLayers.RUNE_ADD, y, X, Z, radius * 1.15, withAlpha(pal.main, alpha * 0.6f), time * 0.05)
+        d.ring(VfxLayers.RING_ADD, y.add(0.0, 0.03, 0.0), X, Z, radius * 1.25, radius * 1.4, withAlpha(pal.main, alpha * 0.45f), withAlpha(pal.edge, 0f), 36, 3f, -time * 0.03f)
     }
 }
 
@@ -943,7 +1111,7 @@ class FloodEffect(
             }
         }
         d.ring(VfxLayers.ENERGY, y.add(0.0, 0.03, 0.0), X, Z, inner.toDouble(), inner + 0.8, withAlpha(pal.core, alpha), withAlpha(pal.main, 0f), 56, 8f, time * 0.05f)
-        d.wall(VfxLayers.RAYS_ADD, y, X, Z, UP, inner.toDouble(), inner.toDouble(), 1.6, withAlpha(pal.main, alpha * 0.7f), withAlpha(pal.main, 0f), 56, 7f, time * 0.03f)
+        d.wall(VfxLayers.RAYS_ADD, y, X, Z, UP, inner.toDouble(), inner.toDouble(), 1.0, withAlpha(pal.main, alpha * 0.4f), withAlpha(pal.main, 0f), 56, 7f, time * 0.03f)
     }
 }
 
@@ -982,8 +1150,8 @@ class SpearEffect(
                 }
             }
         }
-        d.ribbon(VfxLayers.GLOW_ADD, listOf(tip, tip.add(0.0, length, 0.0)), { s * (3.2 - it * 1.8) }, { withAlpha(pal.main, alpha * 0.5f * (1f - it * 0.5f)) })
-        d.ribbon(VfxLayers.GLOW_ADD, listOf(tip, tip.add(0.0, length, 0.0)), { s * 0.9 }, { withAlpha(pal.core, alpha) })
+        d.ribbon(VfxLayers.GLOW_ADD, listOf(tip, tip.add(0.0, length, 0.0)), { s * (2.0 - it * 1.0) }, { withAlpha(pal.main, alpha * 0.3f * (1f - it * 0.5f)) })
+        d.ribbon(VfxLayers.GLOW_ADD, listOf(tip, tip.add(0.0, length, 0.0)), { s * 0.8 }, { withAlpha(pal.core, alpha * 0.75f) })
         // Parierstange.
         val guard = tip.add(0.0, length * 0.24, 0.0)
         d.ring(VfxLayers.ENERGY, guard, X, Z, s * 0.5, s * 5.2, withAlpha(pal.core, alpha), withAlpha(pal.main, 0f), 40, 4f, time * 0.08f)
@@ -998,12 +1166,13 @@ class SpearEffect(
         val tip = ground.add(0.0, tipY, 0.0)
         lance(d, tip, s * (0.4 + 0.6 * form), (0.25f + 0.75f * form), time)
         // Runenkreise hoch oben und Zielkreis am Boden.
-        for (i in 0 until 3) {
+        // P02: zwei Runenkreise am Himmel statt drei; der Zielkreis am Boden bleibt (Spielinformation).
+        for (i in 0 until 2) {
             val p = ground.add(0.0, height * (1.05 + i * 0.13), 0.0)
             d.disc(VfxLayers.RUNE_ADD, p, X, Z, s * (9.0 - i * 2.2) * form, withAlpha(pal.main, form), time * 0.05 * (if (i % 2 == 0) 1 else -1))
         }
         d.disc(VfxLayers.RUNE_ADD, ground.add(0.0, 0.1, 0.0), X, Z, s * 13.0, withAlpha(pal.main, form), -time * 0.03)
-        d.ribbon(VfxLayers.GLOW_ADD, listOf(ground, tip), { s * 0.5 }, { withAlpha(pal.main, 0.35f * form) })
+        d.ribbon(VfxLayers.GLOW_ADD, listOf(ground, tip), { s * 0.4 }, { withAlpha(pal.main, 0.2f * form) })
     }
 }
 
@@ -1019,7 +1188,8 @@ class FeathersEffect(
     private class F(val vx: Double, val vy: Double, val vz: Double, val phase: Double, val size: Double, val tint: Float)
 
     private val feathers = Random(seed).let { rnd ->
-        List(count.coerceIn(1, 120)) {
+        // P02: halbe Anzahl, höchstens 24 Federn je Wolke (früher 120).
+        List(((count + 1) / 2).coerceIn(1, 24)) {
             F(
                 (rnd.nextDouble() - 0.5) * 0.5 * spread, 0.05 + rnd.nextDouble() * 0.25 * spread, (rnd.nextDouble() - 0.5) * 0.5 * spread,
                 rnd.nextDouble() * 6.28, 0.16 + rnd.nextDouble() * 0.2, rnd.nextFloat(),
@@ -1074,7 +1244,7 @@ class FallingFeatherEffect(
             vc.put(pos.add(ax).add(ay), 1f, 0f, color)
             vc.put(pos.subtract(ax).add(ay), 0f, 0f, color)
         }
-        d.billboard(VfxLayers.GLOW_ADD, pos, 1.2, withAlpha(pal.main, 0.4f * alpha))
+        d.billboard(VfxLayers.GLOW_ADD, pos, 0.8, withAlpha(pal.main, 0.22f * alpha))
     }
 }
 
@@ -1083,8 +1253,9 @@ class FlareEffect(private val center: Vec3d, private val pal: Palette, private v
     override fun render(d: VfxDraw, time: Float) {
         val t = progress(time)
         val fade = (1f - t).pow(1.2f)
-        d.billboard(VfxLayers.FLARE_ADD, center, size * (0.6 + 0.6 * easeOut(t * 2f)), withAlpha(pal.core, fade), time * 0.08)
-        d.billboard(VfxLayers.GLOW_ADD, center, size * 1.25, withAlpha(pal.main, 0.55f * fade))
+        // P02: kleiner und schwächer (Lichthof 1,25 → 0,85; 0,55 → 0,3).
+        d.billboard(VfxLayers.FLARE_ADD, center, size * (0.5 + 0.4 * easeOut(t * 2f)), withAlpha(pal.core, 0.75f * fade), time * 0.08)
+        d.billboard(VfxLayers.GLOW_ADD, center, size * 0.85, withAlpha(pal.main, 0.3f * fade))
     }
 }
 
@@ -1096,12 +1267,13 @@ class OrbitRingsEffect(private val entity: Entity, private val pal: Palette, pri
         if (isSelfFirstPerson(entity)) return
         val alpha = envelope(progress(time), 0.08f, 0.12f)
         val center = entity.lerped(d.tickDelta).add(0.0, entity.height * 0.55, 0.0)
-        for (i in 0 until 3) {
-            val tilt = time * (0.05 + i * 0.02) + i * 1.1
+        // P02: zwei Ringe statt drei.
+        for (i in 0 until 2) {
+            val tilt = time * (0.05 + i * 0.02) + i * 1.6
             val a = Vec3d(cos(tilt), sin(tilt) * 0.5, sin(tilt))
                 .normalize()
             val b = a.crossProduct(Vec3d(0.0, 1.0, 0.2)).normalize()
-            d.ring(VfxLayers.RING_ADD, center, a, b, radius * (1.0 + i * 0.16), radius * (1.14 + i * 0.16), withAlpha(pal.main, alpha), withAlpha(pal.edge, alpha * 0.7f), 40, 4f, time * 0.03f)
+            d.ring(VfxLayers.RING_ADD, center, a, b, radius * (1.0 + i * 0.16), radius * (1.12 + i * 0.16), withAlpha(pal.main, alpha * 0.75f), withAlpha(pal.edge, alpha * 0.5f), 40, 4f, time * 0.03f)
         }
     }
 }

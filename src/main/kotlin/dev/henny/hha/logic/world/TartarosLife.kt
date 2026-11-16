@@ -1,14 +1,18 @@
 package dev.henny.hha.logic.world
 
+import dev.henny.hha.Hha
 import dev.henny.hha.HhaEntities
 import dev.henny.hha.entity.ImpEntity
 import dev.henny.hha.logic.Vfx
+import dev.henny.hha.logic.boss.BossScaling
 import dev.henny.hha.logic.boss.BossTimings
 import dev.henny.hha.logic.boss.HadesFights
 import dev.henny.hha.world.HhaWorldgen
 import dev.henny.hha.world.TartarosBiomes
 import net.minecraft.entity.EntityType
 import net.minecraft.entity.SpawnReason
+import net.minecraft.entity.attribute.EntityAttributeModifier
+import net.minecraft.entity.attribute.EntityAttributes
 import net.minecraft.entity.mob.HostileEntity
 import net.minecraft.entity.mob.MobEntity
 import net.minecraft.server.MinecraftServer
@@ -24,7 +28,11 @@ import kotlin.math.sin
 /**
  * Die Bewohner des Tartaros. Unter dem offenen Himmel greifen die normalen Spawnregeln nicht, also holt diese Klasse die
  * Toten selbst aus dem Boden, passend zum Biom und in Sichtweite, aber nie direkt neben dem Spieler. Im Kampf gegen Hades und
- * rund um den Palast ist Ruhe.
+ * rund um den Palast ist Ruhe, ebenso solange ein Wächter kämpft.
+ *
+ * Überarbeitung 2 (PLAN 4.1): Wie alles im Tartaros skalieren die Bewohner über [BossScaling] (Stufe `MOB`, kein Deckel,
+ * keine Abwehr): Leben × `H(n)` und Nahkampfschaden × `D(n)` samt Regler `hades_damage`, mit `n` = Spieler im Umkreis
+ * [CROWD_RADIUS] um den, für den sie erscheinen.
  */
 object TartarosLife {
 
@@ -32,6 +40,12 @@ object TartarosLife {
     private const val CAP = 7
     private const val SEARCH = 48.0
     private const val IMP_GROUP_RADIUS = 24.0
+
+    /** Wer so nah beim auslösenden Spieler steht, zählt für die Skalierung mit (wie bei den Gegnern des Olymp). */
+    private const val CROWD_RADIUS = 24.0
+
+    /** Kennung der Skalierungs-Modifikatoren (einmal je Bewohner, beim Erscheinen). */
+    private val SCALE_ID = Hha.id("tartaros_crowd")
     private var clock = 0
 
     fun tick(server: MinecraftServer) {
@@ -59,8 +73,9 @@ object TartarosLife {
         if (!world.getBlockState(pos.down()).fluidState.isEmpty) return
         if (world.structureAccessor.getStructureContaining(pos, HhaWorldgen.HADES_PALACE_TAG).hasChildren()) return
         val type = chooseMob(world, pos) ?: return
+        val crowd = BossScaling.crowd(world.players.filter { it.squaredDistanceTo(player) < CROWD_RADIUS * CROWD_RADIUS })
         if (type == HhaEntities.IMP) {
-            spawnImps(world, pos)
+            spawnImps(world, pos, crowd)
             return
         }
         val mob = type.create(world, SpawnReason.NATURAL) as? MobEntity ?: return
@@ -68,6 +83,7 @@ object TartarosLife {
         mob.refreshPositionAndAngles(x + 0.5, y + height, z + 0.5, random.nextFloat() * 360f, 0f)
         if (!world.isSpaceEmpty(mob)) return
         mob.initialize(world, world.getLocalDifficulty(pos), SpawnReason.NATURAL, null)
+        scale(mob, crowd)
         world.spawnEntity(mob)
         if (height == 0.0) {
             Vfx.pillar(world, Vfx.Style.HADES, mob.entityPos, 1.1f, 5f, 16)
@@ -75,8 +91,28 @@ object TartarosLife {
         }
     }
 
+    /**
+     * Skalierung eines Bewohners nach Spielerzahl (Stufe `MOB`): Leben × `H(n)`, Nahkampfschaden × `D(n)`
+     * (mit `hades_damage`); danach volles Leben. Wesen ohne Nahkampfwert (Ghast, Lohe) behalten ihre Geschosse.
+     */
+    private fun scale(mob: MobEntity, crowd: Int) {
+        val health = BossScaling.health(crowd).toDouble()
+        val damage = BossScaling.damage(crowd, BossScaling.Family.TARTAROS).toDouble()
+        if (health != 1.0) {
+            mob.getAttributeInstance(EntityAttributes.MAX_HEALTH)?.addPersistentModifier(
+                EntityAttributeModifier(SCALE_ID, health - 1.0, EntityAttributeModifier.Operation.ADD_MULTIPLIED_TOTAL),
+            )
+        }
+        if (damage != 1.0) {
+            mob.getAttributeInstance(EntityAttributes.ATTACK_DAMAGE)?.addPersistentModifier(
+                EntityAttributeModifier(SCALE_ID, damage - 1.0, EntityAttributeModifier.Operation.ADD_MULTIPLIED_TOTAL),
+            )
+        }
+        mob.health = mob.maxHealth
+    }
+
     /** Teufelchen kommen allein oder zu zweit, nie mehr als [BossTimings.Imp.GROUP] in einer Gruppe (Plan 4.6). */
-    private fun spawnImps(world: ServerWorld, pos: BlockPos) {
+    private fun spawnImps(world: ServerWorld, pos: BlockPos, crowd: Int) {
         val random = world.random
         val near = world.getEntitiesByClass(ImpEntity::class.java, Box(pos).expand(IMP_GROUP_RADIUS)) { it.isAlive }.size
         val room = BossTimings.Imp.GROUP - near
@@ -88,6 +124,7 @@ object TartarosLife {
             imp.refreshPositionAndAngles(pos.x + 0.5 + i * 1.5, pos.y + height, pos.z + 0.5, random.nextFloat() * 360f, 0f)
             if (!world.isSpaceEmpty(imp)) return
             imp.initialize(world, world.getLocalDifficulty(pos), SpawnReason.NATURAL, null)
+            scale(imp, crowd)
             world.spawnEntity(imp)
         }
     }

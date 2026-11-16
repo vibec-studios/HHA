@@ -77,8 +77,8 @@ object UltraMode {
         Vfx.pillar(world, ultraStyle, player.entityPos, 2.4f, 36f, 40)
         Vfx.shockwave(world, ultraStyle, player.entityPos, 14f, 30, 5f)
         Vfx.nova(world, ultraStyle, player.entityPos.add(0.0, 1.2, 0.0), 8f, 18)
-        Vfx.screenFlash(player, ultraStyle, 0.7f, 18)
-        Vfx.shake(world, player.entityPos, 5f, 24, 32f)
+        // Effekte ruhiger (PLAN 9.1): kein Bildschirmblitz bei Fähigkeiten, Schütteln höchstens Vfx.SHAKE_FREE_MAX.
+        Vfx.shake(world, player.entityPos, Vfx.SHAKE_FREE_MAX, Vfx.SHAKE_FREE_MAX_TICKS, 32f)
 
         player.networkHandler.sendPacket(TitleFadeS2CPacket(10, 50, 20))
         if (hell) {

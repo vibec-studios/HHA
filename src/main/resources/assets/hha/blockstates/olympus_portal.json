@@ -1,0 +1,11 @@
+{
+  "variants": {
+    "axis=x": {
+      "model": "hha:block/olympus_portal"
+    },
+    "axis=z": {
+      "model": "hha:block/olympus_portal",
+      "y": 90
+    }
+  }
+}

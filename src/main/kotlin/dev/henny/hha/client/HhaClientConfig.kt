@@ -24,6 +24,7 @@ object HhaClientConfig {
         "vfx_3d" to true,
         "screen_shake" to true,
         "tartaros_shader" to true,
+        "portal_shader" to true,
     )
 
     /** Zahlenwerte: Skalierung, Verschiebung, Partikel-Dichte. */

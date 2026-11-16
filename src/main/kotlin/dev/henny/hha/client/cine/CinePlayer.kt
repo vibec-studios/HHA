@@ -1,6 +1,7 @@
 package dev.henny.hha.client.cine
 
 import dev.henny.hha.HhaSounds
+import dev.henny.hha.client.gui.Ui
 import dev.henny.hha.client.vfx.SkyMood
 import dev.henny.hha.client.vfx.easeInOut
 import dev.henny.hha.logic.Vfx
@@ -286,6 +287,9 @@ object CinePlayer {
             Cine.SPEAKER_SHADE -> 0.72f + (System.nanoTime() % 4L) * 0.02f
             Cine.SPEAKER_HADES -> 0.46f + (System.nanoTime() % 3L) * 0.02f
             Cine.SPEAKER_KRONOS -> 0.36f + (System.nanoTime() % 3L) * 0.02f
+            Cine.SPEAKER_HEKATE -> 0.8f + (System.nanoTime() % 4L) * 0.02f
+            Cine.SPEAKER_BRONTES -> 0.40f + (System.nanoTime() % 3L) * 0.02f
+            Cine.SPEAKER_KRATOS -> 0.55f + (System.nanoTime() % 3L) * 0.02f
             else -> return
         }
         client.soundManager.play(PositionedSoundInstance.ui(HhaSounds.VOICE, pitch, if (speaker == Cine.SPEAKER_ZEUS) 0.9f else 0.45f))
@@ -360,55 +364,70 @@ object CinePlayer {
         else PhaseBar.render(context, tickDelta)
     }
 
-    /** Rechts unten in der Letterbox: welche Taste, wie lange noch, und wer schon überspringen will. */
+    /** Rechts unten in der Letterbox: welche Taste, wie lange noch, und wer schon überspringen will (als Etikett). */
     private fun renderSkipHint(context: DrawContext, width: Int, height: Int, tickDelta: Float) {
         val key = skipKey ?: return
         if (bars < 0.6f || key.isUnbound) return
         val client = MinecraftClient.getInstance()
         val font = client.textRenderer
-        val text = if (skipTotal > 1) Text.translatable("hha.cine.skip.votes", key.boundKeyLocalizedText, skipVotes, skipTotal)
+        val raw = if (skipTotal > 1) Text.translatable("hha.cine.skip.votes", key.boundKeyLocalizedText, skipVotes, skipTotal)
         else Text.translatable("hha.cine.skip", key.boundKeyLocalizedText)
+        val text = Ui.labelText(raw.string)
         val textWidth = font.getWidth(text)
         val x = width - textWidth - 10
         val y = height - 14
-        context.drawTextWithShadow(font, text, x, y, 0xB0F0EAD8.toInt())
+        context.drawText(font, text, x, y, 0xB0A1A1AA.toInt(), false)
         if (skipHeld > 0) {
             val progress = ((skipHeld + (if (skipHeld < SKIP_HOLD_TICKS) tickDelta else 0f)) / SKIP_HOLD_TICKS).coerceIn(0f, 1f)
-            context.fill(x, y + 10, x + (textWidth * progress).toInt(), y + 11, 0xFFFFD75A.toInt())
+            context.fill(x, y + 9, x + textWidth - 1, y + 10, 0x30FFFFFF)
+            context.fill(x, y + 9, x + ((textWidth - 1) * progress).toInt(), y + 10, Ui.GOLD)
         }
     }
 
+    /**
+     * Untertitel im Stil der Website-Hinweise (.trick): dunkle Platte mit feinem Rand, links ein 2-px-Streifen in der
+     * Farbe des Sprechers, darüber der Name als Etikett, darunter der Text in der Spielschrift.
+     */
     private fun renderLine(context: DrawContext, l: Line, width: Int, height: Int) {
         val client = MinecraftClient.getInstance()
         val font = client.textRenderer
         val fadeOut = ((l.ticks + 6 - l.age) / 6f).coerceIn(0f, 1f)
-        val alpha = ((l.age / 4f).coerceAtMost(1f) * fadeOut * 255f).toInt().coerceIn(4, 255) shl 24
+        val a = ((l.age / 4f).coerceAtMost(1f) * fadeOut).coerceIn(0.02f, 1f)
+        val alpha = (a * 255f).toInt().coerceIn(4, 255) shl 24
         val full = l.text.string
         val shown = full.substring(0, visibleChars(l))
         val boxWidth = (width * 0.72f).toInt().coerceAtMost(420)
         val lines = font.wrapLines(Text.literal(shown), boxWidth)
         val fullLines = font.wrapLines(l.text, boxWidth).size
-        val boxHeight = 10 * fullLines + 22
-        val x = (width - boxWidth) / 2
-        val y = height - (height * 0.11f).toInt() - boxHeight - 6
-        context.fill(x - 8, y - 4, x + boxWidth + 8, y + boxHeight, (alpha ushr 25 shl 24))
         val speaker = when (l.speaker) {
             Cine.SPEAKER_HERMES -> Text.translatable("hha.hermes.speaker.hermes") to 0xFFD75A
             Cine.SPEAKER_ZEUS -> Text.translatable("hha.hermes.speaker.zeus") to 0xA8D8FF
             Cine.SPEAKER_SHADE -> Text.translatable("hha.hermes.speaker.shade") to 0x62F27A
             Cine.SPEAKER_HADES -> Text.translatable("hha.hermes.speaker.hades") to 0x9CFFB0
             Cine.SPEAKER_KRONOS -> Text.translatable("hha.hermes.speaker.kronos") to 0xFFC86A
+            // Neue Bosse: Namensfarbe aus ihrer Gefahrenpalette (nicht Gold: Gold heißt „sicher/offen“).
+            Cine.SPEAKER_HEKATE -> Text.translatable("hha.hekate.speaker") to 0xC9B8FF
+            Cine.SPEAKER_BRONTES -> Text.translatable("hha.brontes.speaker") to 0xFF8A3D
+            Cine.SPEAKER_KRATOS -> Text.translatable("hha.kratos.speaker") to 0xE0483C
             else -> null
         }
-        var textY = y + 2
+        val boxHeight = 10 * fullLines + (if (speaker != null) 22 else 10)
+        val x = (width - boxWidth) / 2
+        val y = height - (height * 0.11f).toInt() - boxHeight - 6
+        val stripe = speaker?.second ?: 0x6B6B75
+        context.fill(x - 10, y - 6, x + boxWidth + 8, y + boxHeight, Ui.alpha(0xB0000000.toInt(), a))
+        Ui.frame(context, x - 10, y - 6, x + boxWidth + 8, y + boxHeight, Ui.alpha(Ui.LINE, a))
+        context.fill(x - 10, y - 6, x - 8, y + boxHeight, alpha or stripe)
+        var textY = y
         if (speaker != null) {
-            context.drawTextWithShadow(font, speaker.first, x, textY, alpha or speaker.second)
+            context.drawText(font, Ui.labelText(speaker.first.string), x, textY, alpha or speaker.second, false)
             textY += 12
         }
         val color = when (l.speaker) {
             Cine.SPEAKER_ZEUS -> 0xE6F2FF
+            Cine.SPEAKER_HEKATE -> 0xE4DCFF
             Cine.SPEAKER_NARRATOR -> 0xC8C4B8
-            else -> 0xFFFFFF
+            else -> 0xF4F4F5
         }
         // Zeus' Worte beben.
         val jitter = l.speaker == Cine.SPEAKER_ZEUS
@@ -419,28 +438,42 @@ object CinePlayer {
         }
     }
 
+    /**
+     * Titelkarte wie eine Überschrift der Website: dunkles Band mit feinen Linien, Titel in der Pixel-Schrift (ganzzahlig
+     * skaliert, damit sie scharf bleibt), darunter eine Lichtlinie, die von der Mitte aus wächst, und der Untertitel.
+     * Statt zu wachsen steigt der Titel beim Erscheinen ein paar Pixel auf (Website: [data-reveal]).
+     */
     private fun renderTitle(context: DrawContext, card: TitleCard, width: Int, height: Int, tickDelta: Float) {
         val client = MinecraftClient.getInstance()
         val font = client.textRenderer
         val age = card.age + tickDelta
-        val alpha = (minOf(age / 10f, (card.ticks - age) / 12f).coerceIn(0f, 1f) * 255f).toInt().coerceIn(4, 255) shl 24
-        val scale = 3f
-        val grow = 1f + (1f - (age / 14f).coerceIn(0f, 1f)) * 0.18f
+        val a = minOf(age / 10f, (card.ticks - age) / 12f).coerceIn(0.02f, 1f)
+        val alpha = (a * 255f).toInt().coerceIn(4, 255) shl 24
+        val cy = (height * 0.36f).toInt()
         // Dunkles Band, damit der Titel auch vor hellem Marmor lesbar bleibt.
-        val bandTop = (height * 0.36f - 22f).toInt()
-        context.fill(0, bandTop, width, bandTop + 58, (alpha ushr 25 shl 24))
-        val matrices = context.matrices
-        matrices.pushMatrix()
-        matrices.translate(width / 2f, height * 0.36f)
-        matrices.scale(scale * grow, scale * grow)
-        val titleWidth = font.getWidth(card.title)
-        context.drawTextWithShadow(font, card.title, -titleWidth / 2, -4, alpha or 0xFFD75A)
-        matrices.popMatrix()
-        val lineWidth = (titleWidth * scale * 0.75f * (age / 16f).coerceIn(0f, 1f)).toInt()
-        val lineY = (height * 0.36f + 18f).toInt()
-        context.fill(width / 2 - lineWidth, lineY, width / 2 + lineWidth, lineY + 1, alpha or 0xFFD75A)
+        val bandTop = cy - 22
+        context.fill(0, bandTop, width, bandTop + 58, Ui.alpha(0x99000000.toInt(), a))
+        Ui.hline(context, 0, width, bandTop, Ui.alpha(Ui.LINE, a))
+        Ui.hline(context, 0, width, bandTop + 57, Ui.alpha(Ui.LINE, a))
+        val titleText = card.title.string
+        val scale = (3 downTo 1).firstOrNull { Ui.displayWidth(font, titleText, it) <= width - 32 } ?: 1
+        val rise = ((1f - (age / 14f).coerceIn(0f, 1f)).let { 1f - (1f - it) * (1f - it) } * 6f).toInt()
+        val titleWidth = Ui.displayWidth(font, titleText, scale)
+        // Versalien sind 5 Schriftpixel hoch und beginnen 2 Pixel unter y: mittig auf cy setzen.
+        Ui.display(context, font, titleText, (width - titleWidth) / 2, cy - (9 * scale) / 2 + rise, alpha or 0xF4F4F5, scale)
+        val lineY = cy + (5 * scale) / 2 + 6
+        val grow = Ui.easeOutCubic(age / 16f)
+        val half = (titleWidth * 0.5f * grow).toInt()
+        // Lichtlinie: in der Mitte hell, zu den Enden hin auslaufend (Website: .feature-sec::before)
+        val steps = 12
+        for (i in 0 until steps) {
+            val x1 = width / 2 - half + half * 2 * i / steps
+            val x2 = width / 2 - half + half * 2 * (i + 1) / steps
+            val k = 1f - kotlin.math.abs((i + 0.5f) / steps * 2f - 1f)
+            context.fill(x1, lineY, x2, lineY + 1, Ui.alpha(0xFFF4F4F5.toInt(), a * (0.15f + 0.65f * k)))
+        }
         val subWidth = font.getWidth(card.subtitle)
-        context.drawTextWithShadow(font, card.subtitle, (width - subWidth) / 2, lineY + 6, alpha or 0xF0EAD8)
+        context.drawTextWithShadow(font, card.subtitle, (width - subWidth) / 2, lineY + 6, alpha or 0xA1A1AA)
     }
 
     private const val CHARS_PER_TICK = 1.15f

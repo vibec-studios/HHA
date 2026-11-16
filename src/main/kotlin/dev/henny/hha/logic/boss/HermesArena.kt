@@ -12,16 +12,16 @@ import kotlin.math.floor
 import kotlin.math.hypot
 
 /**
- * Das Himmelsforum: eine schwebende Marmorscheibe hoch über dem Beschwörungsort. Jeder überschriebene Block
- * wird gemerkt und am Ende exakt wiederhergestellt; zwischen den Stages färbt sich der Boden wellenförmig um.
+ * Das Himmelsforum: eine schwebende Marmorscheibe hoch über dem Tempel der Insel B (bzw. beim Test über dem Standort).
+ * Jeder überschriebene Block wird gemerkt und am Ende exakt wiederhergestellt; zwischen den Stages färbt sich der Boden
+ * wellenförmig um.
  */
-class HermesArena(private val world: ServerWorld, val center: BlockPos, private val permanent: Boolean = false) {
+class HermesArena(private val world: ServerWorld, val center: BlockPos) {
 
     /** Innerhalb dieser Zone lässt der Kampf keine Änderung an Blöcken zu. */
     fun contains(pos: BlockPos): Boolean {
-        val reach = RADIUS + if (permanent) 14 else 4
-        if (pos.y !in (center.y - 14)..(center.y + if (permanent) 44 else 60)) return false
-        return hypot((pos.x - center.x).toDouble(), (pos.z - center.z).toDouble()) <= reach
+        if (pos.y !in (center.y - 14)..(center.y + 60)) return false
+        return hypot((pos.x - center.x).toDouble(), (pos.z - center.z).toDouble()) <= RADIUS + 4
     }
 
 
@@ -38,8 +38,6 @@ class HermesArena(private val world: ServerWorld, val center: BlockPos, private 
 
     fun build(stage: Int) {
         forceChunks()
-        // Die Hades-Halle steht bereits; sie wird nicht gebaut und nicht wieder abgetragen.
-        if (permanent) return
         for (dx in -RADIUS..RADIUS) {
             for (dz in -RADIUS..RADIUS) {
                 val r = hypot(dx.toDouble(), dz.toDouble())
@@ -73,7 +71,6 @@ class HermesArena(private val world: ServerWorld, val center: BlockPos, private 
     /** Färbt den Boden der neuen Stage ein; die Welle läuft von der Mitte nach außen. */
     fun repaint(stage: Int) {
         repaintQueue.clear()
-        if (permanent) return
         val entries = ArrayList<Triple<Double, BlockPos, BlockState>>()
         for (dx in -RADIUS..RADIUS) {
             for (dz in -RADIUS..RADIUS) {

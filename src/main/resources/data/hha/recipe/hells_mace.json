@@ -1,7 +1,16 @@
 {
+  "fabric:load_conditions": [
+    {
+      "condition": "hha:config",
+      "key": "relic_crafting"
+    }
+  ],
   "type": "minecraft:smithing_transform",
   "template": "hha:jotunheims_upgrade_template",
   "base": "minecraft:mace",
   "addition": "hha:hell_ingot",
-  "result": { "id": "hha:hells_mace", "count": 1 }
+  "result": {
+    "id": "hha:hells_mace",
+    "count": 1
+  }
 }

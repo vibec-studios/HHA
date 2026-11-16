@@ -304,61 +304,15 @@ object BossTimings {
 
         /** Erschöpfung endet: so lange steigt er wieder auf. */
         const val EXHAUST_RISE = 10
-    }
 
-    // ---------------------------------------------------------------------------------------------
-    // Der Schatten des Boten (Plan 4.3). Spiegel-Stoß, Griff, Kreuzungen, Säulen, Lanzen, Sturzflug und Letztes Wort
-    // laufen mit den Zeiten aus [Hermes].
-    // ---------------------------------------------------------------------------------------------
-
-    object Shade {
-        /** Er ist immer verwundbar, dafür schneller: kürzere Pause zwischen den Angriffen. */
-        const val PAUSE = 18
-
-        /** Die Bahnen des Spiegel-Stoßes brennen so lange als Aschespur nach … */
-        const val ASH_TRAIL = 60
-        /** … und schaden alle so viele Ticks. */
-        const val ASH_TICK = 10
-
-        // --- Rauchschritt (SMOKE) ---
-        const val SMOKE_COLUMNS = 3
-        const val SMOKE_SPACING = 6f
-        /** In der echten Säule glimmen ab hier zwei Augen. */
-        const val SMOKE_EYES = 12
-        /** Er tritt heraus und schlägt. */
-        const val SMOKE_WINDUP = 24
-        const val SMOKE_END = 36
-        const val SMOKE_RADIUS = 3f
-        /** Danach SKID, offen. */
-        const val SMOKE_WINDOW = 24
-        /** Ein Treffer in den letzten so vielen Ticks vor dem Heraustreten lässt ihn stolpern. */
-        const val SMOKE_INTERCEPT = 12
-
-        // --- Die Zwillinge: Am Ende jeder Bahn schnappt die Schlange einmal zu ---
-        const val TWINS_SNAP_WINDUP = 12
-        const val TWINS_SNAP_RADIUS = 3f
-
-        // --- Fährmanns Welle ---
-        /** Ansage: Ringband am Wasserrand (Ring ab Radius 6 = Fläche). */
-        const val FERRY_WINDUP = 30
-        /** Breite des angesagten Ringbands. */
-        const val FERRY_BAND = 2.5f
-        /** So lange läuft der Ring vom Wasserrand zur Mitte. */
-        const val FERRY_TRAVEL = 40
-        const val FERRY_WAVES = 2
-        /** Abstand der beiden Wellen (Beginn der Ansage bis Beginn der nächsten). */
-        const val FERRY_GAP = 30
-
-        // --- Münzwurf (COIN) ---
-        /** COIN: Schnippen 0–6, Blick nach oben, Fangen bei [COIN_AIR]. */
-        const val COIN_FLICK = 6
-        const val COIN_AIR = 30
-        /** Danach füllt sich die unsichere Fläche so lange, dann der Treffer. */
-        const val COIN_FILL = 60
-        const val COIN_SAFE_RADIUS = 12f
-
-        /** Phase III: Erschöpfung nach jedem Muster (offen). */
-        const val EXHAUST = 80
+        // --- Konter „Abfangen in der Luft“ (Überarbeitung 2, PLAN 4.3) ---
+        /** Die Ansage ist der gemeinsame Konter-Kreis ([BossDefense.COUNTER_TICKS], Pose DIVE geduckt); danach schießt er so lange senkrecht hoch … */
+        const val COUNTER_RISE = 3
+        /** … so hoch (Blöcke) … */
+        const val COUNTER_HEIGHT = 5.0
+        /** … und sinkt so lange zurück; danach steht er noch so lange. */
+        const val COUNTER_RETURN = 8
+        const val COUNTER_RECOVER = 8
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -583,7 +537,7 @@ object BossTimings {
         const val HALT_RESUME = 54
         const val HALT_IMPACT_DELAY = 16
         const val HALT_HIT = 70
-        /** Slowness II für die Spieler, so lange. */
+        /** Slowness I für die Spieler, so lange (Überarbeitung 2: nie über Stufe I, PLAN 12.3). */
         const val HALT_SLOWNESS = 30
         const val HALT_RADIUS = 2.8f
         /** Kreise neben jedem Spieler zusätzlich zu dem unter ihm. */
@@ -670,11 +624,7 @@ object BossTimings {
     // ---------------------------------------------------------------------------------------------
 
     object Guardian {
-        /** Höchste Aktionsnummer; 0 beendet die laufende Aktion. */
-        const val ACTION_KINDS = 20
-
-        /** Nach so vielen Ticks fällt eine Aktion auf dem Client von selbst auf 0 zurück. */
-        const val ACTION_MAX = 200
+        // Aktionsbereich und Höchstdauer stehen seit Überarbeitung 2 in `MiniBossKit.ACTION_KINDS`/`ACTION_MAX`.
 
         // --- Ergänzt von K4 (Plan 4.6 nennt sie nicht als Zahl) ---
         /** Leine: Weiter als so viele Blöcke von der Mitte seines Platzes geht er zurück und heilt. */
@@ -690,6 +640,24 @@ object BossTimings {
         const val LONELY = 600
         /** Auftritt: Brüllen, bevor der erste Angriff kommt. */
         const val ENTRANCE = 30
+
+        // --- Überarbeitung 2: die Kette zu Hades (PLAN 4.1, 5.7) ---
+        /** Pausen der Tartaros-Wächter × so viel (Ansagen bleiben). */
+        const val TARTAROS_PAUSE_FACTOR = 0.8
+        /** Ab so vielen gesprengten Gliedern zusätzlich Pausen × [CHAIN_PAUSE_FACTOR]. */
+        const val CHAIN_PAUSE_FROM = 2
+        const val CHAIN_PAUSE_FACTOR = 0.85
+        /** Ab so vielen gesprengten Gliedern hängt er nach jedem [CHAIN_DOUBLE_EVERY]-ten Angriff einen zweiten an. */
+        const val CHAIN_DOUBLE_FROM = 4
+        const val CHAIN_DOUBLE_EVERY = 3
+
+        /**
+         * Konter `ANTI_AIR` (Aktion 20) im Modell: Ausholen bis [ANTI_AIR_RAISE], Stoß nach oben bei [ANTI_AIR_HIT]
+         * (= Ende der Ansage, `BossDefense.COUNTER_TICKS`), zurück bis [ANTI_AIR_END] (Ansage + Nachlauf des Konters).
+         */
+        const val ANTI_AIR_RAISE = 6
+        const val ANTI_AIR_HIT = BossDefense.COUNTER_TICKS
+        const val ANTI_AIR_END = BossDefense.COUNTER_TICKS * 2
     }
 
     /** Der Kerkermeister (`WardenAction`). */
@@ -949,14 +917,36 @@ object BossTimings {
         const val GROUP = 2
     }
 
-    /** Hermes als Jäger im Tartaros (Plan 4.6). */
-    object Hunter {
-        /** Schnellleiste höchstens einmal je 5 Minuten … */
-        const val STEAL_COOLDOWN = 6000
-        /** … und nur so viele Vertauschungen. */
-        const val STEAL_SWAPS = 2
-
-        /** Mindestabstand zwischen zwei Auftritten (45 s). */
-        const val MIN_GAP = 900
+    /**
+     * Hermes als Seelenführer im Tartaros (Überarbeitung 2, PLAN 5.7, `TartarosGuide`); ersetzt den Jäger der ersten
+     * Fassung. Er greift nicht an und tauscht nichts.
+     */
+    object Guide {
+        /** So lange steht der Geist da (6 s) … */
+        const val GHOST = 120
+        /** … so weit vor dem Spieler in Blickrichtung. */
+        const val GHOST_DISTANCE = 8.0
+        /** Nach der Ankunft und nach einem Wächter-Sieg so viele Ticks bis zum Auftritt (Titel, Beute, Säule). */
+        const val ARRIVE_DELAY = 50
+        const val VICTORY_DELAY = 90
+        /** So lange zeigt die goldene Säule zum Ziel; der Client bekommt sie alle [BEACON_REFRESH] Ticks neu. */
+        const val BEACON = 2400
+        const val BEACON_REFRESH = 60
+        /** Lebensdauer jeder gesendeten Säule (etwas länger als [BEACON_REFRESH], damit sie nicht flackert). */
+        const val BEACON_LIFE = 100
+        /** Suche je Glied und Welt höchstens alle so viele Ticks (10 s). */
+        const val SEARCH_COOLDOWN = 200
+        /** Suchradius in Chunks (PLAN 5.7). */
+        const val SEARCH_CHUNKS = 100
+        /** Strafstätten: höchstens so viele Bauwerke prüfen, bis die Variante passt. */
+        const val SEARCH_TRIES = 8
+        /** Ab so weit vom Ort der letzten Suche wird neu gesucht (Ergebnis gilt sonst je Welt). */
+        const val SEARCH_MOVE = 800.0
+        /** Ein Geist je Gruppe: Steht schon einer so nah beim Spieler, kommt kein zweiter. */
+        const val GROUP_RADIUS = 24.0
+        /** Wer so nah am Bauwerk eines Sieges steht, bekommt danach den Wegweiser. */
+        const val VICTORY_RADIUS = 90.0
+        /** Die grüne Säule zum Palast (erst bei 5/5) verschwindet, wenn man so nah ist. */
+        const val PALACE_NEAR = 70.0
     }
 }

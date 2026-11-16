@@ -141,7 +141,8 @@ class BurstParticle(
 
     init {
         setMaxAge(10)
-        scale(4.0f)
+        // P02: kleiner (früher 4,0), damit der vollhelle Stoß nicht blendet.
+        scale(3.0f)
         velocityX = 0.0
         velocityY = 0.0
         velocityZ = 0.0

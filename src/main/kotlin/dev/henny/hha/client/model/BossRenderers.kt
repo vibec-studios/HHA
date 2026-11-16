@@ -1,6 +1,9 @@
 package dev.henny.hha.client.model
 
 import dev.henny.hha.Hha
+import dev.henny.hha.HhaEntities
+import net.fabricmc.fabric.api.client.rendering.v1.EntityModelLayerRegistry
+import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry
 import net.minecraft.client.render.OverlayTexture
 import net.minecraft.client.render.RenderLayer
 import net.minecraft.client.render.command.OrderedRenderCommandQueue
@@ -36,6 +39,17 @@ object BossLayers {
     val IXION = EntityModelLayer(Hha.id("ixion"), "main")
     val TANTALUS = EntityModelLayer(Hha.id("tantalus"), "main")
     val KAMPE = EntityModelLayer(Hha.id("kampe"), "main")
+
+    // Überarbeitung 2: Olymp
+    val HEKATE = EntityModelLayer(Hha.id("hekate"), "main")
+    val BRONTES = EntityModelLayer(Hha.id("brontes"), "main")
+    val KRATOS = EntityModelLayer(Hha.id("kratos"), "main")
+    val BIA = EntityModelLayer(Hha.id("bia"), "main")
+    val ZEUS = EntityModelLayer(Hha.id("zeus"), "main")
+    val KURETE = EntityModelLayer(Hha.id("kurete"), "main")
+    val GRIFFIN = EntityModelLayer(Hha.id("griffin"), "main")
+    val AUTOMATON = EntityModelLayer(Hha.id("automaton"), "main")
+    val OLYMP_PROPS = EntityModelLayer(Hha.id("olymp_props"), "main")
 }
 
 /**
@@ -60,6 +74,32 @@ object GuardianScale {
 
     /** 116 Einheiten aufgerichtet → 4,6 Blöcke. */
     const val KAMPE = 0.64f
+
+    // Überarbeitung 2 (PLAN 10.3): Modellhöhe × Faktor / 16 = Höhe im Spiel.
+
+    /** 74 Einheiten (schwebt 6 über dem Boden) → 3,2 Blöcke. */
+    const val HEKATE = 0.69f
+
+    /** 124 Einheiten → 5,4 Blöcke. */
+    const val BRONTES = 0.70f
+
+    /** 100 Einheiten → 4,4 Blöcke. */
+    const val KRATOS = 0.70f
+
+    /** 92 Einheiten → 4,0 Blöcke. */
+    const val BIA = 0.70f
+
+    /** 116 Einheiten → 5,0 Blöcke. */
+    const val ZEUS = 0.69f
+
+    /** 48 Einheiten → 2,1 Blöcke. */
+    const val KURETE = 0.70f
+
+    /** 42 hoch, 60 lang → 1,8 Blöcke. */
+    const val GRIFFIN = 0.69f
+
+    /** 64 Einheiten → 2,8 Blöcke. */
+    const val AUTOMATON = 0.70f
 }
 
 /** Zeichnet eine Leuchtmaske über ein Modell — vollhell, unabhängig vom Licht. */
@@ -106,7 +146,37 @@ object BossClient {
         net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry.register(dev.henny.hha.HhaEntities.HERMA, ::HermaRenderer)
         net.fabricmc.fabric.api.client.rendering.v1.BlockRenderLayerMap.putBlock(dev.henny.hha.HhaBlocks.GREEN_FIRE, net.minecraft.client.render.BlockRenderLayer.CUTOUT)
         net.fabricmc.fabric.api.client.rendering.v1.BlockRenderLayerMap.putBlock(dev.henny.hha.HhaBlocks.HADES_PORTAL, net.minecraft.client.render.BlockRenderLayer.TRANSLUCENT)
+        net.fabricmc.fabric.api.client.rendering.v1.BlockRenderLayerMap.putBlock(dev.henny.hha.HhaBlocks.OLYMPUS_PORTAL, net.minecraft.client.render.BlockRenderLayer.TRANSLUCENT)
         net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry.register(dev.henny.hha.HhaEntities.DIVINE_PARCEL, ::ParcelRenderer)
         net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry.register(dev.henny.hha.HhaEntities.HERMES_BOLT, ::BoltRenderer)
+        registerOlymp()
+    }
+
+    /** Überarbeitung 2: Schichten und Renderer der neuen Bosse, Gegner und Requisiten des Olymp (PLAN 10.1/10.3). */
+    private fun registerOlymp() {
+        EntityModelLayerRegistry.registerModelLayer(BossLayers.HEKATE) { HhaModelData.hekate() }
+        EntityModelLayerRegistry.registerModelLayer(BossLayers.BRONTES) { HhaModelData.brontes() }
+        EntityModelLayerRegistry.registerModelLayer(BossLayers.KRATOS) { HhaModelData.kratos() }
+        EntityModelLayerRegistry.registerModelLayer(BossLayers.BIA) { HhaModelData.bia() }
+        EntityModelLayerRegistry.registerModelLayer(BossLayers.ZEUS) { HhaModelData.zeus() }
+        EntityModelLayerRegistry.registerModelLayer(BossLayers.KURETE) { HhaModelData.kurete() }
+        EntityModelLayerRegistry.registerModelLayer(BossLayers.GRIFFIN) { HhaModelData.griffin() }
+        EntityModelLayerRegistry.registerModelLayer(BossLayers.AUTOMATON) { HhaModelData.automaton() }
+        EntityModelLayerRegistry.registerModelLayer(BossLayers.OLYMP_PROPS) { HhaModelData.olymp_props() }
+        EntityRendererRegistry.register(HhaEntities.HEKATE) {
+            GuardianRenderer(it, HekateModel(it.getPart(BossLayers.HEKATE)), "hekate", 0.6f, GuardianScale.HEKATE) { s -> if (s.echo) "hekate_echo" else null }
+        }
+        EntityRendererRegistry.register(HhaEntities.BRONTES) { GuardianRenderer(it, BrontesModel(it.getPart(BossLayers.BRONTES)), "brontes", 1.3f, GuardianScale.BRONTES) }
+        EntityRendererRegistry.register(HhaEntities.KRATOS) { GuardianRenderer(it, KratosModel(it.getPart(BossLayers.KRATOS)), "kratos", 0.9f, GuardianScale.KRATOS) }
+        EntityRendererRegistry.register(HhaEntities.BIA) { GuardianRenderer(it, BiaModel(it.getPart(BossLayers.BIA)), "bia", 0.7f, GuardianScale.BIA) }
+        EntityRendererRegistry.register(HhaEntities.ZEUS) { GuardianRenderer(it, ZeusModel(it.getPart(BossLayers.ZEUS)), "zeus", 0.9f, GuardianScale.ZEUS) }
+        EntityRendererRegistry.register(HhaEntities.KURETE) { GuardianRenderer(it, KureteModel(it.getPart(BossLayers.KURETE)), "kurete", 0.4f, GuardianScale.KURETE) }
+        EntityRendererRegistry.register(HhaEntities.GRIFFIN) { GuardianRenderer(it, GriffinModel(it.getPart(BossLayers.GRIFFIN)), "griffin", 0.7f, GuardianScale.GRIFFIN) }
+        // Schlafende Wächterin: eigene Textur ohne Leuchtmaske, damit sie wie eine Blockstatue wirkt (Wunsch P11_A).
+        EntityRendererRegistry.register(HhaEntities.AUTOMATON) {
+            GuardianRenderer(it, AutomatonModel(it.getPart(BossLayers.AUTOMATON)), "automaton", 0.55f, GuardianScale.AUTOMATON) { s ->
+                if (s.awake) null else "automaton_sleep"
+            }
+        }
     }
 }
