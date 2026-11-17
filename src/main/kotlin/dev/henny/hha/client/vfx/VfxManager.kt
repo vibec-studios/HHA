@@ -1,10 +1,18 @@
 package dev.henny.hha.client.vfx
 
 import dev.henny.hha.client.HhaClientConfig
+import dev.henny.hha.client.vfx.fx.FxAttach
+import dev.henny.hha.client.vfx.fx.FxClient
+import dev.henny.hha.client.vfx.fx.FxEffect
+import dev.henny.hha.client.vfx.fx.FxFrame
+import dev.henny.hha.client.vfx.fx.FxPipelines
+import dev.henny.hha.client.vfx.fx.ScreenPass
 import dev.henny.hha.logic.Vfx
 import dev.henny.hha.net.VfxPayload
+import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderContext
 import net.minecraft.client.MinecraftClient
 import net.minecraft.client.render.VertexConsumerProvider
+import net.minecraft.client.util.BufferAllocator
 import net.minecraft.client.world.ClientWorld
 import net.minecraft.util.math.Vec3d
 
@@ -20,7 +28,23 @@ object VfxManager {
     private val effects = ArrayList<VfxEffect>()
     private var seed = 0L
 
+    /** Größe des eigenen Puffers der neuen Effekte (PLAN 6.4, REF T2). */
+    const val FX_BUFFER_BYTES = 1 shl 21
+
+    /**
+     * Eigener Puffer der neuen Effekte (`FxEffect`), geleert am Ende jeder Phase. Nicht `context.consumers()`: Was vor
+     * dem Bildschirm-Pass liegen muss, muss auch vor ihm gezeichnet sein.
+     */
+    val fxBuffers: VertexConsumerProvider.Immediate by lazy { VertexConsumerProvider.immediate(BufferAllocator(FX_BUFFER_BYTES)) }
+
+    /** Pipelines beim ersten Tick in einer Welt übersetzen (nicht erst beim ersten Treffer, sonst ruckelt es dort). */
+    private var warmed = false
+
     fun tick(world: ClientWorld) {
+        if (!warmed) {
+            warmed = true
+            FxClient.guarded("pipelines") { FxPipelines.ready() }
+        }
         BossGlow.tick(world)
         PortalVfx.tick(world)
         FarBeacon.tick()
@@ -32,6 +56,7 @@ object VfxManager {
 
     fun clear() {
         effects.clear()
+        FxAttach.clear()
     }
 
     /** Kameraschütteln, Blitz und Ansagen (Telegraphs) laufen immer; alle übrigen 3D-Meshes hängen am Client-Schalter `vfx_3d`. */
@@ -114,6 +139,12 @@ object VfxManager {
         if (effect != null) add(effect)
     }
 
+    /**
+     * Gerüst P00 (Überarbeitung 3): nimmt einen fertigen Effekt an, auch einen [FxEffect] aus `FxRegistry`. Gleicher
+     * Deckel [MAX_EFFECTS] wie die Bestandseffekte.
+     */
+    fun addEffect(effect: VfxEffect) = add(effect)
+
     private fun add(effect: VfxEffect) {
         if (effects.size >= MAX_EFFECTS) {
             val oldest = effects.indexOfFirst { !it.telegraph }
@@ -138,5 +169,37 @@ object VfxManager {
         for (effect in effects) {
             effect.render(draw, effect.age + tickDelta)
         }
+        // Überarbeitung 3 (PLAN 6.4, REF T2): Bestand → Energie → Bildschirm-Pass → darüber, je Phase eigener Puffer.
+        val frame = FxFrame.of(client.gameRenderer.camera, tickDelta, fxBuffers, FxFrame.Phase.ENERGY)
+        forEachFx { effect -> FxClient.guarded("energy:${effect.javaClass.simpleName}") { effect.energy(frame) } }
+        FxClient.guarded("energy.draw") { fxBuffers.draw() }
+        FxClient.guarded("screen_pass") { ScreenPass.render(frame) }
+        val over = frame.inPhase(FxFrame.Phase.OVER)
+        forEachFx { effect -> FxClient.guarded("over:${effect.javaClass.simpleName}") { effect.over(over) } }
+        FxClient.guarded("over.draw") { fxBuffers.draw() }
+    }
+
+    /**
+     * Phase 1 der neuen Effekte an `WorldRenderEvents.AFTER_ENTITIES`: schreibt Tiefe (Blöcke, Modellteile, Fels).
+     * Der Puffer wird sofort geleert, damit alles vor `END_MAIN` steht (REF 6.4).
+     */
+    fun renderSolid(context: WorldRenderContext) {
+        val client = MinecraftClient.getInstance()
+        if (client.world == null) return
+        val frame = FxFrame.of(client.gameRenderer.camera, client.renderTickCounter.getTickProgress(false), fxBuffers, FxFrame.Phase.SOLID)
+        forEachFx { effect -> FxClient.guarded("solid:${effect.javaClass.simpleName}") { effect.solid(frame) } }
+        FxClient.guarded("solid.draw") { fxBuffers.draw() }
+    }
+
+    /**
+     * Alle neuen Effekte (laufende `FxEffect` und die Dauer-Effekte aus [FxAttach]). Der Schalter `vfx_3d` gilt wie
+     * für den Bestand: aus = nur Ansagen (falls ein neuer Effekt eine ist).
+     */
+    private inline fun forEachFx(action: (FxEffect) -> Unit) {
+        val show = HhaClientConfig.enabled("vfx_3d")
+        for (effect in effects) {
+            if (effect is FxEffect && (show || effect.telegraph)) action(effect)
+        }
+        if (show) for (effect in FxAttach.effects()) action(effect)
     }
 }

@@ -1,6 +1,11 @@
 package dev.henny.hha.client.cine
 
 import dev.henny.hha.HhaSounds
+import dev.henny.hha.client.HudLine
+import dev.henny.hha.client.audio.MusicDirector
+import dev.henny.hha.client.cine.stage.CameraCraft
+import dev.henny.hha.client.cine.stage.StagePlayer
+import dev.henny.hha.client.vfx.fx.FxClient
 import dev.henny.hha.client.gui.Ui
 import dev.henny.hha.client.vfx.SkyMood
 import dev.henny.hha.client.vfx.easeInOut
@@ -9,23 +14,17 @@ import dev.henny.hha.logic.boss.Cine
 import dev.henny.hha.net.CinePayload
 import net.minecraft.client.MinecraftClient
 import net.minecraft.client.gui.DrawContext
+import net.minecraft.client.option.KeyBinding
 import net.minecraft.client.option.Perspective
-import net.minecraft.client.sound.AbstractSoundInstance
 import net.minecraft.client.sound.PositionedSoundInstance
-import net.minecraft.client.sound.SoundInstance
-import net.minecraft.registry.Registries
-import net.minecraft.sound.SoundCategory
-import net.minecraft.sound.SoundEvent
-import net.minecraft.util.Identifier
 import net.minecraft.client.render.Camera
 import net.minecraft.entity.Entity
+import net.minecraft.entity.EntityType
 import net.minecraft.text.Text
 import net.minecraft.util.math.MathHelper
 import net.minecraft.util.math.Vec3d
-import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
-import kotlin.math.sqrt
 
 /**
  * Spielt die vom Server geschickte Cutscene ab: Kamerafahrten, Letterbox, Dialogbox mit Schreibmaschinentext,
@@ -46,11 +45,18 @@ object CinePlayer {
         ticks: Int, fovFrom: Double, fovTo: Double, lookAtId: Int, lookOffset: Double,
     ) : Shot(ticks, fovFrom, fovTo, lookAtId, lookOffset)
 
-    private class Line(val speaker: Int, val text: Text, val ticks: Int) {
+    /** [nameKey]/[color]: optionaler Name und Namensfarbe aus `Cine.dialog` (Überarbeitung 3); leer = Sprecher. */
+    private class Line(val speaker: Int, val text: Text, val ticks: Int, val nameKey: String = "", val color: Int = 0) {
         var age = 0
     }
 
-    private class TitleCard(val title: Text, val subtitle: Text, val ticks: Int) {
+    /** [color] 0xRRGGBB für Titel und Lichtlinie (0 = weiß wie bisher). */
+    private class TitleCard(val title: Text, val subtitle: Text, val ticks: Int, val color: Int = 0) {
+        var age = 0
+    }
+
+    /** Kapitelkarte (Überarbeitung 3): Kicker, Titel, Lichtlinie, Untertitel in der Wegfarbe [color]. */
+    private class ChapterCard(val kicker: Text, val title: Text, val subtitle: Text, val ticks: Int, val color: Int) {
         var age = 0
     }
 
@@ -68,6 +74,7 @@ object CinePlayer {
     private var shotAge = 0
     private var line: Line? = null
     private var title: TitleCard? = null
+    private var chapterCard: ChapterCard? = null
     private var previousPerspective: Perspective? = null
     private var bars = 0f
 
@@ -88,27 +95,29 @@ object CinePlayer {
                     Vec3d(n[0], n[1], n[2]), Vec3d(n[3], n[4], n[5]), Vec3d(n[6], n[7], n[8]), Vec3d(n[9], n[10], n[11]),
                     n[12].toInt(), n[13], n[14], n[15].toInt(), n[16],
                 )
-                shotAge = 0
+                newShot()
             }
             Cine.OP_ORBIT -> {
                 shot = OrbitShot(
                     Vec3d(n[0], n[1], n[2]), n[3], n[4], n[5], n[6], n[7], n[8],
                     n[9].toInt(), n[10], n[11], n[12].toInt(), n[13],
                 )
-                shotAge = 0
+                newShot()
             }
-            Cine.OP_DIALOG -> {
-                line = Line(n[0].toInt(), Text.translatable(payload.texts[0]), n[1].toInt())
-                speak(payload.texts[0])
-            }
+            Cine.OP_DIALOG -> showLine(
+                n[0].toInt(), payload.texts[0], n[1].toInt(), payload.texts.getOrNull(1) ?: "", n.getOrNull(2)?.toInt() ?: 0,
+            )
             Cine.OP_FADE -> {
+                stageFade = false
                 fadeColor = n[0].toInt()
                 fadeFrom = n[1]
                 fadeTo = n[2]
                 fadeTicks = n[3].toInt().coerceAtLeast(1)
                 fadeAge = 0
             }
-            Cine.OP_TITLE -> title = TitleCard(Text.translatable(payload.texts[0]), Text.translatable(payload.texts[1]), n[0].toInt())
+            Cine.OP_TITLE -> title = TitleCard(
+                Text.translatable(payload.texts[0]), Text.translatable(payload.texts[1]), n[0].toInt(), n.getOrNull(1)?.toInt() ?: 0,
+            )
             Cine.OP_ATMOSPHERE -> {
                 val style = n[0].toInt()
                 if (style < 0) SkyMood.clearArena()
@@ -116,6 +125,16 @@ object CinePlayer {
             }
             Cine.OP_WINGS -> messengerWings = n[0] > 0.5
             Cine.OP_MUSIC -> setTheme(payload.texts[0])
+            // Gerüst P00 (Überarbeitung 3): neue Ops an Bühne, Kapitelkarte und Statuszeile weiterreichen.
+            Cine.OP_STAGE -> {
+                val count = n[5].toInt()
+                StagePlayer.play(payload.texts[0], Vec3d(n[0], n[1], n[2]), n[3].toFloat(), List(count) { n[6 + it].toInt() }, n[4].toInt())
+            }
+            Cine.OP_STAGE_STOP -> StagePlayer.stop()
+            Cine.OP_CHAPTER -> chapter(payload.texts[0], payload.texts[1], payload.texts[2], n[0].toInt(), n[1].toInt())
+            Cine.OP_HUD_LINE -> HudLine.show(
+                Text.translatable(payload.texts[0], *payload.texts.drop(1).toTypedArray()), n[0].toInt(), n[1].toInt(),
+            )
             Cine.OP_CLEAR_VFX -> dev.henny.hha.client.vfx.VfxManager.clear()
             Cine.OP_CUT -> cut()
             Cine.OP_PHASE_BAR -> PhaseBar.handle(n, payload.texts)
@@ -126,27 +145,130 @@ object CinePlayer {
         }
     }
 
-    /** Das Bossthema als endlos schleifender, ortsunabhängiger Klang in der Musik-Kategorie. */
-    private class ThemeSound(event: SoundEvent) : AbstractSoundInstance(event, SoundCategory.MUSIC, SoundInstance.createRandom()) {
-        init {
-            repeat = true
-            repeatDelay = 0
-            relative = true
-            attenuationType = SoundInstance.AttenuationType.NONE
-            volume = 1f
-        }
+    /**
+     * Gerüst P00 (Überarbeitung 3): Das Bossthema läuft jetzt über [MusicDirector.force] (dorthin unverändert
+     * verschoben: harter Wechsel, Schleife, Vanilla-Musik schweigt). P04 blendet dort über.
+     */
+    private fun setTheme(id: String) = MusicDirector.force(id)
+
+    // ---------------------------------------------------------------------------------------------
+    // Gerüst P00 (Überarbeitung 3, PLAN 6.5): Haken für Bühne, Lobby-Tunnel und Modelle. Besitzer danach P05.
+    // ---------------------------------------------------------------------------------------------
+
+    /**
+     * Wird in [renderOverlay] vor Letterbox und Text gezeichnet (P18 hängt dort den Tunnel ein). Läuft hinter
+     * [FxClient.guarded].
+     */
+    var underlay: ((DrawContext, Float) -> Unit)? = null
+
+    /** Sperrt Eingaben auch ohne Szene (Halte der RPG-Ankunft). Muss in jedem Ausgang wieder fallen. */
+    @JvmStatic
+    var externalLock = false
+
+    /** Sind Eingaben gesperrt? Die Eingabe-Mixins fragen das statt [active]. */
+    @JvmStatic
+    fun isInputLocked(): Boolean = active || externalLock
+
+    private val speakerTypes = HashMap<Int, EntityType<*>>()
+
+    /** Ordnet einem Sprecher (`Cine.SPEAKER_*`) den Entity-Typ zu, dessen Modell den Mund bewegt. */
+    fun speakerType(speaker: Int, type: EntityType<*>) {
+        speakerTypes[speaker] = type
     }
 
-    private var theme: ThemeSound? = null
+    /**
+     * Mundöffnung 0..1 für das Wesen [entityId] (Blood `mouth`): Spricht gerade der Sprecher, dessen Entity-Typ
+     * ([speakerType]) das Wesen hat, öffnen Vokale weit, andere Buchstaben halb, Pausen und Satzzeichen schließen.
+     * Sonst 0. Die Modelle bewegen damit Kiefer oder Mund.
+     */
+    @JvmStatic
+    fun mouthOf(entityId: Int): Float {
+        val l = line ?: return 0f
+        val type = speakerTypes[l.speaker] ?: return 0f
+        val entity = MinecraftClient.getInstance().world?.getEntityById(entityId) ?: return 0f
+        if (entity.type != type) return 0f
+        val full = l.text.string
+        val n = visibleChars(l)
+        if (n <= 0 || n >= full.length) return 0f
+        val c = full[n - 1].lowercaseChar()
+        val open = when {
+            c in MOUTH_VOWELS -> 1f
+            c.isLetter() -> 0.45f
+            else -> 0.05f
+        }
+        return open * (0.8f + 0.2f * sin(l.age * 1.7f))
+    }
 
-    private fun setTheme(id: String) {
-        val client = MinecraftClient.getInstance()
-        theme?.let { client.soundManager.stop(it) }
-        theme = null
-        if (id.isEmpty()) return
-        val event = Registries.SOUND_EVENT.get(Identifier.of(id)) ?: return
-        client.musicTracker.stop()
-        theme = ThemeSound(event).also { client.soundManager.play(it) }
+    /**
+     * Kapitelkarte (`Cine.OP_CHAPTER` und Bühnen-Spur `chapter`): Kicker in `hha:label`, Titel in `hha:display`,
+     * Lichtlinie und Untertitel, alles in der Wegfarbe [color] (0xRRGGBB, 0 = Gold); Ton `rpg.chapter`. Läuft auch
+     * außerhalb von Cutscenes (über dem HUD).
+     */
+    fun chapter(kickerKey: String, titleKey: String, subKey: String, ticks: Int, color: Int) {
+        chapterCard = ChapterCard(
+            Text.translatable(kickerKey), Text.translatable(titleKey), Text.translatable(subKey), ticks.coerceAtLeast(20),
+            if (color == 0) Ui.GOLD and 0xFFFFFF else color and 0xFFFFFF,
+        )
+        MinecraftClient.getInstance().soundManager.play(PositionedSoundInstance.ui(HhaSounds.RPG_CHAPTER, 1f, 0.8f))
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Eingänge der Bühne (StagePlayer, P05). Gleiche Anzeige wie die Ops; nur die Quelle ist die Zeitleiste.
+    // ---------------------------------------------------------------------------------------------
+
+    /** Zeile aus der Bühnen-Spur `caption` (gleiche Dialogbox, Stimme und Mindestdauer wie `OP_DIALOG`). */
+    fun stageLine(speaker: Int, key: String, ticks: Int, nameKey: String, color: Int) = showLine(speaker, key, ticks, nameKey, color)
+
+    /** Titelkarte aus der Bühnen-Spur `card`. */
+    fun stageTitle(titleKey: String, subKey: String, ticks: Int, color: Int = 0) {
+        title = TitleCard(Text.translatable(titleKey), Text.translatable(subKey), ticks, color)
+    }
+
+    /** Blende aus der Bühnen-Spur `fade`; [clearStageFade] nimmt sie beim Szenenende weich weg. */
+    fun stageFade(color: Int, from: Float, to: Float, ticks: Int) {
+        fadeColor = color
+        fadeFrom = from.toDouble()
+        fadeTo = to.toDouble()
+        fadeTicks = ticks.coerceAtLeast(1)
+        fadeAge = 0
+        stageFade = true
+    }
+
+    /**
+     * Fester Endzustand der Bühne: Hängt noch eine Blende der Bühne (z. B. Abbruch mitten im Schwarz), blendet sie in
+     * [STAGE_FADE_CLEAR_TICKS] aus. Blenden des Servers (`OP_FADE`) bleiben unberührt.
+     */
+    fun clearStageFade() {
+        if (!stageFade) return
+        stageFade = false
+        val alpha = currentFade(0f)
+        fadeFrom = alpha.toDouble()
+        fadeTo = 0.0
+        fadeTicks = if (alpha > 0.001f) STAGE_FADE_CLEAR_TICKS else 0
+        fadeAge = 0
+    }
+
+    /** Stammt die laufende Blende von der Bühne? */
+    private var stageFade = false
+
+    private fun currentFade(tickDelta: Float): Float {
+        if (fadeTicks <= 0) return 0f
+        val t = ((fadeAge + tickDelta) / fadeTicks).coerceIn(0f, 1f).toDouble()
+        return MathHelper.lerp(t, fadeFrom, fadeTo).toFloat()
+    }
+
+    /** Zeit der Handkamera in Sekunden (stetig, für Bühne und alte Einstellungen gleich). */
+    fun craftSeconds(): Double = System.nanoTime() / 1.0e9
+
+    /**
+     * Neue Zeile in der Dialogbox: Mindestdauer = so lange, bis der Text getippt ist, plus [LINE_READ_EXTRA] Ticks
+     * zum Lesen (Blood), nie kürzer als vom Server verlangt. Dazu die Sprachaufnahme, falls es eine gibt.
+     */
+    private fun showLine(speaker: Int, key: String, ticks: Int, nameKey: String, color: Int) {
+        val text = Text.translatable(key)
+        val needed = (text.string.length / CHARS_PER_TICK).toInt() + LINE_READ_EXTRA
+        line = Line(speaker, text, maxOf(ticks, needed), nameKey, color)
+        speak(key)
     }
 
     /** Die Taste fürs Überspringen, von HhaClient gesetzt. */
@@ -176,6 +298,7 @@ object CinePlayer {
 
     /** Die Szene wurde übersprungen: alles Laufende aus, und aus Schwarz wieder aufblenden. */
     private fun cut() {
+        StagePlayer.stop()
         val client = MinecraftClient.getInstance()
         voice?.let { client.soundManager.stop(it) }
         voice = null
@@ -185,6 +308,7 @@ object CinePlayer {
         skipVotes = 0
         skipTotal = 0
         dev.henny.hha.client.vfx.VfxManager.clear()
+        stageFade = false
         fadeColor = 0
         fadeFrom = 1.0
         fadeTo = 0.0
@@ -198,21 +322,28 @@ object CinePlayer {
         client.options.perspective = Perspective.THIRD_PERSON_BACK
         active = true
         shot = null
+        oldFollow.reset()
+        oldClip.reset()
         skipVotes = 0
         skipTotal = 0
     }
 
     private fun finish() {
+        StagePlayer.stop()
         val client = MinecraftClient.getInstance()
         previousPerspective?.let { client.options.perspective = it }
         previousPerspective = null
+        val wasActive = active
         active = false
         shot = null
         line = null
+        // Was während der Szene gedrückt wurde, soll danach nichts auslösen (Void `VoidCutscene.stop`).
+        if (wasActive) KeyBinding.unpressAll()
     }
 
     fun reset() {
         finish()
+        externalLock = false
         // Auch die laufende Sprachzeile und die Effekte der Szene enden (Ausscheiden, Verbindungsende).
         voice?.let { MinecraftClient.getInstance().soundManager.stop(it) }
         voice = null
@@ -223,6 +354,8 @@ object CinePlayer {
         messengerWings = false
         setTheme("")
         title = null
+        chapterCard = null
+        stageFade = false
         fadeTicks = 0
         fadeFrom = 0.0
         fadeTo = 0.0
@@ -232,8 +365,7 @@ object CinePlayer {
 
     fun tick() {
         PhaseBar.tick()
-        // Vanilla-Musik soll das Bossthema nicht überlagern.
-        if (theme != null) MinecraftClient.getInstance().musicTracker.stop()
+        // Vanilla-Musik schweigt während eines Bossthemas: jetzt in MusicDirector.tick (Gerüst P00).
         bars = (bars + if (active) 0.08f else -0.08f).coerceIn(0f, 1f)
         tickSkip()
         if (shot != null) shotAge++
@@ -247,6 +379,10 @@ object CinePlayer {
         title?.let {
             it.age++
             if (it.age > it.ticks) title = null
+        }
+        chapterCard?.let {
+            it.age++
+            if (it.age > it.ticks) chapterCard = null
         }
         if (fadeAge < fadeTicks) fadeAge++
     }
@@ -303,6 +439,8 @@ object CinePlayer {
     /** Wird am Ende von [Camera.update] aufgerufen; liefert Position und Blick, oder null ohne Cutscene. */
     @JvmStatic
     fun cameraPose(tickDelta: Float): CameraPose? {
+        // Gerüst P00: Läuft ein Bühnen-Skript, kommt die Kamera von dort.
+        if (active && StagePlayer.active) StagePlayer.cameraPose(tickDelta)?.let { return it }
         val s = shot ?: return null
         if (!active) return null
         val world = MinecraftClient.getInstance().world ?: return null
@@ -323,10 +461,22 @@ object CinePlayer {
                 look = lookEntity?.getLerpedPos(tickDelta)?.add(0.0, s.lookOffset, 0.0) ?: s.center.add(0.0, s.lookOffset, 0.0)
             }
         }
-        val d = look.subtract(pos)
-        val yaw = (Math.toDegrees(atan2(d.z, d.x)) - 90.0).toFloat()
-        val pitch = (-Math.toDegrees(atan2(d.y, sqrt(d.x * d.x + d.z * d.z)))).toFloat()
-        return CameraPose(pos, yaw, pitch)
+        // Kamera-Handwerk (Überarbeitung 3, wie die Bühne): Der Blick folgt einem bewegten Wesen mit kleiner
+        // Verzögerung, die Kamera geht nie durch Säulen, und sie wird ganz leicht von Hand gehalten.
+        val aim = if (lookEntity != null) oldFollow.apply(look, CameraCraft.FOLLOW_DEFAULT) else look.also { oldFollow.reset() }
+        val cam = oldClip.apply(aim, pos)
+        val (dy, dp) = CameraCraft.handheld(craftSeconds(), 1f)
+        return CameraPose(cam, CameraCraft.yawOf(cam, aim) + dy, CameraCraft.pitchOf(cam, aim) + dp)
+    }
+
+    /** Halter des Handwerks für die alten Einstellungen; jede neue Einstellung beginnt genau auf dem Ziel. */
+    private val oldFollow = CameraCraft.Follow()
+    private val oldClip = CameraCraft.Clip()
+
+    private fun newShot() {
+        shotAge = 0
+        oldFollow.reset()
+        oldClip.reset()
     }
 
     class CameraPose(@JvmField val pos: Vec3d, @JvmField val yaw: Float, @JvmField val pitch: Float)
@@ -334,6 +484,7 @@ object CinePlayer {
     /** Überschreibt das Sichtfeld, solange eine Kamerafahrt läuft. */
     @JvmStatic
     fun fov(vanilla: Float, tickDelta: Float): Float {
+        if (active && StagePlayer.active) StagePlayer.fov(vanilla, tickDelta)?.let { return it }
         val s = shot ?: return vanilla
         if (!active) return vanilla
         return MathHelper.lerp(smoothShot(tickDelta).toDouble(), s.fovFrom, s.fovTo).toFloat()
@@ -345,6 +496,7 @@ object CinePlayer {
         val client = MinecraftClient.getInstance()
         val width = client.window.scaledWidth
         val height = client.window.scaledHeight
+        underlay?.let { draw -> FxClient.guarded("cine.underlay") { draw(context, tickDelta) } }
         if (bars > 0f) {
             val barHeight = (height * 0.11f * easeInOut(bars)).toInt()
             context.fill(0, 0, width, barHeight, 0xFF000000.toInt())
@@ -352,10 +504,10 @@ object CinePlayer {
         }
         line?.let { renderLine(context, it, width, height) }
         title?.let { renderTitle(context, it, width, height, tickDelta) }
+        chapterCard?.let { renderChapter(context, it, width, height, tickDelta) }
         if (active) renderSkipHint(context, width, height, tickDelta)
         if (fadeTicks > 0) {
-            val t = ((fadeAge + tickDelta) / fadeTicks).coerceIn(0f, 1f).toDouble()
-            val alpha = MathHelper.lerp(t, fadeFrom, fadeTo).toFloat()
+            val alpha = currentFade(tickDelta)
             if (alpha > 0.001f) {
                 context.fill(0, 0, width, height, ((alpha * 255f).toInt().coerceIn(0, 255) shl 24) or (fadeColor and 0xFFFFFF))
             }
@@ -399,7 +551,7 @@ object CinePlayer {
         val boxWidth = (width * 0.72f).toInt().coerceAtMost(420)
         val lines = font.wrapLines(Text.literal(shown), boxWidth)
         val fullLines = font.wrapLines(l.text, boxWidth).size
-        val speaker = when (l.speaker) {
+        val speaker = if (l.nameKey.isNotEmpty()) Text.translatable(l.nameKey) to (if (l.color != 0) l.color and 0xFFFFFF else 0xF4F4F5) else when (l.speaker) {
             Cine.SPEAKER_HERMES -> Text.translatable("hha.hermes.speaker.hermes") to 0xFFD75A
             Cine.SPEAKER_ZEUS -> Text.translatable("hha.hermes.speaker.zeus") to 0xA8D8FF
             Cine.SPEAKER_SHADE -> Text.translatable("hha.hermes.speaker.shade") to 0x62F27A
@@ -460,7 +612,8 @@ object CinePlayer {
         val rise = ((1f - (age / 14f).coerceIn(0f, 1f)).let { 1f - (1f - it) * (1f - it) } * 6f).toInt()
         val titleWidth = Ui.displayWidth(font, titleText, scale)
         // Versalien sind 5 Schriftpixel hoch und beginnen 2 Pixel unter y: mittig auf cy setzen.
-        Ui.display(context, font, titleText, (width - titleWidth) / 2, cy - (9 * scale) / 2 + rise, alpha or 0xF4F4F5, scale)
+        val titleColor = if (card.color != 0) card.color and 0xFFFFFF else 0xF4F4F5
+        Ui.display(context, font, titleText, (width - titleWidth) / 2, cy - (9 * scale) / 2 + rise, alpha or titleColor, scale)
         val lineY = cy + (5 * scale) / 2 + 6
         val grow = Ui.easeOutCubic(age / 16f)
         val half = (titleWidth * 0.5f * grow).toInt()
@@ -470,13 +623,68 @@ object CinePlayer {
             val x1 = width / 2 - half + half * 2 * i / steps
             val x2 = width / 2 - half + half * 2 * (i + 1) / steps
             val k = 1f - kotlin.math.abs((i + 0.5f) / steps * 2f - 1f)
-            context.fill(x1, lineY, x2, lineY + 1, Ui.alpha(0xFFF4F4F5.toInt(), a * (0.15f + 0.65f * k)))
+            context.fill(x1, lineY, x2, lineY + 1, Ui.alpha(0xFF000000.toInt() or titleColor, a * (0.15f + 0.65f * k)))
         }
         val subWidth = font.getWidth(card.subtitle)
         context.drawTextWithShadow(font, card.subtitle, (width - subWidth) / 2, lineY + 6, alpha or 0xA1A1AA)
     }
 
-    private const val CHARS_PER_TICK = 1.15f
+    /**
+     * Kapitelkarte im Website-Stil (Kicker über einer Überschrift, `.feature-sec`): oben der Kicker als Etikett in der
+     * Wegfarbe, darunter der Titel in der Pixel-Schrift (steigt beim Erscheinen auf), eine Lichtlinie in der Wegfarbe,
+     * die aus der Mitte wächst, und der Untertitel. Kein Band über die ganze Breite: nur ein weicher dunkler Hof, damit
+     * die Karte vor hellem Marmor lesbar bleibt. Ein 12 Ticks, aus [CHAPTER_FADE_OUT] Ticks.
+     */
+    private fun renderChapter(context: DrawContext, card: ChapterCard, width: Int, height: Int, tickDelta: Float) {
+        val font = MinecraftClient.getInstance().textRenderer
+        val age = card.age + tickDelta
+        val a = minOf(age / CHAPTER_FADE_IN, (card.ticks - age) / CHAPTER_FADE_OUT).coerceIn(0f, 1f)
+        if (a <= 0.01f) return
+        val alpha = (a * 255f).toInt().coerceIn(4, 255) shl 24
+        val color = card.color
+        val cy = (height * 0.30f).toInt()
+        val titleText = card.title.string
+        val scale = (3 downTo 1).firstOrNull { Ui.displayWidth(font, titleText, it) <= width - 48 } ?: 1
+        val titleWidth = Ui.displayWidth(font, titleText, scale)
+        // Weicher Hof: drei gestaffelte, sehr dunkle Flächen statt eines harten Bands.
+        val halo = maxOf(titleWidth, font.getWidth(card.subtitle)) / 2 + 36
+        for (i in 0 until 3) {
+            val grow = i * 10
+            context.fill(width / 2 - halo - grow, cy - 30 - grow / 2, width / 2 + halo + grow, cy + 40 + grow / 2, Ui.alpha(0x30000000, a))
+        }
+        val kicker = Ui.labelText(card.kicker.string)
+        val kickerWidth = font.getWidth(kicker)
+        context.drawText(font, kicker, (width - kickerWidth) / 2, cy - 24, alpha or color, false)
+        val rise = ((1f - (age / 16f).coerceIn(0f, 1f)).let { it * it } * 7f).toInt()
+        Ui.display(context, font, titleText, (width - titleWidth) / 2, cy - (9 * scale) / 2 + rise, alpha or 0xF4F4F5, scale)
+        val lineY = cy + (5 * scale) / 2 + 7
+        val half = (titleWidth * 0.55f * Ui.easeOutCubic((age - 4f) / 18f)).toInt()
+        val steps = 16
+        for (i in 0 until steps) {
+            val x1 = width / 2 - half + half * 2 * i / steps
+            val x2 = width / 2 - half + half * 2 * (i + 1) / steps
+            val k = 1f - kotlin.math.abs((i + 0.5f) / steps * 2f - 1f)
+            context.fill(x1, lineY, x2, lineY + 1, Ui.alpha(0xFF000000.toInt() or color, a * (0.12f + 0.8f * k * k)))
+        }
+        val subWidth = font.getWidth(card.subtitle)
+        context.drawTextWithShadow(font, card.subtitle, (width - subWidth) / 2, lineY + 7, alpha or 0xA1A1AA)
+    }
+
+    /** Schreibmaschine: Zeichen je Tick (auch für die Lesedauer der Bühne). */
+    const val CHARS_PER_TICK = 1.15f
+
+    /** Zuschlag nach dem Tippen, bis eine Zeile frühestens geht (Blood: `len / CHARS_PER_TICK + 26`). */
+    private const val LINE_READ_EXTRA = 26
+
+    /** Vokale öffnen den Mund weit ([mouthOf]). */
+    private const val MOUTH_VOWELS = "aeiouäöüy"
+
+    /** Kapitelkarte: Ein- und Ausblenden (Ticks). */
+    private const val CHAPTER_FADE_IN = 12f
+    private const val CHAPTER_FADE_OUT = 16f
+
+    /** So weich fällt eine hängende Bühnen-Blende am Szenenende weg. */
+    private const val STAGE_FADE_CLEAR_TICKS = 10
 
     /** So lange muss die Taste gehalten werden, damit niemand aus Versehen überspringt. */
     private const val SKIP_HOLD_TICKS = 12

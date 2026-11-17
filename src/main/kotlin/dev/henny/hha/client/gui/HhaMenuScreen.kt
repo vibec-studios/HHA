@@ -829,7 +829,7 @@ class HhaMenuScreen(initialTab: Int = 0) : Screen(Text.translatable("hha.gui.tit
             ctx, x, y0, w, rowFade(a, 0), 3, Text.translatableWithFallback("hha.gui.scope.client", "Client"), Text.translatable("hha.gui.tab.visuals"),
             Text.translatableWithFallback("hha.gui.lead.visuals", "Nur für dich und sofort aktiv: Effekte, Bildfilter und die Cooldown-Leiste."),
         )
-        val toggles = listOf("vfx_3d", "screen_shake", "tartaros_shader", "portal_shader", "hud_enabled", "hud_pulse", "hud_background", "ultra_bar")
+        val toggles = listOf("vfx_3d", "screen_shake", "tartaros_shader", "portal_shader", "hud_enabled", "hud_pulse", "hud_background", "ultra_bar", "screen_fx", "cine_handheld", "rpg_hud")
         y = groupHead(ctx, x, y, Text.translatable("hha.gui.group.client"), Ui.GOLD, rowFade(a, 1), Text.translatable("hha.gui.client_note"))
         val cols = if (w >= 360) 2 else 1
         val cells = grid(ctx, x, y, w, toggles.size, cols, TILE_H, rowFade(a, 1))

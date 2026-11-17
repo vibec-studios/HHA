@@ -146,9 +146,29 @@ object BossRewards {
     /** So lange liegt eine gefallene Reliquie (Ticks): `setCovetedItem` gibt 12000 Ticks = 10 Minuten. */
     const val RELIC_LIFETIME = 12000
 
+    private val grantListeners = ArrayList<(MinecraftServer, String, List<ServerPlayerEntity>) -> Unit>()
+
+    /**
+     * Überarbeitung 3 (PLAN 6.9, additiv): [listener] erfährt jeden Sieg als (Server, Boss-Schlüssel in Kleinbuchstaben,
+     * Mitkämpfer). Gerufen **am Anfang** von [grant], also auch für Schlüssel ohne Tabellenzeile (z. B. `kronos`), aber
+     * nur, wenn mindestens ein Mitkämpfer den Server liefert. Fehler eines Lauschers werden geloggt und stören die Beute nicht.
+     */
+    fun onGrant(listener: (MinecraftServer, String, List<ServerPlayerEntity>) -> Unit) {
+        grantListeners.add(listener)
+    }
+
     /** Sieg über [boss]: Beute an [players] (alle, die am Ende noch mitkämpfen), Reliquie bzw. Ersatz bei [at]. */
     fun grant(boss: String, players: List<ServerPlayerEntity>, at: Vec3d) {
         val key = boss.lowercase()
+        players.firstNotNullOfOrNull { it.entityWorld.server }?.let { server ->
+            for (listener in grantListeners) {
+                try {
+                    listener(server, key, players)
+                } catch (e: Exception) {
+                    Hha.LOGGER.error("BossRewards.onGrant: Lauscher für '{}' fehlgeschlagen", key, e)
+                }
+            }
+        }
         val reward = TABLE[key]
         if (reward == null) {
             Hha.LOGGER.warn("BossRewards.grant: unbekannter Boss '{}'", boss)

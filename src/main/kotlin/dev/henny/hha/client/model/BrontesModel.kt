@@ -1,13 +1,20 @@
 package dev.henny.hha.client.model
 
+import dev.henny.hha.client.anim.Motion
+import dev.henny.hha.client.anim.PoseMemory
+import dev.henny.hha.client.anim.Spring
+import dev.henny.hha.client.cine.CinePlayer
 import dev.henny.hha.entity.boss.olymp.BrontesAction
 import dev.henny.hha.logic.boss.timings.BrontesTimings
+import net.minecraft.client.MinecraftClient
 import net.minecraft.client.model.ModelPart
 import net.minecraft.client.util.math.MatrixStack
+import net.minecraft.entity.LivingEntity
 import net.minecraft.util.math.Vec3d
 import org.joml.Vector3f
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
@@ -19,20 +26,46 @@ import kotlin.math.sin
  * Die Schlüsselposen stehen als Tabelle unten (generiert aus `tools/hha_assets/brontes_model.py --kotlin`, dieselben
  * Winkel wie `POSES` dort). Die Ruhe ist die Grundhaltung des Modells; Gang, Atmen, Blinzeln und Schürze kommen als
  * Zusatz dazu. Jede Aktion läuft über `actionTime` selbst durch Ausholen → Schlag → Nachlauf/offen → zurück, mit den
- * Zeiten aus [BrontesTimings]. Wechselt die Aktion mitten im Lauf, blendet die alte Haltung über [FADE] Ticks aus.
+ * Zeiten aus [BrontesTimings]. Wechselt die Aktion, blendet [PoseMemory] über [FADE] Ticks aus der zuletzt gezeigten
+ * Haltung über (Überarbeitung 3), Federn ([Spring]) lassen Schürze, Kopf mit Bart, Hammerkopf und die Zange am Gürtel
+ * nachschwingen; der Fußaufsatz kommt aus [Motion]. Zustand je Wesen in [RIGS] (nach `entityId`).
  *
  * Requisiten schalten über die Sichtbarkeit: `tongs` (in der Hand) und `tongs_belt` (am Gürtel), `ingot` (Rohling in
  * der Zange), `wedge` (der Keil), `hammer` (in der Hand) und `hammer_dropped` (an der Wurzel: liegt bei BLINDED am
  * Boden, steht bei WEDGE_THROW kopfüber neben ihm). Die Posen legen den Hammer in der Hand genau auf die Lage des
  * abgelegten, damit der Tausch nicht springt.
  */
+/**
+ * Anker des zuletzt gezeichneten Bildes je Brontes in Weltkoordinaten (Auge, Mund, Hammerkopf), geschrieben von
+ * [BrontesModel.eyeAnchor], gelesen von `BrontesFx` (Blasebalg aus dem Mund, Glutband am Hammerkopf).
+ */
+object BrontesAnchors {
+    class Frame {
+        var eye: Vec3d = Vec3d.ZERO
+        var mouth: Vec3d = Vec3d.ZERO
+        var hammer: Vec3d = Vec3d.ZERO
+        /** Alter des Wesens im Bild (Alter + Zwischenbild). */
+        var age = -1f
+        var seen = 0L
+    }
+
+    internal val frames = HashMap<Int, Frame>()
+
+    /** Anker, wenn sie im Bild zur Zeit [now] (Alter + Zwischenbild) entstanden sind, sonst `null`. */
+    fun fresh(entityId: Int, now: Float, slack: Float = 1.5f): Frame? =
+        frames[entityId]?.takeIf { it.age >= now - slack && it.age <= now + slack }
+}
+
 class BrontesModel(root: ModelPart) : GuardianModel(root) {
     private val parts: Array<ModelPart>
     private val rest: FloatArray
     private val base: FloatArray
     private val mixed: FloatArray
     private val current: FloatArray
-    private val previous: FloatArray
+
+    /** Wesen und Zeit des zuletzt posierten Bildes (das Modell ist für alle Brontes dasselbe; Anker gehören zu ihm). */
+    private var lastEntityId = 0
+    private var lastAge = 0f
 
     init {
         val list = ArrayList<ModelPart>(BONES.size)
@@ -50,7 +83,6 @@ class BrontesModel(root: ModelPart) : GuardianModel(root) {
         base = FloatArray(parts.size * 6)
         mixed = FloatArray(parts.size * 6)
         current = FloatArray(parts.size * 6)
-        previous = FloatArray(parts.size * 6)
     }
 
     private fun bone(name: String) = parts[BONES.indexOf(name)]
@@ -85,6 +117,8 @@ class BrontesModel(root: ModelPart) : GuardianModel(root) {
         val p = phase(state)
         val a = state.actionTime
         trembleClock = t
+        val rig = rig(state.entityId)
+        val dt = rig.dt(t)
 
         // --- Ruhe und Gang: schwer und breitbeinig, der Hammer ruht auf der Schulter, der linke Arm pendelt weit ------
         val breath = sin(t * 0.07f)
@@ -107,26 +141,49 @@ class BrontesModel(root: ModelPart) : GuardianModel(root) {
 
         capture()
 
-        // --- Aktion, beim Wechsel mitten im Lauf weich aus der alten Haltung ----------------------------------------
+        // --- Aktion, beim Wechsel weich aus der zuletzt GEZEIGTEN Haltung (PoseMemory, PLAN 2.1 Punkt 3) ------------
         pose(state.action, a)
-        if (state.previousAction != 0 && state.previousAction != state.action && a < FADE) {
-            store(current)
-            restore(base)
-            pose(state.previousAction, state.previousTime)
-            store(previous)
-            val u = step(a, 0f, FADE)
-            for (k in mixed.indices) mixed[k] = previous[k] + (current[k] - previous[k]) * u
-            restore(mixed)
-        }
+        store(current)
+        val restart = state.action == rig.action && a + RESTART_SLACK < rig.actionTime
+        restore(rig.memory.blend(state.action, current, t, FADE, restart))
         props(state.action, a)
 
-        // --- Nachgeordnet: Schürze, Blick, Blinzeln -------------------------------------------------------------------
-        drape()
+        // --- Nachgeordnet: Federn (Schürze, Bart/Kopf, Hammerkopf, Zange am Gürtel), Blick, Mund, Blinzeln --------
+        secondary(state, rig, dt, a, p, w)
         head.yaw += state.relativeHeadYaw * DEG * 0.5f
         head.pitch += state.pitch * DEG * 0.5f
-        // Das Auge blinzelt alle 80–140 Ticks für 2 Ticks (je Wesen versetzt); bei BLINDED bleibt es zu.
+        // Mund zum Text: Das Modell hat keinen eigenen Kiefer (Kiefer und Bart sitzen am Kopf), also nickt der Kopf
+        // leicht mit und die Brauen heben sich.
+        val mouth = CinePlayer.mouthOf(state.entityId)
+        head.pitch += mouth * MOUTH_NOD
+        brow.pitch -= mouth * MOUTH_BROW
+        // Das Auge blinzelt alle 80–140 Ticks für 2 Ticks (je Wesen versetzt); bei BLINDED steuert props() es.
         val period = 80 + (state.entityId * 37 and 0x3f)
         if ((t.toInt() + state.entityId * 13) % period < 2) eye.visible = false
+
+        // Leuchtmaske an den Kampfzustand gekoppelt, weich nachgeführt (siehe glowAlpha).
+        val glowTarget = glowTarget(state.action, a)
+        rig.glow = if (rig.glow < 0f) glowTarget else rig.glow + (glowTarget - rig.glow) * (1f - exp(-dt / GLOW_TAU))
+        rig.action = state.action
+        rig.actionTime = a
+        lastEntityId = state.entityId
+        lastAge = t
+    }
+
+    /**
+     * Leuchtmaske (Soll aus PLAN 2.1 Punkt 7): steigt beim Ausholen schwerer Schläge, fällt im offenen Fenster
+     * (geblendet, leere Hände nach dem Keil). Keine Pulse, nur weiche Übergänge.
+     */
+    override fun glowAlpha(state: GuardianRenderState): Float = RIGS[state.entityId]?.glow?.takeIf { it >= 0f } ?: GLOW_REST
+
+    private fun glowTarget(action: Int, a: Float): Float = when (action) {
+        BrontesAction.HAMMER -> GLOW_REST + (1f - GLOW_REST) * window(a, SOFT, T.HAMMER_STUCK_END.f)
+        BrontesAction.DOUBLE_HAMMER -> GLOW_REST + (1f - GLOW_REST) * window(a, SOFT, T.DOUBLE_STUCK_END.f)
+        BrontesAction.FORGE -> GLOW_REST + (1f - GLOW_REST) * step(a, 4f, T.FORGE_HIT_1.f)
+        BrontesAction.BLINDED -> GLOW_OPEN
+        BrontesAction.WEDGE_THROW -> if (a < T.WEDGE_HIT_END) 1f else GLOW_OPEN
+        BrontesAction.RISE -> GLOW_DIM + (GLOW_REST - GLOW_DIM) * step(a, RISE_EYE_OPEN - 6f, RISE_EYE_OPEN + 10f)
+        else -> GLOW_REST
     }
 
     /** Augenmitte für `BossGlow` (Anker `eye`) in Weltkoordinaten; im Feature-Renderer nach dem Modell aufrufen. */
@@ -136,11 +193,143 @@ class BrontesModel(root: ModelPart) : GuardianModel(root) {
         for (part in EYE_CHAIN.map { bone(it) }) part.applyTransform(matrices)
         matrices.peek().positionMatrix.transformPosition(0f, 3f / 16f, -0.6f / 16f, v)
         matrices.pop()
-        return Vec3d(v.x + cam.x, v.y + cam.y, v.z + cam.z)
+        val eyeAt = Vec3d(v.x + cam.x, v.y + cam.y, v.z + cam.z)
+        recordAnchors(matrices, cam, eyeAt)
+        return eyeAt
+    }
+
+    /**
+     * Merkt sich im selben Bild Mund und Hammerkopf (Weltkoordinaten) für die Effekte von `BrontesFx` (Blasebalg aus
+     * dem Mund, Glutband am Hammerkopf). Läuft nur, wenn `BossGlow` den Augen-Anker holt (Auge offen); sonst nehmen
+     * die Effekte ihre Rückfall-Lage.
+     */
+    private fun recordAnchors(matrices: MatrixStack, cam: Vec3d, eyeAt: Vec3d) {
+        val v = Vector3f()
+        val out = BrontesAnchors.frames.getOrPut(lastEntityId) { BrontesAnchors.Frame() }
+        matrices.push()
+        for (part in MOUTH_CHAIN.map { bone(it) }) part.applyTransform(matrices)
+        matrices.peek().positionMatrix.transformPosition(0f, MOUTH_Y / 16f, MOUTH_Z / 16f, v)
+        matrices.pop()
+        out.mouth = Vec3d(v.x + cam.x, v.y + cam.y, v.z + cam.z)
+        matrices.push()
+        for (part in HAMMER_CHAIN.map { bone(it) }) part.applyTransform(matrices)
+        matrices.peek().positionMatrix.transformPosition(0f, HAMMER_HEAD_Y / 16f, 0f, v)
+        matrices.pop()
+        out.hammer = Vec3d(v.x + cam.x, v.y + cam.y, v.z + cam.z)
+        out.eye = eyeAt
+        out.age = lastAge
+        out.seen = System.currentTimeMillis()
     }
 
     /** Ist das Auge gerade offen (für `BossGlow`: kein Leuchten bei BLINDED und beim Blinzeln)? */
     val eyeOpen: Boolean get() = eye.visible
+
+    // -----------------------------------------------------------------------------------------------------------------
+    // Federn und Bewegungsmessung (PLAN 2.1 Punkt 3, REF T13)
+    // -----------------------------------------------------------------------------------------------------------------
+
+    /**
+     * Nachschwingen: Schürze folgt ihrer Hängelage über eine Feder, Kopf/Bart, Hammerkopf und die Zange am Gürtel
+     * schwingen als Rest um 0 und werden nur angestoßen (harte Schlüsselbilder, Fußaufsatz, Stopp aus dem Gang).
+     */
+    private fun secondary(state: GuardianRenderState, rig: Rig, dt: Float, a: Float, p: Float, w: Float) {
+        // Stöße an den harten Schlüsselbildern der laufenden Aktion
+        if (rig.action == state.action) {
+            for (h in hitsOf(state.action)) {
+                if (rig.actionTime < h && a >= h) {
+                    val k = if (state.action == BrontesAction.BLINDED) BLINDED_KICK else 1f
+                    rig.apron.kick(APRON_HIT * k)
+                    rig.beard.kick(BEARD_HIT * k)
+                    rig.hammer.kick(HAMMER_HIT_KICK)
+                    rig.belt.kick(BELT_HIT * k)
+                }
+            }
+        }
+        // Landestoß beim Stampfen: jeder Fußaufsatz (Vorzeichenwechsel der Schrittphase), stärker je schneller er geht
+        val entity = MinecraftClient.getInstance().world?.getEntityById(state.entityId) as? LivingEntity
+        var stride = w
+        if (entity != null) {
+            val tickDelta = (state.age - entity.age).coerceIn(0f, 1f)
+            rig.motion.update(entity, tickDelta, state.action, a.toInt())
+            stride = (rig.motion.speed / STEP_FULL_SPEED).coerceIn(0f, 1f)
+            // Stopp aus dem Gang: der Hammerkopf zieht nach, die Zange pendelt
+            if (rig.motion.speed > MOVING_SPEED) rig.moving = true
+            else if (rig.moving && rig.motion.speed < STOPPED_SPEED) {
+                rig.moving = false
+                rig.hammer.kick(HAMMER_STOP_KICK)
+                rig.belt.kick(BELT_STOP_KICK)
+            }
+        }
+        val s = sin(p)
+        if (w > STEP_MIN_WALK && (s > 0f) != (rig.lastStep > 0f)) {
+            rig.apron.kick(APRON_STEP * stride)
+            rig.beard.kick(BEARD_STEP * stride)
+            rig.belt.kick(BELT_STEP * stride * if (s > 0f) 1f else -1f)
+        }
+        rig.lastStep = s
+
+        // Anwenden
+        val lean = body.pitch + chest.pitch
+        val thigh = min(legR.pitch, legL.pitch) + body.pitch
+        val drape = -lean * APRON_FOLLOW + min(0f, thigh) * APRON_LEG
+        apron.pitch = rig.apron.step(drape, dt).coerceIn(drape - APRON_SWING_MAX, drape + APRON_SWING_MAX)
+        apron.yaw = -chest.yaw * 0.5f
+        apron.roll = -chest.roll * 0.5f
+        val nod = rig.beard.step(0f, dt).coerceIn(-BEARD_MAX, BEARD_MAX)
+        head.pitch += nod
+        brow.pitch -= nod * 0.5f
+        if (hammer.visible) hammer.pitch += rig.hammer.step(0f, dt).coerceIn(-HAMMER_LAG_MAX, HAMMER_LAG_MAX)
+        else rig.hammer.step(0f, dt)
+        val swing = rig.belt.step(0f, dt).coerceIn(-BELT_MAX, BELT_MAX)
+        tongsBelt.roll += swing
+        tongsBelt.pitch += swing * 0.4f
+    }
+
+    /** Ticks der harten Schlüsselbilder je Aktion (dort stoßen die Federn an). */
+    private fun hitsOf(action: Int): FloatArray = when (action) {
+        BrontesAction.HAMMER -> HITS_HAMMER
+        BrontesAction.DOUBLE_HAMMER -> HITS_DOUBLE
+        BrontesAction.SWING -> HITS_SWING
+        BrontesAction.TOSS -> HITS_TOSS
+        BrontesAction.BELLOWS -> HITS_BELLOWS
+        BrontesAction.BLINDED -> HITS_BLINDED
+        BrontesAction.FORGE -> HITS_FORGE
+        BrontesAction.WEDGE_THROW -> HITS_WEDGE
+        BrontesAction.TONGS_UP -> HITS_TONGS
+        BrontesAction.YIELD -> HITS_YIELD
+        else -> NO_HITS
+    }
+
+    /** Zustand je Wesen (Federn, Überblendung, Bewegung); entfernte Wesen werden nach [FORGET_MS] vergessen. */
+    private class Rig(size: Int) {
+        val memory = PoseMemory(size)
+        val apron = Spring(0.30f, 0.32f)
+        val beard = Spring(0.42f, 0.38f)
+        val hammer = Spring(0.36f, 0.30f)
+        val belt = Spring(0.26f, 0.22f)
+        val motion = Motion()
+        var action = Int.MIN_VALUE
+        var actionTime = 0f
+        var lastStep = 0f
+        var moving = false
+        var glow = -1f
+        private var last = Float.NaN
+        var seen = 0L
+
+        /** Zeitschritt seit dem letzten Bild (Ticks, 0..4; erstes Bild und Zeitsprünge 0). */
+        fun dt(now: Float): Float {
+            seen = System.currentTimeMillis()
+            val d = if (last.isNaN() || now < last || now - last > 40f) 0f else (now - last).coerceAtMost(4f)
+            last = now
+            return d
+        }
+    }
+
+    private fun rig(entityId: Int): Rig {
+        RIGS[entityId]?.let { return it }
+        forgetStale()
+        return Rig(parts.size * 6).also { RIGS[entityId] = it }
+    }
 
     // -----------------------------------------------------------------------------------------------------------------
     // Aktionen
@@ -243,7 +432,8 @@ class BrontesModel(root: ModelPart) : GuardianModel(root) {
                     Key(T.TONGS_END.f, null))
             }
             BrontesAction.RISE -> {
-                play(a, Key(-1f, RISE), Key(10f, RISE), Key(T.RISE_END.f, null))
+                // Auftritt (Szene `brontes.intro`): kauert in der Glut, richtet sich langsam auf, das Auge öffnet erst danach.
+                play(a, Key(-1f, RISE), Key(RISE_HOLD, RISE), Key(RISE_STAND, null))
             }
             BrontesAction.YIELD -> {
                 play(a, Key(0f, null), Key(16f, YIELD))
@@ -286,17 +476,22 @@ class BrontesModel(root: ModelPart) : GuardianModel(root) {
         tongsBelt.visible = !tongsInHand
         ingot.visible = hot
         wedge.visible = keil
-        eye.visible = action != BrontesAction.BLINDED
+        eye.visible = when (action) {
+            BrontesAction.BLINDED -> blindedEyeLit(a)
+            BrontesAction.RISE -> a >= RISE_EYE_OPEN
+            else -> true
+        }
         brow.visible = true
     }
 
-    /** Die Schürze liegt oben am Bauch an und hängt unten schwer (dieselbe Regel wie `drape` in brontes_model.py). */
-    private fun drape() {
-        val lean = body.pitch + chest.pitch
-        val thigh = min(legR.pitch, legL.pitch) + body.pitch
-        apron.pitch = -lean * APRON_FOLLOW + min(0f, thigh) * APRON_LEG
-        apron.yaw = -chest.yaw * 0.5f
-        apron.roll = -chest.roll * 0.5f
+    /**
+     * Geblendet: Das Auge erlischt [BLIND_DARK] Ticks und kommt in drei langsamen Schritten zurück. Jede Phase dauert
+     * mindestens 4 Ticks, ein ganzer Wechsel also ≥ 9 Ticks (unter 2 Hz, PLAN 2.2).
+     */
+    private fun blindedEyeLit(a: Float): Boolean {
+        var lit = false
+        for (edge in BLIND_EDGES) if (a >= edge) lit = !lit
+        return lit
     }
 
     /** Er zerrt am steckenden Hammer: kurze Rucke nach hinten, die Arme zittern. */
@@ -399,6 +594,74 @@ class BrontesModel(root: ModelPart) : GuardianModel(root) {
         val EYE_CHAIN = arrayOf("body", "chest", "head", "brow", "eye")
         const val APRON_FOLLOW = 0.35f
         const val APRON_LEG = 0.45f
+
+        // --- Überarbeitung 3: Darstellungs-Konstanten (keine Kampfzahlen) ---------------------------------------------
+        /** So viele Ticks Rückschritt der Aktionszeit gelten als Neustart derselben Aktion (Überblendung). */
+        const val RESTART_SLACK = 0.5f
+        /** Auftritt: kauert bis [RISE_HOLD], steht bei [RISE_STAND], Auge offen ab [RISE_EYE_OPEN] (Aktionszeit). */
+        const val RISE_HOLD = 50f
+        const val RISE_STAND = 95f
+        const val RISE_EYE_OPEN = 118f
+        /** Geblendet: Auge aus bis 20, dann an/aus/an/aus/an (Wechselzeiten der Aktionszeit). */
+        const val BLIND_DARK = 20f
+        val BLIND_EDGES = floatArrayOf(BLIND_DARK, 26f, 31f, 38f, 42f)
+        /** Mund: Kopf nickt, Brauen heben sich (Bogenmaß bei voller Öffnung). */
+        const val MOUTH_NOD = 0.05f
+        const val MOUTH_BROW = 0.07f
+        /** Leuchtmaske: Ruhe, offen (Fenster), gedimmt (kauert in der Glut); weich nachgeführt mit τ in Ticks. */
+        const val GLOW_REST = 0.85f
+        const val GLOW_OPEN = 0.45f
+        const val GLOW_DIM = 0.35f
+        const val GLOW_TAU = 4f
+        /** Federstöße (Bogenmaß je Tick) an harten Schlüsselbildern, beim Fußaufsatz und beim Stopp. */
+        const val APRON_HIT = 0.10f
+        const val BEARD_HIT = 0.06f
+        const val HAMMER_HIT_KICK = -0.12f
+        const val BELT_HIT = 0.08f
+        const val BLINDED_KICK = 1.4f
+        const val APRON_STEP = 0.035f
+        const val BEARD_STEP = 0.02f
+        const val BELT_STEP = 0.05f
+        const val HAMMER_STOP_KICK = 0.08f
+        const val BELT_STOP_KICK = 0.09f
+        /** Ausschlag-Deckel der Federn (Bogenmaß). */
+        const val APRON_SWING_MAX = 0.45f
+        const val BEARD_MAX = 0.12f
+        const val HAMMER_LAG_MAX = 0.28f
+        const val BELT_MAX = 0.4f
+        /** Gang: ab dieser Schrittweite zählt der Fußaufsatz; voller Stoß bei diesem Tempo (Blöcke/Tick). */
+        const val STEP_MIN_WALK = 0.2f
+        const val STEP_FULL_SPEED = 0.12f
+        const val MOVING_SPEED = 0.07f
+        const val STOPPED_SPEED = 0.025f
+        val HITS_HAMMER = floatArrayOf(T.HAMMER_HIT_END.f)
+        val HITS_DOUBLE = floatArrayOf(T.DOUBLE_HIT + 2f, T.DOUBLE_HIT2 + 2f)
+        val HITS_SWING = floatArrayOf(T.SWING_HIT_END.f)
+        val HITS_TOSS = floatArrayOf(T.TOSS_HIT_END.f)
+        val HITS_BELLOWS = floatArrayOf(T.BELLOWS_HIT + 3f)
+        val HITS_BLINDED = floatArrayOf(5f, 14f, 23f)
+        val HITS_FORGE = floatArrayOf(T.FORGE_HIT_1.f, T.FORGE_HIT_2.f, T.FORGE_HIT_3.f)
+        val HITS_WEDGE = floatArrayOf(T.WEDGE_HIT_END.f)
+        val HITS_TONGS = floatArrayOf(T.TONGS_HIT_END.f)
+        val HITS_YIELD = floatArrayOf(16f)
+        val NO_HITS = FloatArray(0)
+
+        /** Anker im Kopf (Mund vor dem Kiefer) und im Hammer (Mitte des Kopfes), Modell-Pixel. */
+        val MOUTH_CHAIN = arrayOf("body", "chest", "head")
+        const val MOUTH_Y = -1f
+        const val MOUTH_Z = -11.5f
+        val HAMMER_CHAIN = arrayOf("body", "chest", "arm_r", "fore_r", "hammer")
+        const val HAMMER_HEAD_Y = -63f
+
+        /** Vergessen nach so vielen Millisekunden ohne Bild. */
+        const val FORGET_MS = 10_000L
+        private val RIGS = HashMap<Int, Rig>()
+
+        fun forgetStale() {
+            val now = System.currentTimeMillis()
+            RIGS.values.removeIf { now - it.seen > FORGET_MS }
+            BrontesAnchors.frames.values.removeIf { now - it.seen > FORGET_MS }
+        }
 
         // POSES BEGIN (generiert aus tools/hha_assets/brontes_model.py --kotlin)
         val BONES = arrayOf("body", "chest", "pec_r", "pec_l", "trap_r", "trap_l", "head", "brow", "eye", "arm_r", "fore_r", "hammer", "wedge", "arm_l", "fore_l", "tongs", "tongs_jaw", "ingot", "apron", "leg_r", "shin_r", "leg_l", "shin_l", "tongs_belt", "hammer_dropped")

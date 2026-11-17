@@ -21,6 +21,7 @@ import net.minecraft.util.math.BlockPos
 import net.minecraft.util.math.MathHelper
 import net.minecraft.util.math.Vec3d
 import net.minecraft.world.RaycastContext
+import java.util.Locale
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -347,7 +348,8 @@ class HadesAttacks(private val fight: HadesFight) {
     // Grundangriffe
     // -------------------------------------------------------------------------------------------------
 
-    private class Sweep(val pose: Int, val windup: Int, val damage: Float)
+    /** [side]: Richtung des Hiebs für Band und Ruck: +1 rechts → links, −1 links → rechts, 0 von oben. */
+    private class Sweep(val pose: Int, val windup: Int, val damage: Float, val side: Float)
 
     /**
      * Hiebfolge: Hieb A (W 14), Rückhand B (W 10), Schlusshieb von oben C (W 16), je ein Kegel 75° halb, Radius 8,5.
@@ -367,7 +369,7 @@ class HadesAttacks(private val fight: HadesFight) {
             )
             sound(HhaSounds.WHOOSH, entity.entityPos, 1.6f, 0.55f + i * 0.12f)
             wait(cone.ticks)
-            strike(cone, hit.damage, i == SWEEPS.size - 1)
+            strike(cone, hit.damage, i == SWEEPS.size - 1, hit.side)
             // Der Schlag selbst läuft noch [SWEEP_STRIKE] Ticks, erst dann holt er zum nächsten aus.
             if (i < SWEEPS.size - 1) wait(H.SWEEP_STRIKE)
         }
@@ -375,15 +377,38 @@ class HadesAttacks(private val fight: HadesFight) {
         entity.pose = HadesPose.IDLE
     }
 
-    /** Ein Hieb fällt: wer im Kegel steht, ein Flächeneffekt, beim Schlusshieb ein kurzes Rütteln. */
-    private fun strike(cone: Telegraph.Cone, damage: Float, final: Boolean) {
+    /**
+     * Ein Hieb fällt: wer im Kegel steht; als Flächeneffekt das Sichelband am Bident (`hades.bident`, folgt der Waffe),
+     * dazu ein Ruck in Hiebrichtung (Überarbeitung 3: ersetzt das Rütteln des Schlusshiebs). [side] wie
+     * [Sweep.side].
+     */
+    private fun strike(cone: Telegraph.Cone, damage: Float, final: Boolean, side: Float) {
         for (player in cone.hits(fight.targets())) {
             if (!fight.hurt(player, damage)) continue
             shove(player, cone.apex, 0.9, 0.35)
         }
-        Vfx.crescent(world, Vfx.Style.HADES, cone.apex.add(cone.direction.multiply(2.0)).add(0.0, 1.6, 0.0), cone.direction, H.SWEEP_RADIUS, 7f, 8)
+        bidentBand(cone.apex, cone.direction, H.SWEEP_RADIUS, H.SWEEP_HALF_ANGLE, side)
         sound(HhaSounds.DASH, cone.apex, 3f, if (final) 0.5f else 0.65f)
-        if (final) calls.hitShake(cone.apex, 3f)
+        bidentKick(cone.apex, side)
+    }
+
+    /** `hades.bident` (Flächeneffekt des Hiebs): Sichelband an der Waffe, Kodierung in `HadesFx`. */
+    private fun bidentBand(apex: Vec3d, direction: Vec3d, radius: Float, halfAngle: Float, side: Float) {
+        BossFx.play(
+            world, "hades.bident", Vfx.Style.HADES, apex, direction, a = radius, b = halfAngle, c = side,
+            life = BAND_LIFE, entity = fight.boss, impact = true,
+        )
+    }
+
+    /** Ruck eines Bident-Hiebs (PLAN 2.9): Rollen in Hiebrichtung, beim Hieb von oben ([side] 0) Nicken. */
+    private fun bidentKick(at: Vec3d, side: Float) {
+        if (side == 0f) BossFx.kick(world, at, pitch = SWEEP_KICK, ticks = KICK_TICKS)
+        else BossFx.kick(world, at, pitch = 0f, roll = side * SWEEP_KICK, ticks = KICK_TICKS)
+    }
+
+    /** Ruck beim Einschlag des Bident (Boden, Säule, Wurf): Nicken 2,5° (PLAN 2.9). */
+    private fun impactKick(at: Vec3d) {
+        BossFx.kick(world, at, pitch = IMPACT_KICK, ticks = KICK_TICKS)
     }
 
     /** Ausfallschritt: Linie Breite 2,2, W 18, S 22. Wer vor einer Säule ausweicht, lässt ihn hineinrennen. */
@@ -422,7 +447,8 @@ class HadesAttacks(private val fight: HadesFight) {
             if (pillar != null && pillar != behind) {
                 // Der Bident fährt in den Stein, er selbst steht benommen davor.
                 Vfx.shockwave(world, Vfx.Style.HADES, at, 3.5f, 12, 2f)
-                calls.hitShake(at, 4f)
+                impactKick(at)
+                BossFx.debris(world, at, IMPACT_DEBRIS_RADIUS, IMPACT_DEBRIS)
                 sound(HhaSounds.IMPACT, at, 4f, 0.65f)
                 yieldAll(staggered(H.THRUST_PILLAR_STAGGER))
                 return@sequence
@@ -462,7 +488,9 @@ class HadesAttacks(private val fight: HadesFight) {
             shove(player, ring.center, 1.2, 0.7)
         }
         Vfx.shockwave(world, Vfx.Style.HADES, ring.center, H.SLAM_RADIUS, 16, 3f)
-        calls.hitShake(ring.center, 4f)
+        impactKick(ring.center)
+        BossFx.cracks(world, Vfx.Style.HADES, ring.center, H.SLAM_RADIUS * SLAM_CRACK_SHARE, BossFx.CRACKS_PER_CALL, SLAM_CRACK_LIFE)
+        BossFx.debris(world, ring.center, SLAM_DEBRIS_RADIUS, SLAM_DEBRIS)
         sound(HhaSounds.IMPACT, ring.center, 3.5f, 0.7f)
         entity.pose = HadesPose.STUCK
         markOpen(H.STUCK_WINDOW)
@@ -490,7 +518,8 @@ class HadesAttacks(private val fight: HadesFight) {
         val hand = handOf()
         val stuck = landing.add(0.0, BIDENT_STUCK_HEIGHT, 0.0)
         val bolt = fight.puppet(HermesBoltEntity.BIDENT, hand)
-        if (bolt != null) Vfx.trail(world, Vfx.Style.HADES, bolt, 0.6f, ring.remaining + 4)
+        // Seelenspur am fliegenden Bident (zwei umeinander laufende Stränge); endet am Client mit dem Wesen.
+        if (bolt != null) BossFx.projectile(world, Vfx.Style.SOUL, bolt, BossFx.Look.SOUL)
         sound(HhaSounds.SPEAR, hand, 3.5f, 0.75f)
         val flight = ring.remaining.coerceAtLeast(1)
         val path = stuck.subtract(hand)
@@ -504,7 +533,8 @@ class HadesAttacks(private val fight: HadesFight) {
             shove(player, landing, 1.2, 0.6)
         }
         Vfx.shockwave(world, Vfx.Style.HADES, landing, H.THROW_RADIUS, 14, 2.4f)
-        calls.hitShake(landing, 4f)
+        impactKick(landing)
+        BossFx.debris(world, landing, IMPACT_DEBRIS_RADIUS, IMPACT_DEBRIS)
         sound(HhaSounds.IMPACT, landing, 3.5f, 0.85f)
         if (bolt != null) fight.steer(bolt, stuck, DOWN)
         entity.pose = HadesPose.EMPTY
@@ -586,6 +616,10 @@ class HadesAttacks(private val fight: HadesFight) {
                     iterator.remove()
                     broken = true
                     Vfx.flare(world, Vfx.Style.GOLD, player.entityPos.add(0.0, 1.2, 0.0), 2f, 8)
+                    // Die Kette schnellt zurück und federt nach, Funken an der Rissstelle.
+                    val snap = player.entityPos.add(0.0, 1.2, 0.0)
+                    BossFx.play(world, "hades.chain_snap", Vfx.Style.HADES, snap, life = CHAIN_SNAP_LIFE, entity = fight.boss)
+                    BossFx.sparks(world, Vfx.Style.HADES, snap, count = CHAIN_SPARKS, speed = CHAIN_SPARK_SPEED)
                     sound(HhaSounds.DEFLECT, player.entityPos, 2f, 0.6f)
                 } else if (tick % 4 == 0) {
                     val pull = flatDir(player.entityPos, entity.entityPos) ?: Vec3d.ZERO
@@ -604,7 +638,7 @@ class HadesAttacks(private val fight: HadesFight) {
         val cone = group.cone(floorAt(entity.entityPos), forward(), H.SWEEP_RADIUS, H.SWEEP_HALF_ANGLE, H.SWEEP_C_WINDUP, Telegraph.Pace.HEAVY)
         sound(HhaSounds.WHOOSH, entity.entityPos, 1.8f, 0.5f)
         wait(cone.ticks)
-        strike(cone, 20f, true)
+        strike(cone, 20f, true, SIDE_OVERHEAD)
         wait(H.SWEEP_WINDOW)
         entity.pose = HadesPose.IDLE
     }
@@ -618,11 +652,19 @@ class HadesAttacks(private val fight: HadesFight) {
         val entity = fight.boss ?: return@sequence
         val target = fight.randomTarget() ?: return@sequence
         entity.pose = HadesPose.VANISH
+        // Dunkler Wirbel, der sich um ihn schließt (PLAN 2.9), dann ist er fort.
+        BossFx.swirl(world, Vfx.Style.SHADOW, entity.entityPos.add(0.0, entity.height * 0.5, 0.0), UP, VANISH_SWIRL_RADIUS, VANISH_SWIRL_LIFE, closing = true)
         entity.cloaked = true
         val spot = fight.clampToHall(target.entityPos, 3.0)
         val ring = calls.ring(spot, H.AMBUSH_RADIUS, H.AMBUSH_WINDUP, pace = Telegraph.Pace.HEAVY)
         sound(HhaSounds.SOUL, entity.entityPos, 2.5f, 0.45f)
-        wait((ring.ticks - H.AMBUSH_HIT).coerceAtLeast(0))
+        // Solange er verhüllt ist: schwacher roter Herzschlag am Bildrand (sagt nie, wo er ist), alle 40 Ticks erneuert,
+        // jede Sendung endet spätestens mit dem Auftauchen. Gleich viele Ticks wie das frühere wait().
+        val cloak = (ring.ticks - H.AMBUSH_HIT).coerceAtLeast(0)
+        for (tick in 0 until cloak) {
+            if (tick % HUNTED_RENEW == 0) hunted((cloak - tick).coerceAtMost(HUNTED_RENEW + HUNTED_OVERLAP))
+            yield(Unit)
+        }
         // Er taucht hinter dem Ziel auf, innerhalb der Rune.
         val look = target.getRotationVec(1f).let { flatDir(Vec3d.ZERO, it) } ?: forward()
         val appear = fight.clampToHall(spot.subtract(look.multiply(2.4)), 3.0)
@@ -637,12 +679,27 @@ class HadesAttacks(private val fight: HadesFight) {
             if (!fight.hurt(player, 22f)) continue
             shove(player, appear, 1.0, 0.4)
         }
-        Vfx.crescent(world, Vfx.Style.HADES, appear.add(0.0, 1.4, 0.0), forward(), H.AMBUSH_RADIUS, 6f, 10)
-        calls.hitShake(appear, 3f)
+        bidentBand(appear, forward(), H.AMBUSH_RADIUS, AMBUSH_BAND_HALF_ANGLE, SIDE_RIGHT_TO_LEFT)
+        bidentKick(appear, SIDE_RIGHT_TO_LEFT)
         sound(HhaSounds.DASH, appear, 3f, 0.55f)
         markOpen(H.AMBUSH_WINDOW)
         wait(H.AMBUSH_WINDOW)
         entity.pose = HadesPose.IDLE
+    }
+
+    /**
+     * Herzschlag-Rand für alle Mitkämpfer ([BossFx.vignette], rot, schwach). Rot ist hier Gefahr, deshalb ohne den
+     * grünen Kampfstil des Saals (der würde jede Farbe außer Gold übermalen).
+     */
+    private fun hunted(ticks: Int) {
+        if (ticks <= 0) return
+        val saved = Vfx.styleOverride
+        Vfx.styleOverride = null
+        try {
+            for (player in fight.targets()) BossFx.vignette(player, Vfx.Style.CRIMSON, HUNTED_STRENGTH, ticks, beat = true)
+        } finally {
+            Vfx.styleOverride = saved
+        }
     }
 
     // -------------------------------------------------------------------------------------------------
@@ -675,7 +732,10 @@ class HadesAttacks(private val fight: HadesFight) {
     private fun crumble(pillar: Pair<Int, Int>, loud: Boolean = true) {
         if (!fight.intactPillars.remove(pillar)) return
         val base = pillarAt(pillar)
-        Vfx.pillar(world, Vfx.Style.HADES, base, 2.6f, 18f, 24)
+        // Die Säule zerspringt (Flächeneffekt an ihrem Fuß), echte Brocken fliegen; die Blöcke selbst fallen unten.
+        val style = if (fight.stage >= 4) Vfx.Style.AEON else Vfx.Style.HADES
+        BossFx.pillarShatter(world, style, base, TartarusPlans.PILLAR_RADIUS.toFloat(), SHATTER_HEIGHT, SHATTER_RISE, SHATTER_HOLD)
+        BossFx.debris(world, base, PILLAR_DEBRIS_RADIUS, PILLAR_DEBRIS)
         if (loud) sound(HhaSounds.IMPACT, base, 3.5f, 0.55f)
         fight.addTask(sequence {
             val radius = TartarusPlans.PILLAR_RADIUS + 1
@@ -733,7 +793,7 @@ class HadesAttacks(private val fight: HadesFight) {
             Vfx.beam(world, Vfx.Style.HADES, eye, pillarAt(pillar).add(0.0, 3.0, 0.0), 2.6f, 14)
             crumble(pillar, loud = false)
         }
-        calls.roomShake(entity.entityPos, 6f)
+        BossFx.kick(world, entity.entityPos, pitch = GAZE_KICK, ticks = KICK_TICKS, radius = ROOM_KICK_RADIUS)
         sound(HhaSounds.ROAR, entity.entityPos, 4f, 0.5f)
         wait(H.GAZE_WINDOW)
         entity.pose = HadesPose.IDLE
@@ -766,16 +826,55 @@ class HadesAttacks(private val fight: HadesFight) {
             wait(lead)
         }
         entity.pose = HadesPose.JUDGE
-        wait(group.ticks)
+        // Die Lichtsäulen fallen [JUDGE_FALL] Ticks vor dem Treffer los und berühren den Boden genau im Treffer-Tick
+        // (gleich viele Ticks wie das frühere wait(group.ticks)).
+        val left = group.ticks
+        val fall = JUDGE_FALL.coerceAtMost(left)
+        wait(left - fall)
+        judgeBeams(spots, fall)
+        wait(fall)
         for (player in fight.targets()) {
             if (safe.none { it.contains(player) }) fight.hurt(player, 34f, magic = true, reach = BossDefense.Reach.SKY)
         }
-        Vfx.shockwave(world, Vfx.Style.HADES, center, fight.safeRadius.toFloat(), 22, 6f)
-        calls.roomShake(center, 7f)
+        BossFx.kick(world, center, pitch = IMPACT_KICK, ticks = KICK_TICKS, radius = ROOM_KICK_RADIUS)
         sound(HhaSounds.THUNDER, center, 4f, 0.6f)
         markOpen(H.JUDGE_WINDOW)
         wait(H.JUDGE_WINDOW)
         entity.pose = HadesPose.IDLE
+    }
+
+    /**
+     * `hades.judge` (Flächeneffekt des Urteils, **ein** Aufruf): Lichtsäulen fahren von oben in die Flächen außerhalb der
+     * goldenen Kreise. Zuerst über jeden Spieler, der gerade außerhalb steht, dann auf Ringen über den Saal; keine Säule
+     * berührt einen sicheren Kreis (Abstand [JUDGE_SAFE_MARGIN]). Versätze zur Saalmitte in `extra` (`dx,dz;…`).
+     */
+    private fun judgeBeams(spots: List<Vec3d>, fall: Int) {
+        val keepOut = H.JUDGE_SAFE_RADIUS + JUDGE_SAFE_MARGIN
+        val reach = fight.safeRadius - 2.0
+        fun free(x: Double, z: Double): Boolean =
+            hypot(x - center.x, z - center.z) <= reach && spots.none { hypot(x - it.x, z - it.z) < keepOut }
+        val beams = ArrayList<Pair<Double, Double>>()
+        for (player in fight.targets()) {
+            if (beams.size >= JUDGE_MAX_BEAMS) break
+            if (free(player.x, player.z)) beams.add(player.x - center.x to player.z - center.z)
+        }
+        val turn = world.random.nextDouble() * Math.PI * 2.0
+        for ((ring, count) in JUDGE_RINGS) {
+            for (i in 0 until count) {
+                if (beams.size >= JUDGE_MAX_BEAMS) break
+                val a = turn + ring * 0.37 + i * Math.PI * 2.0 / count
+                val x = center.x + cos(a) * ring
+                val z = center.z + sin(a) * ring
+                if (free(x, z) && beams.none { hypot(it.first - (x - center.x), it.second - (z - center.z)) < JUDGE_BEAM_SPACING }) {
+                    beams.add(x - center.x to z - center.z)
+                }
+            }
+        }
+        val extra = beams.joinToString(";") { (x, z) -> String.format(Locale.ROOT, "%.1f,%.1f", x, z) }
+        BossFx.play(
+            world, "hades.judge", Vfx.Style.HADES, center, a = JUDGE_BEAM_HEIGHT, b = JUDGE_BEAM_RADIUS, c = fall.toFloat(),
+            life = fall + JUDGE_BEAM_LIFE, impact = true, extra = extra,
+        )
     }
 
     /**
@@ -865,14 +964,26 @@ class HadesAttacks(private val fight: HadesFight) {
         group.safe(center, next.toFloat(), H.COLLAPSE_WINDUP)
         fight.hint("hha.hades.hint.collapse", Formatting.GOLD)
         sound(HhaSounds.RIFT, center, 4f, 0.5f)
+        // Glühende Risse laufen vom Fuß jeder Säule, die gleich stürzt, nach außen (über die Ansage, nicht in Gold).
+        for ((n, pillar) in fight.intactPillars.filter { hypot(it.first.toDouble(), it.second.toDouble()) > next - 1.0 }.withIndex()) {
+            if (n >= BossFx.CRACKS_PER_CALL) break
+            val base = pillarAt(pillar)
+            val out = flatDir(center, base) ?: continue
+            val length = (outer - hypot(pillar.first.toDouble(), pillar.second.toDouble())).toFloat().coerceIn(COLLAPSE_CRACK_MIN, COLLAPSE_CRACK_MAX)
+            BossFx.crack(
+                world, Vfx.Style.HADES, base.add(out.multiply(TartarusPlans.PILLAR_RADIUS + 0.6)), out, length,
+                life = H.COLLAPSE_WINDUP + COLLAPSE_CRACK_AFTER, grow = (H.COLLAPSE_WINDUP * COLLAPSE_CRACK_GROW).toInt(),
+            )
+        }
         wait(group.ticks)
         if (fight.isEnded || fight.stage != 3) return@sequence
         fight.safeRadius = next
+        // Jede Säule im fallenden Ring zerspringt (je ein Flächeneffekt an ihrem Fuß, siehe [crumble]); statt des
+        // saalweiten Rings und des Rüttelns ein einzelner Ruck.
         for (pillar in fight.intactPillars.toList()) {
             if (hypot(pillar.first.toDouble(), pillar.second.toDouble()) > next - 1.0) crumble(pillar)
         }
-        Vfx.shockwave(world, Vfx.Style.HADES, center, outer.toFloat(), 26, 6f)
-        calls.roomShake(center, 7f)
+        BossFx.kick(world, center, pitch = IMPACT_KICK, ticks = KICK_TICKS, radius = ROOM_KICK_RADIUS)
         sound(HhaSounds.IMPACT, center, 4f, 0.4f)
         // Von außen nach innen, ein paar Spalten je Tick, damit es wie ein echter Einsturz aussieht.
         val order = band.sortedByDescending { hypot(it.first.toDouble(), it.second.toDouble()) }
@@ -1136,6 +1247,7 @@ class HadesAttacks(private val fight: HadesFight) {
         group.safeLine(point(-reach, gap), point(reach, gap), (half * 2.0).toFloat(), windup)
         group.hold(windup + H.DEAD_MARCH_TRAVEL + 1)
         fight.hint("hha.hades.hint.march")
+        if (gates.isNotEmpty()) gateFx(gate, surge = true, life = windup + H.DEAD_MARCH_TRAVEL + GATE_SURGE_AFTER)
         sound(HhaSounds.SOUL, gate, 3.5f, 0.5f)
         wait(group.ticks)
         val struck = HashSet<UUID>()
@@ -1174,7 +1286,9 @@ class HadesAttacks(private val fight: HadesFight) {
                     val spot = fight.clampToHall(player.entityPos, 2.0)
                     val ring = group.ring(spot, H.HELLFIRE_RADIUS, H.HELLFIRE_WINDUP)
                     val top = spot.add(0.0, 16.0, 0.0)
-                    drops.add(Drop(ring, fight.puppet(HermesBoltEntity.FIRE, top, 1.4f), top))
+                    val ball = fight.puppet(HermesBoltEntity.FIRE, top, 1.4f)
+                    if (ball != null) BossFx.projectile(world, Vfx.Style.HADES, ball, BossFx.Look.TORCH_FLAME)
+                    drops.add(Drop(ring, ball, top))
                 }
                 sound(HhaSounds.WHOOSH, center, 2.6f, 0.5f)
             }
@@ -1214,9 +1328,11 @@ class HadesAttacks(private val fight: HadesFight) {
         val limit = fight.safeRadius - 1.0
         val length = min(H.RIFT_LENGTH.toDouble(), limit)
         val cracks = LinkedHashSet<BlockPos>()
+        val rays = ArrayList<Vec3d>()
         for (ray in 0 until H.RIFT_BEAMS) {
             val a = start + ray * Math.PI * 2.0 / H.RIFT_BEAMS
             val dir = Vec3d(cos(a), 0.0, sin(a))
+            rays.add(dir)
             group.line(center.add(dir.multiply(2.0)), center.add(dir.multiply(length)), H.RIFT_WIDTH, H.RIFT_WINDUP)
             var step = 2.0
             while (step <= length) {
@@ -1239,6 +1355,10 @@ class HadesAttacks(private val fight: HadesFight) {
             fight.scar(pos.down(), Blocks.AIR.defaultState)
             fight.scar(pos.down(2), Blocks.AIR.defaultState)
             fight.scar(pos.down(3), Blocks.VERDANT_FROGLIGHT.defaultState)
+        }
+        // Die Kanten der Spalten glühen auf (erst jetzt, die Ansage ist vorbei).
+        for (dir in rays.take(BossFx.CRACKS_PER_CALL)) {
+            BossFx.crack(world, Vfx.Style.HADES, center.add(dir.multiply(2.0)), dir, (length - 2.0).toFloat(), life = H.RIFT_OPEN + RIFT_CRACK_AFTER, grow = RIFT_CRACK_GROW)
         }
         sound(HhaSounds.IMPACT, center, 4f, 0.5f)
         repeat(H.RIFT_OPEN) { tick ->
@@ -1311,10 +1431,19 @@ class HadesAttacks(private val fight: HadesFight) {
 
     private fun showGates() {
         gatesShown = world.time
-        for (gate in gates) {
-            val inward = flatDir(gate, center) ?: Vec3d(1.0, 0.0, 0.0)
-            Vfx.rift(world, Vfx.Style.HADES, gate.add(0.0, GATE_HEIGHT, 0.0), inward, GATE_RADIUS, H.GATE_LIFE)
-        }
+        for (gate in gates) gateFx(gate, surge = false, life = H.GATE_LIFE)
+    }
+
+    /**
+     * `hades.gate`: hochkant stehender Riss mit dunklem Kern am Rand. Der Client verlängert eine stehende Pforte am
+     * selben Ort, statt eine zweite zu öffnen; [surge] lässt sie aufglühen (der Zug der Toten tritt aus).
+     */
+    private fun gateFx(gate: Vec3d, surge: Boolean, life: Int) {
+        val inward = flatDir(gate, center) ?: Vec3d(1.0, 0.0, 0.0)
+        BossFx.play(
+            world, "hades.gate", Vfx.Style.HADES, gate, inward, a = GATE_RADIUS * 2f, b = GATE_WIDTH, c = if (surge) 1f else 0f,
+            life = life,
+        )
     }
 
     /** Zu Beginn von Phase II (in der Szene): Am Rand reißen zwei Pforten auf. Nicht angreifbar, kein Schild. */
@@ -1341,9 +1470,9 @@ class HadesAttacks(private val fight: HadesFight) {
         const val ANTI_AIR_DAMAGE = 18f
 
         val SWEEPS = listOf(
-            Sweep(HadesPose.SWEEP, BossTimings.Hades.SWEEP_A_WINDUP, 16f),
-            Sweep(HadesPose.SWEEP_B, BossTimings.Hades.SWEEP_B_WINDUP, 16f),
-            Sweep(HadesPose.SWEEP_C, BossTimings.Hades.SWEEP_C_WINDUP, 20f),
+            Sweep(HadesPose.SWEEP, BossTimings.Hades.SWEEP_A_WINDUP, 16f, SIDE_RIGHT_TO_LEFT),
+            Sweep(HadesPose.SWEEP_B, BossTimings.Hades.SWEEP_B_WINDUP, 16f, -SIDE_RIGHT_TO_LEFT),
+            Sweep(HadesPose.SWEEP_C, BossTimings.Hades.SWEEP_C_WINDUP, 20f, SIDE_OVERHEAD),
         )
 
         /** Entfernungsklassen für die Wahl des Grundangriffs. */
@@ -1361,5 +1490,75 @@ class HadesAttacks(private val fight: HadesFight) {
 
         const val GATE_HEIGHT = 4.5
         const val GATE_RADIUS = 4.5f
+
+        // --- Überarbeitung 3: Darstellung (keine Kampfzahl) ---
+
+        val UP = Vec3d(0.0, 1.0, 0.0)
+
+        /** Hiebrichtung für Band und Ruck: Hieb A von rechts nach links, B zurück, C von oben. */
+        const val SIDE_RIGHT_TO_LEFT = 1f
+        const val SIDE_OVERHEAD = 0f
+
+        /** Sichelband: Lebenszeit; im Hinterhalt rundum (halber Winkel, Obergrenze des Effekts). */
+        const val BAND_LIFE = 14
+        const val AMBUSH_BAND_HALF_ANGLE = 120f
+
+        /** Rucke (Grad, Ticks): Bident-Hiebe rollen 1,5°, Einschläge nicken 2,5°, der Blick 2°; saalweit bis 64 Blöcke. */
+        const val SWEEP_KICK = 1.5f
+        const val IMPACT_KICK = 2.5f
+        const val GAZE_KICK = 2f
+        const val KICK_TICKS = 6
+        const val ROOM_KICK_RADIUS = 64f
+
+        /** Trümmer echter Blöcke: Einschlag des Bident (4), Bodenschlag (6), stürzende Säule (6). */
+        const val IMPACT_DEBRIS = 4
+        const val IMPACT_DEBRIS_RADIUS = 2.5f
+        const val SLAM_DEBRIS = 6
+        const val SLAM_DEBRIS_RADIUS = 4f
+        const val SLAM_CRACK_SHARE = 0.7f
+        const val SLAM_CRACK_LIFE = 60
+        const val PILLAR_DEBRIS = 6
+        const val PILLAR_DEBRIS_RADIUS = 3.5f
+
+        /** Zerspringende Säule (`core.pillar_shatter`): in der echten Säule verborgen, sichtbar wird das Zerspringen. */
+        const val SHATTER_HEIGHT = 12f
+        const val SHATTER_RISE = 2
+        const val SHATTER_HOLD = 2
+
+        /** Einsturz: Risse wachsen über 60 % der Ansage, glühen danach noch kurz. */
+        const val COLLAPSE_CRACK_MIN = 3f
+        const val COLLAPSE_CRACK_MAX = 10f
+        const val COLLAPSE_CRACK_GROW = 0.6
+        const val COLLAPSE_CRACK_AFTER = 30
+
+        /** Spalten: Risse an den Kanten, schnell gewachsen, so lange die Spalte offen ist. */
+        const val RIFT_CRACK_GROW = 6
+        const val RIFT_CRACK_AFTER = 10
+
+        /** Urteil: Säulen fallen so viele Ticks vor dem Treffer los; Höhe, Radius, Nachglühen, Anordnung. */
+        const val JUDGE_FALL = 4
+        const val JUDGE_BEAM_HEIGHT = 28f
+        const val JUDGE_BEAM_RADIUS = 1.6f
+        const val JUDGE_BEAM_LIFE = 22
+        const val JUDGE_MAX_BEAMS = 22
+        const val JUDGE_SAFE_MARGIN = 2.0
+        const val JUDGE_BEAM_SPACING = 5.0
+        val JUDGE_RINGS = listOf(9.0 to 4, 19.0 to 7, 30.0 to 10)
+
+        /** Schattenschritt: Wirbel beim Verschwinden; Herzschlag-Rand (Stärke, Erneuerung, Überlappung). */
+        const val VANISH_SWIRL_RADIUS = 2.6f
+        const val VANISH_SWIRL_LIFE = 18
+        const val HUNTED_STRENGTH = 0.18f
+        const val HUNTED_RENEW = 40
+        const val HUNTED_OVERLAP = 4
+
+        /** Kette reißt: Rückschnellen und Funken. */
+        const val CHAIN_SNAP_LIFE = 18
+        const val CHAIN_SPARKS = 8
+        const val CHAIN_SPARK_SPEED = 0.35f
+
+        /** Pforte: Breite des Risses; Aufglühen hält über den Zug der Toten hinaus. */
+        const val GATE_WIDTH = 3.6f
+        const val GATE_SURGE_AFTER = 20
     }
 }

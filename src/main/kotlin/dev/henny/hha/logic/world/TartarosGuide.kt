@@ -156,6 +156,15 @@ object TartarosGuide {
         appear(world, player, pos)
     }
 
+    /**
+     * Öffentliche, nebenwirkungsfreie Abfrage für das RPG-HUD: Lage und Schlüssel (Glied-Schlüssel bzw. `palace`) des
+     * nächsten Ziels, oder `null`, wenn keins gefunden wird. Nutzt denselben Zwischenspeicher wie der Wegweiser.
+     */
+    fun target(world: ServerWorld, player: ServerPlayerEntity): Pair<Vec3d, String>? {
+        val t = nextTarget(world, player)
+        return t.pos?.let { it to t.key }
+    }
+
     /** Das nächste ungesprengte Glied (nächstes Bauwerk), nach dem fünften der Palast. */
     private fun nextTarget(world: ServerWorld, player: ServerPlayerEntity): Target {
         val server = world.server ?: return Target(null, "lost", null)

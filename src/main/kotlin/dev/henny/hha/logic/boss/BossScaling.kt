@@ -62,7 +62,8 @@ object BossScaling {
     /** Lebensfaktor `H(n) = boss_strength · (1 + hermes_health_per_player · (n − 1))`; teilt den eingehenden Schaden. */
     fun health(n: Int): Float {
         val crowd = n.coerceIn(1, MAX_CROWD)
-        return HEALTH_BOOST * HhaConfig.numF("boss_strength") * (1f + HhaConfig.numF("hermes_health_per_player") * (crowd - 1))
+        return HEALTH_BOOST * HhaConfig.numF("boss_strength") * (1f + HhaConfig.numF("hermes_health_per_player") * (crowd - 1)) *
+            dev.henny.hha.rpg.RpgRules.bossHealthFactor() // Überarbeitung 3 (P06): nur in RPG-Welten ≠ 1
     }
 
     /**
@@ -72,7 +73,8 @@ object BossScaling {
     fun damage(n: Int, family: Family): Float {
         val crowd = n.coerceIn(1, MAX_CROWD)
         val perPlayer = min(1f + HhaConfig.numF("hermes_damage_per_player") * (crowd - 1), HhaConfig.numF("boss_damage_player_cap"))
-        return DAMAGE_BOOST * perPlayer * HhaConfig.numF(family.damageKey)
+        return DAMAGE_BOOST * perPlayer * HhaConfig.numF(family.damageKey) *
+            dev.henny.hha.rpg.RpgRules.bossDamageFactor() // Überarbeitung 3 (P06): nur in RPG-Welten ≠ 1
     }
 
     /** Pause zwischen zwei Angriffen: `ticks × max(0,75, 1 − boss_tempo_per_player · (n − 1))`. Ansagen ändern sich nie. */

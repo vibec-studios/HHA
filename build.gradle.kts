@@ -116,3 +116,14 @@ publishing {
     repositories {
     }
 }
+
+// Überarbeitung 3 (P05): schreibt alle Bühnen-Skripte als JSON (reine Daten, kein Spielstart) für
+// tools/hha_assets/stage_preview.py. Aufruf: python tools/hha_assets/gradle_locked.py dumpStages
+tasks.register<JavaExec>("dumpStages") {
+    group = "hha"
+    description = "Bühnen-Skripte als JSON nach tmp/overhaul3/previews/stage/stages.json"
+    dependsOn("classes")
+    classpath = sourceSets.getByName("main").runtimeClasspath
+    mainClass.set("dev.henny.hha.stage.StageDump")
+    args(file("tmp/overhaul3/previews/stage/stages.json").absolutePath)
+}

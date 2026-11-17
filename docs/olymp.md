@@ -95,6 +95,12 @@ In der Luft treffen Seelensäulen, Speere, Sturzflug und Konter weiter; über Bo
 Worts springt man. Wer k. o. geht, landet am Eingang der Insel B. **Finale:** Paket öffnen (Beute, siehe Reliquien),
 dann wirft Hermes dem Öffner den **Schwarzen Brief** zu und geht. Den Brief braucht man für Hekate.
 
+**Inszenierung (Überarbeitung 3):** Der Prolog läuft als Bühnen-Szene: Kreis um den Altar, Sog nach oben, die Kamera
+folgt dem Kometen hinab. Der Kurierstoß zieht eine Lichtbahn mit Kopf und Schweif (`hermes.streak`), das Blinzeln öffnet
+kleine Portale und endet in einem Lichtstern, die Herma zerspringt in echte Marmorbrocken, die Speere der vierten Stufe
+fallen aus einem Riss im Himmel genau im Treffer. Flügel und Chlamys schwingen nach, im Flug neigt er sich in Kurven
+(höchstens 14°). Alle fünf Szenen (`hermes.prolog`, `stage2`–`stage4`, `finale`) sind überspringbar.
+
 ### Hekate, Göttin der Schwellen (Insel C)
 
 **Start:** mit dem Schwarzen Brief in der Hand den Altar vor dem Hekataion anklicken. Sie schwebt, gleitet und hält zwei
@@ -114,6 +120,14 @@ Der Himmel wird dabei nur dunkler (Stimmung, keine Blindheit). Nach dem Sieg tri
 am Nordwest-Ende des Platzes öffnet sich Reihe für Reihe. Es führt in den [Tartaros](tartaros.md). Hekate gibt keine
 Reliquie, aber die Schmiedevorlage, Netheritschrott und goldene Äpfel.
 
+**Inszenierung (Überarbeitung 3):** Auftritt (`hekate.intro`, 12 s): Die Kamera schleicht den Südweg hinauf, die
+Fackelsäulen flammen paarweise blau auf, Hekate gleitet aus einem Wirbel an der Statue. Der Fackelschwung zieht ein
+Flammenband am Fackelkopf, der Wurf eine Flammenspur, der Feuerpfad frisst sich als glühender Sprung voran, der
+Runenring der Schlüsseldrehung rastet zum Treffer ein. Die Mondfinsternis ist der einzige Bildschirm-Pass des Kampfs
+(abgedunkelt, kühler Lichtkranz, die goldenen Kreise bleiben klar) und endet bei jedem Ausgang sofort. Niederlage
+(`hekate.defeat`): Kamerafahrt zum Höllentor, das sich Reihe für Reihe füllt. Musik `music.hekate`, ab Phase II
+`music.hekate_2`.
+
 ### Brontes, der Kyklop (Insel D)
 
 **Start:** nach Hermes, Altar südlich vom Amboss. Effektiv 1500 Leben, Phase II bei 50 %.
@@ -130,6 +144,12 @@ Reliquie, aber die Schmiedevorlage, Netheritschrott und goldene Äpfel.
 | Der Keil (35 % und 15 %) | drei wachsende Glutringe, dann ein Kreis Radius 6 am Entferntesten | springen, wenn die Welle kommt; danach 2 s offen |
 
 Der **Amboss** deckt: Hammer und Riss enden an ihm, wer dahinter steht, ist vor dem Rundschwung sicher.
+
+**Inszenierung (Überarbeitung 3):** Auftritt (`brontes.intro`): ein Hammerschlag im Dunkeln, die Kamera fährt an ihm hoch,
+das Auge öffnet sich. Der Hammer reißt echte Bodenblöcke heraus und hinterlässt glühende Risse und einen Brandfleck, der
+abkühlt; der Blasebalg ist ein Funkenstrom aus dem Mund mit schwachem Hitzeflimmern, der Keil endet in einer Glutsäule
+mit kurzem Stoßring durchs Bild. Das Auge erlischt beim Blenden und kommt in ruhigen Schritten zurück; die Esse glüht
+mit seinem Leben. Musik `music.brontes`, ab 50 % `music.brontes_2`.
 
 ### Kratos und Bia, die Thronwache (Insel E)
 
@@ -149,6 +169,12 @@ Sockel. Effektiv 1700 Leben, Phase II bei 50 %. **Bia nimmt nie Schaden und hat 
 
 In Phase II wirft er den Schild weg, schlägt doppelt (zweiter Kreis 18 Ticks später), gibt Befehle paarweise, und Bia
 stürmt dreimal hintereinander.
+
+**Inszenierung (Überarbeitung 3):** Auftritt (`kratos.intro`): Die Kamera steigt neben Kratos die Treppe hinauf, er schlägt
+den Schild auf, dann läuft ein glühender Riss über die Statue der Bia und ihre Augen leuchten auf. Schildstoß als roter
+Schleier-Bogen, Hammerfall mit Ring, Staub und echten Marmorblöcken, Befehle als roter Bogen von seiner Hand zu Bia,
+„KNIET!“ als breites Band auf Brusthöhe. In Phase II fliegt der Schild davon und zerspringt; Umhang und Busch schwingen
+nach. Musik `music.kratos`, ab Phase II `music.kratos_2`.
 
 ### Zeus (Insel F)
 
@@ -178,6 +204,14 @@ stürmt dreimal hintereinander.
 
 Alle neuen Bosse sprechen vorerst nur als Text mit Stimm-Lauten (Namen in ihrer Farbe).
 
+**Inszenierung (Überarbeitung 3):** Blitze kommen aus Rissen in der Wolkendecke und treffen genau im Schaden-Tick; den
+Stoßring durchs Bild und den Ruck bekommt nur der Gerufene. Über dem Thronhof öffnen sich Lichtrisse – einer in
+Phase I, drei in Phase II, fünf in Phase III, breiter bei sinkendem Leben. Erdung, Entladung, Donnerschlag (echte
+Marmorblöcke), Aigis-Blick (Lichtkegel, kühle Vignette für den, der hinsieht), Sturmwand (Regenwand mit goldenen
+Pfosten an der Lücke) und Waage (die Schale bleibt frei lesbar, die Kamera wackelt nicht) haben eigene Bilder. Auftritt,
+Phasenwechsel und Niederlage sind Szenen (`zeus.intro`, `phase2`, `phase3`, `defeat`); am Ende senkt Nike den goldenen
+Kranz auf den Sieger. Je Phase ein Thema (`music.zeus`, `zeus_2`, `zeus_3`), am Ende `music.victory_olymp`.
+
 ## Gegner des Olymp
 
 Sie stehen nur an festen Posten auf den Inseln B bis F und auf Nebeninseln, nie auf Insel A und nie in einer Kampffläche.
@@ -193,6 +227,9 @@ und keine Mace-Abwehr.
 Stöße prüfen die Kante: Niemand wird von der Insel geworfen. Getötete Posten bleiben 5 Minuten leer und kommen erst
 wieder, wenn man sich einmal weiter als 64 Blöcke entfernt hat. Beute: Goldnuggets, Kupferbarren, selten ein Heavens
 Barren. Zum Testen: `/hha olymp spawn kurete|griffin|automaton`.
+
+Seit der Überarbeitung 3: Kureten schlagen Funken am Schild, der Busch federt; der Greif zieht nach dem Sturzflug einen
+kleinen Staubring; der Dampfstoß der goldenen Wächterin ist ein weicher weißer Schleier.
 
 ## Fortschritt und Testbefehle
 

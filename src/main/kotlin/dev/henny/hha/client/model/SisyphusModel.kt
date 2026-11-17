@@ -128,6 +128,8 @@ class SisyphusModel(root: ModelPart) : GuardianModel(root) {
         var liftArc = 0f
         var gaze = 0f
         var backArc = 0f
+        val rig = RIGS.of(state.entityId)
+        rig.begin(t, state.action, a)
 
         start(SisyphusPoses.IDLE)
         when (state.action) {
@@ -209,6 +211,8 @@ class SisyphusModel(root: ModelPart) : GuardianModel(root) {
             }
         }
         if (state.action != SisyphusAction.NONE) w *= 0.25f
+        // Überarbeitung 3: aus der zuletzt gezeigten Pose überblenden (nicht aus der vorigen Aktion bei ihrem Alter).
+        rig.blend(cur, state.action, t, BLEND)
         apply()
 
         // --- Ausweichbahn des Felsens, damit er nicht durch Kopf oder Rücken wandert ---
@@ -279,6 +283,20 @@ class SisyphusModel(root: ModelPart) : GuardianModel(root) {
         loinBack.pitch = lean + max(0f, max(legR.pitch, legL.pitch)) * 0.6f + 4f * DEG
         loinBack.roll = -body.roll
 
+        // --- Überarbeitung 3: Bart und Lendentuch schwingen nach harten Bewegungen nach, Mund zum Text ---
+        for (hit in hitTimes(state.action)) {
+            if (!rig.crossed(hit)) continue
+            rig.springs[BEARD_SPRING].kick(BEARD_KICK)
+            rig.springs[LOIN_SPRING].kick(LOIN_KICK)
+        }
+        val beardSwing = rig.spring(BEARD_SPRING)
+        val loinSwing = rig.spring(LOIN_SPRING)
+        beard.pitch += beardSwing
+        beardTip.pitch += beardSwing * 1.4f
+        loin.pitch += loinSwing
+        loinBack.pitch -= loinSwing * 0.8f
+        jaw.pitch += dev.henny.hha.client.cine.CinePlayer.mouthOf(state.entityId) * MOUTH_OPEN
+
         // --- Fels: weg nach dem Wurf, wächst während REGROW nach ---
         boulder.visible = boulderShown
         boulder.xScale = boulderScale
@@ -286,7 +304,34 @@ class SisyphusModel(root: ModelPart) : GuardianModel(root) {
         boulder.zScale = boulderScale
     }
 
+    /** Zeitpunkte harter Bewegungen je Aktion (Stoß für Bart und Lendentuch), aus [BossTimings.Sisyphus]. */
+    private fun hitTimes(action: Int): FloatArray = when (action) {
+        SisyphusAction.THROW -> floatArrayOf(S.THROW_WINDUP.toFloat())
+        SisyphusAction.BOWL -> floatArrayOf(S.BOWL_SET.toFloat(), S.BOWL_WINDUP.toFloat())
+        SisyphusAction.STOMP -> floatArrayOf(S.STOMP_WINDUP.toFloat())
+        SisyphusAction.CURSE -> floatArrayOf(8f)
+        SisyphusAction.REGROW -> floatArrayOf(S.REGROW.toFloat() - 4f)
+        SisyphusAction.STAGGER -> floatArrayOf(4f)
+        BossDefense.ANTI_AIR -> floatArrayOf(BossTimings.Guardian.ANTI_AIR_HIT.toFloat())
+        else -> NO_HITS
+    }
+
+    private val RIGS = GuardianRigs { GuardianRig(SisyphusPoses.BONES.size * 6, 2, SPRING_FREQ, SPRING_DAMP) }
+
     private companion object {
+        // --- Überarbeitung 3 (P14) ---
+        /** Überblendung aus der gezeigten Pose bei jedem Aktionswechsel (Ticks). */
+        const val BLEND = 6f
+        const val BEARD_SPRING = 0
+        const val LOIN_SPRING = 1
+        const val SPRING_FREQ = 0.4f
+        const val SPRING_DAMP = 0.22f
+        /** Stoß (rad/Tick) für Bart und Lendentuch. */
+        const val BEARD_KICK = 0.1f
+        const val LOIN_KICK = 0.08f
+        const val MOUTH_OPEN = 0.35f
+        val NO_HITS = FloatArray(0)
+
         val HIPS = SisyphusPoses.index("hips")
         val BODY = SisyphusPoses.index("body")
         val HEAD = SisyphusPoses.index("head")

@@ -463,6 +463,9 @@ class HermesFight(
         }
     }
 
+    /** Server-Ticks dieses Kampfes (für die Zeitleisten der Bühnen-Szenen, `HermesCutscenes.cue`). */
+    val clock: Int get() = ticks
+
     fun onBossDamaged(entity: HermesEntity, source: DamageSource, amount: Float): Float = scoped { damageBoss(entity, source, amount) }
 
     /**
@@ -539,6 +542,8 @@ class HermesFight(
         stones.remove(entity)
         entity.lit = false
         Vfx.nova(world, Vfx.Style.GOLD, entity.entityPos.add(0.0, 2.0, 0.0), 3.5f, 12)
+        // Überarbeitung 3 (PLAN 2.4): Die Herma zerspringt in echte Marmorbrocken des Forums (`core.debris`).
+        BossFx.debris(world, entity.entityPos, HERMA_DEBRIS_RADIUS, HERMA_DEBRIS)
         sound(SoundEvents.BLOCK_STONE_BREAK, entity.entityPos, 2f, 0.7f)
         attacks.onStoneBroken(entity)
     }
@@ -801,6 +806,10 @@ class HermesFight(
 
         /** Leben eines Herma-Steins (Plan 4.2), wächst mit der Spielerzahl. */
         const val HERMA_HEALTH = 30.0
+
+        /** Zerschlagene Herma: Ring der Bodenbrocken und ihre Zahl (reine Darstellung, P07). */
+        private const val HERMA_DEBRIS_RADIUS = 1.6f
+        private const val HERMA_DEBRIS = 7
 
         /** Höhe der Trefferbox (Rückfall, solange er nicht steht). */
         private const val HERMES_HEIGHT = 2.8f

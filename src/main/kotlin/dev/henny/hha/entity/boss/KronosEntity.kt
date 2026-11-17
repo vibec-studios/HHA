@@ -10,6 +10,7 @@ import net.minecraft.entity.data.TrackedData
 import net.minecraft.entity.data.TrackedDataHandlerRegistry
 import net.minecraft.entity.mob.MobEntity
 import net.minecraft.server.world.ServerWorld
+import net.minecraft.util.math.BlockPos
 import net.minecraft.world.World
 import kotlin.math.hypot
 
@@ -80,6 +81,7 @@ class KronosEntity(type: EntityType<out KronosEntity>, world: World) : PuppetEnt
         builder.add(FORM, 0)
         builder.add(HARPE_OUT, false)
         builder.add(ANTI_AIR, false)
+        builder.add(HALL, BlockPos.ORIGIN)
     }
 
     var pose: Int
@@ -106,6 +108,14 @@ class KronosEntity(type: EntityType<out KronosEntity>, world: World) : PuppetEnt
     var harpeOut: Boolean
         get() = dataTracker.get(HARPE_OUT)
         set(value) = dataTracker.set(HARPE_OUT, value)
+
+    /**
+     * Mitte des Thronsaals (Überarbeitung 3, nur Darstellung): Der Client hängt daran den Himmel des Tartaros
+     * (`kronos.sky`, Risse in der Kuppel). [BlockPos.ORIGIN] = noch unbekannt (Szene vor dem Kampf).
+     */
+    var hall: BlockPos
+        get() = dataTracker.get(HALL)
+        set(value) = dataTracker.set(HALL, value)
 
     override fun getBaseDimensions(pose: net.minecraft.entity.EntityPose): net.minecraft.entity.EntityDimensions =
         super.getBaseDimensions(pose).scaled(1f + form * FORM_GROWTH)
@@ -151,6 +161,7 @@ class KronosEntity(type: EntityType<out KronosEntity>, world: World) : PuppetEnt
         private val FORM: TrackedData<Int> = DataTracker.registerData(KronosEntity::class.java, TrackedDataHandlerRegistry.INTEGER)
         private val HARPE_OUT: TrackedData<Boolean> = DataTracker.registerData(KronosEntity::class.java, TrackedDataHandlerRegistry.BOOLEAN)
         private val ANTI_AIR: TrackedData<Boolean> = DataTracker.registerData(KronosEntity::class.java, TrackedDataHandlerRegistry.BOOLEAN)
+        private val HALL: TrackedData<BlockPos> = DataTracker.registerData(KronosEntity::class.java, TrackedDataHandlerRegistry.BLOCK_POS)
 
         fun attributes(): DefaultAttributeContainer.Builder = MobEntity.createMobAttributes()
             .add(EntityAttributes.MAX_HEALTH, 1000.0)

@@ -5,6 +5,10 @@ import dev.henny.hha.client.vfx.BossGlow
 import dev.henny.hha.entity.boss.KronosEntity
 import dev.henny.hha.entity.boss.KronosPose
 import dev.henny.hha.logic.boss.BossTimings
+import dev.henny.hha.client.anim.PoseMemory
+import dev.henny.hha.client.anim.Spring
+import dev.henny.hha.client.cine.CinePlayer
+import dev.henny.hha.client.vfx.fx.boss.KronosDeath
 import net.minecraft.client.MinecraftClient
 import net.minecraft.client.model.ModelPart
 import net.minecraft.client.render.OverlayTexture
@@ -21,6 +25,7 @@ import net.minecraft.util.math.MathHelper
 import net.minecraft.util.math.Vec3d
 import org.joml.Vector3f
 import kotlin.math.abs
+import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
@@ -56,6 +61,9 @@ private fun key(data: String, hidden: IntArray) = KronosKey(data.split(',').map 
  * dann ein harter Schlag mit dem ganzen Oberkörper (2–3 Ticks), Nachlauf, Erholung.
  */
 class KronosModel(root: ModelPart) : EntityModel<KronosRenderState>(root) {
+
+    /** Wurzel des Modells (für Nachbilder und Zerfall, siehe [KronosParts]). */
+    internal val rootBone: ModelPart = root
 
     private val parts: Array<ModelPart> = Array(Keys.COUNT) { i ->
         Keys.BONES[i].split('/').fold(root) { p, n -> p.getChild(n) }
@@ -230,7 +238,15 @@ class KronosModel(root: ModelPart) : EntityModel<KronosRenderState>(root) {
         val start = evaluate(state.previousPose, settled(state.previousPose), Keys.IDLE.v)
         // Konter (Überarbeitung 2, PLAN 4.3): SWEEP_L läuft so gestaucht, dass der Hieb auf das Ende der Konter-Ansage fällt.
         val counter = state.antiAir && pose == KronosPose.SWEEP_L
-        val v = evaluate(pose, if (counter) counterTime(t) else t, start)
+        val effective = if (counter) counterTime(t) else t
+        // Überarbeitung 3: aus der zuletzt *gezeigten* Haltung überblenden (PoseMemory), nicht aus der vorigen Pose
+        // „bei ihrem Ende“ – so springt nichts, wenn eine Pose mitten im Ablauf abgelöst wird.
+        val rig = rigOf(state.entityId)
+        val now = state.age
+        val dt = if (rig.lastAge.isNaN()) 0f else (now - rig.lastAge).coerceIn(0f, 4f)
+        val restart = pose == rig.lastPose && effective + 0.01f < rig.lastT
+        val v = rig.memory.blend(pose, evaluate(pose, effective, start), now, POSE_FADE, restart)
+        for (p in parts) p.visible = true
         for (b in 0 until Keys.COUNT) {
             val p = parts[b]
             val o = b * 6
@@ -387,6 +403,136 @@ class KronosModel(root: ModelPart) : EntityModel<KronosRenderState>(root) {
         part(Keys.BEARD_1).pitch += sin(clock * 0.07f - 0.5f) * 0.05f
         part(Keys.LOIN_F).pitch += sin(clock * 0.05f) * 0.02f
         part(Keys.LOIN_B).pitch += sin(clock * 0.05f + 1f) * 0.02f
+
+        secondary(rig, state, pose, effective, dt, still)
+        rig.lastAge = now
+        rig.lastPose = pose
+        rig.lastT = effective
+        dissolve(state.entityId)
+    }
+
+    // --- Überarbeitung 3: Nachschwingen, Lippen, Leuchten, Zerfall ------------------------------------------------
+
+    /** Zustand je Wesen (nach `entityId`): Überblendung, Federn, Mund, Leuchten. Entfernte Wesen werden vergessen. */
+    private class Rig {
+        val memory = PoseMemory(Keys.COUNT * 6)
+        val harpePitch = Spring(HARPE_FREQ, HARPE_DAMP)
+        val harpeYaw = Spring(HARPE_FREQ, HARPE_DAMP)
+        val beard = Spring(BEARD_FREQ, BEARD_DAMP)
+        val mantlePitch = Spring(MANTLE_FREQ, MANTLE_DAMP)
+        val mantleYaw = Spring(MANTLE_FREQ, MANTLE_DAMP)
+        val mouth = Spring(MOUTH_FREQ, MOUTH_DAMP)
+        var glow = 1f
+        var lastAge = Float.NaN
+        var lastPose = -1
+        var lastT = 0f
+        var seen = 0L
+    }
+
+    private val rigs = HashMap<Int, Rig>()
+
+    private fun rigOf(id: Int): Rig {
+        val clock = System.currentTimeMillis()
+        if (rigs.size > RIG_KEEP) rigs.values.removeIf { clock - it.seen > RIG_FORGET_MS }
+        return rigs.getOrPut(id) { Rig() }.also { it.seen = clock }
+    }
+
+    /** Leuchten der Risse für den Renderer (1 = normal; steigt beim Aufladen, fällt im offenen Fenster). */
+    fun glowOf(id: Int): Float = rigs[id]?.glow ?: 1f
+
+    /** Trefferzeitpunkt einer Pose (für Stöße an die Federn), sonst −1. */
+    private fun hitTick(pose: Int): Float = when (pose) {
+        KronosPose.SWEEP -> BossTimings.Kronos.SWEEP_WINDUP.toFloat()
+        KronosPose.SWEEP_L -> BossTimings.Kronos.SWEEP_L_WINDUP.toFloat()
+        KronosPose.CLEAVE -> BossTimings.Kronos.CLEAVE_WINDUP.toFloat()
+        KronosPose.SLAM -> BossTimings.Kronos.SLAM_WINDUP.toFloat()
+        KronosPose.DEVOUR -> BossTimings.Kronos.DEVOUR_BITE.toFloat()
+        KronosPose.HALT -> BossTimings.Kronos.HALT_HIT.toFloat()
+        else -> -1f
+    }
+
+    /** Lädt er gerade auf (gehaltenes Ausholen), oder steht er offen? Daraus folgt das Leuchten. */
+    private fun glowTarget(pose: Int, t: Float): Float = when (pose) {
+        KronosPose.SWEEP -> if (t < BossTimings.Kronos.SWEEP_WINDUP) GLOW_CHARGE else 1f
+        KronosPose.SWEEP_L -> if (t < BossTimings.Kronos.SWEEP_L_WINDUP) GLOW_CHARGE else 1f
+        KronosPose.CLEAVE -> if (t < BossTimings.Kronos.CLEAVE_WINDUP) GLOW_CHARGE else 1f
+        KronosPose.SLAM -> if (t < BossTimings.Kronos.SLAM_WINDUP) GLOW_CHARGE else 1f
+        KronosPose.THROW -> if (t < BossTimings.Kronos.THROW_WINDUP) GLOW_CHARGE else 1f
+        KronosPose.DEVOUR -> if (t < BossTimings.Kronos.DEVOUR_BITE) GLOW_CHARGE else GLOW_OPEN
+        KronosPose.HALT, KronosPose.REWIND, KronosPose.HANDS -> GLOW_CHARGE
+        KronosPose.STUCK, KronosPose.EMPTY, KronosPose.STAGGER, KronosPose.CHAINED -> GLOW_OPEN
+        else -> 1f
+    }
+
+    /**
+     * Nachschwingen (PLAN 2.1 Punkt 3): Die Harpe zieht dem Arm nach, Bart und Mantel folgen Kopf und Oberkörper
+     * träge; jeder Treffer stößt die Federn an. Dazu die Lippen zum Text und das Leuchten. Steht die Zeit
+     * ([still]), stehen auch die Federn.
+     */
+    private fun secondary(rig: Rig, state: KronosRenderState, pose: Int, t: Float, rawDt: Float, still: Boolean) {
+        val dt = if (still) 0f else rawDt
+        val hit = hitTick(pose)
+        if (hit >= 0f && rig.lastPose == pose && rig.lastT < hit && t >= hit) {
+            rig.mantlePitch.kick(MANTLE_KICK)
+            rig.beard.kick(BEARD_KICK)
+            rig.harpePitch.kick(HARPE_KICK)
+        }
+        // Harpe: Die Schneide hängt dem Schwung von Arm und Unterarm nach und schwingt nach dem Stopp über.
+        val swingP = armR.pitch + foreR.pitch
+        val swingY = armR.yaw + armR.roll + torso.yaw
+        val lagP = (rig.harpePitch.step(swingP, dt) - swingP).coerceIn(-HARPE_LAG_MAX, HARPE_LAG_MAX)
+        val lagY = (rig.harpeYaw.step(swingY, dt) - swingY).coerceIn(-HARPE_LAG_MAX, HARPE_LAG_MAX)
+        harpe.pitch += lagP * HARPE_LAG_GAIN
+        harpe.yaw += lagY * HARPE_LAG_GAIN
+        // Bart: folgt der Neigung von Rumpf, Brust und Kopf.
+        val headP = torso.pitch + chest.pitch + head.pitch
+        val beardLag = (rig.beard.step(headP, dt) - headP).coerceIn(-BEARD_LAG_MAX, BEARD_LAG_MAX)
+        // Mantel: folgt Neigung und Drehung des Oberkörpers, unten stärker als oben.
+        val bodyP = torso.pitch + chest.pitch
+        val bodyY = torso.yaw + chest.yaw
+        val mantleP = (rig.mantlePitch.step(bodyP, dt) - bodyP).coerceIn(-MANTLE_LAG_MAX, MANTLE_LAG_MAX)
+        val mantleY = (rig.mantleYaw.step(bodyY, dt) - bodyY).coerceIn(-MANTLE_LAG_MAX, MANTLE_LAG_MAX)
+        for (m in 0..3) {
+            part(Keys.MANTLE_0 + m).pitch += mantleP * (0.35f + 0.2f * m)
+            part(Keys.MANTLE_0 + m).roll += mantleY * (0.2f + 0.12f * m)
+        }
+        // Lippen: der Kiefer folgt der laufenden Zeile (geglättet, sonst klappert er je Buchstabe).
+        val mouth = rig.mouth.step(CinePlayer.mouthOf(state.entityId), rawDt).coerceIn(0f, 1.2f)
+        part(Keys.JAW).pitch += mouth * JAW_OPEN
+        part(Keys.BEARD).pitch += beardLag * 0.8f + mouth * JAW_OPEN * 0.5f
+        part(Keys.BEARD_1).pitch += beardLag * 0.5f
+        // Leuchten: weich zum Ziel (kein Sprung, kein Blinken).
+        rig.glow += (glowTarget(pose, t) - rig.glow) * (1f - exp(-rawDt * GLOW_RATE))
+    }
+
+    /** Zerfall (`kronos.death`): ganze Glieder verschwinden von den Händen her; Sand und Licht zeichnet `KronosFx`. */
+    private fun dissolve(id: Int) {
+        val k = KronosDeath.progress(id)
+        if (k <= 0f) return
+        for ((g, bones) in KronosParts.DISSOLVE_GROUPS.withIndex()) {
+            if (k < KronosParts.DISSOLVE_AT[g]) break
+            for (b in bones) parts[b].visible = false
+        }
+    }
+
+    /**
+     * Weltlage des Drehpunkts von Knochen [bone] (plus [dy] Modelleinheiten entlang des Knochens), mit dem Stapel des
+     * Renderers bzw. von [KronosParts.renderGhost] (Modellraum). [cam] = Kamera, weil der Stapel kamerarelativ ist.
+     */
+    fun boneWorld(matrices: MatrixStack, cam: Vec3d, bone: Int, dy: Float = 0f): Vec3d {
+        matrices.push()
+        rootBone.applyTransform(matrices)
+        for (p in chains[bone]) p.applyTransform(matrices)
+        val v = Vector3f()
+        matrices.peek().positionMatrix.transformPosition(0f, dy / 16f, 0f, v)
+        matrices.pop()
+        return Vec3d(v.x + cam.x, v.y + cam.y, v.z + cam.z)
+    }
+
+    /** Je Knochen die Kette der Teile von `hips` bis zu ihm (für [boneWorld]). */
+    private val chains: Array<Array<ModelPart>> = Array(Keys.COUNT) { i ->
+        val names = Keys.BONES[i].split('/')
+        Array(names.size) { j -> names.take(j + 1).fold(root) { p, n -> p.getChild(n) } }
     }
 
     /** Ist die Harpe in der Hand zu sehen (nach dem letzten [setAngles])? */
@@ -438,6 +584,34 @@ class KronosModel(root: ModelPart) : EntityModel<KronosRenderState>(root) {
                 }
             }
         }
+    }
+
+    private companion object {
+        /** Überblendung aus der gezeigten Haltung in eine neue Pose (Ticks). */
+        const val POSE_FADE = 6f
+        const val HARPE_FREQ = 0.42f
+        const val HARPE_DAMP = 0.5f
+        const val HARPE_LAG_MAX = 0.35f
+        const val HARPE_LAG_GAIN = 0.55f
+        const val HARPE_KICK = -0.06f
+        const val BEARD_FREQ = 0.26f
+        const val BEARD_DAMP = 0.42f
+        const val BEARD_LAG_MAX = 0.4f
+        const val BEARD_KICK = 0.05f
+        const val MANTLE_FREQ = 0.18f
+        const val MANTLE_DAMP = 0.38f
+        const val MANTLE_LAG_MAX = 0.35f
+        const val MANTLE_KICK = 0.04f
+        const val MOUTH_FREQ = 0.7f
+        const val MOUTH_DAMP = 0.9f
+        /** So weit öffnet der Kiefer beim Sprechen (Bogenmaß bei voller Öffnung). */
+        const val JAW_OPEN = 0.2f
+        /** Leuchten beim Aufladen und im offenen Fenster; Annäherung je Tick. */
+        const val GLOW_CHARGE = 1.18f
+        const val GLOW_OPEN = 0.6f
+        const val GLOW_RATE = 0.12f
+        const val RIG_KEEP = 4
+        const val RIG_FORGET_MS = 10_000L
     }
 
     // <keys> erzeugt von tools/hha_assets/kronos_model.py --kotlin; nicht von Hand ändern
@@ -531,18 +705,29 @@ class KronosRenderer(context: EntityRendererFactory.Context) :
         addFeature(object : FeatureRenderer<KronosRenderState, KronosModel>(this) {
             override fun render(matrices: MatrixStack, queue: OrderedRenderCommandQueue, light: Int, state: KronosRenderState, limbAngle: Float, limbDistance: Float) {
                 val pulse = 0.82f + 0.18f * sin(state.age * (if (state.form > 0) 0.22f else 0.11f))
-                val alpha = (pulse * 255f).toInt()
+                // Überarbeitung 3: Das Leuchten steigt beim Aufladen und fällt im offenen Fenster (Puls ≤ 0,7 Hz).
+                val alpha = (pulse * model.glowOf(state.entityId) * 255f).toInt().coerceIn(0, 255)
                 queue.getBatchingQueue(1).submitModel(contextModel, state, matrices, glowLayer, 0xF000F0, OverlayTexture.DEFAULT_UV, (alpha shl 24) or 0xFFFFFF, null, 0, null)
                 val cam = MinecraftClient.getInstance().gameRenderer.camera.cameraPos
                 val frame = BossGlow.KronosFrame(state.entityId, state.age, state.form, state.bossPose)
                 frame.harpeOut = !model.harpeShown
                 model.readAnchors(matrices, cam, frame)
                 BossGlow.submit(frame)
+                // Zerfall: Wo die Glieder gerade stehen, steigt ihr Sand auf (KronosFx liest die Lagen).
+                if (KronosDeath.wantsAnchors(state.entityId)) {
+                    for ((g, bones) in KronosParts.DISSOLVE_GROUPS.withIndex()) {
+                        KronosDeath.anchor(state.entityId, g, model.boneWorld(matrices, cam, bones[0], KronosParts.DISSOLVE_DY[g]))
+                    }
+                }
             }
         })
     }
 
     override fun createRenderState() = KronosRenderState()
+
+    /** Sichtbox: erhobene Hände und Hieb ragen weit über die Trefferbox (P20, [GuardianCull.KRONOS]). */
+    override fun getBoundingBox(entity: KronosEntity): net.minecraft.util.math.Box =
+        GuardianCull.grow(super.getBoundingBox(entity), GuardianCull.KRONOS, 1.0 + entity.form * KronosEntity.FORM_GROWTH)
     override fun getTexture(state: KronosRenderState): Identifier = texture
 
     override fun updateRenderState(entity: KronosEntity, state: KronosRenderState, tickDelta: Float) {
@@ -570,5 +755,133 @@ class KronosRenderer(context: EntityRendererFactory.Context) :
     private companion object {
         /** 144 Einheiten Modellhöhe × 0,69 = 6,2 Blöcke (Plan 6.3). */
         const val SCALE = 0.69f
+    }
+}
+
+/**
+ * Teile des Kronos-Modells für die Effekte der Überarbeitung 3 (`KronosFx`): die Hand aus dem Riss (`kronos.hand`),
+ * Nachbilder (`kronos.ghosts`) und der Zerfall ohne Wesen (`kronos.death` per Befehl). Eigene Kopien aus der
+ * Modell-Ebene, damit die Winkel des echten Modells unberührt bleiben; nach einem Ressourcen-Neuladen neu gebaut.
+ */
+object KronosParts {
+    val TEXTURE: Identifier = Hha.id("textures/entity/boss/kronos.png")
+
+    /** Maßstab des Renderers: 144 Einheiten Modellhöhe × 0,69 = 6,2 Blöcke. */
+    const val SCALE = 0.69f
+
+    /** Linke Hand samt Fingern, Modelleinheiten vom Handgelenk: Länge der Faust und Breite (z). */
+    const val HAND_LENGTH = 22f
+    const val HAND_WIDTH = 18f
+
+    /** Rollen der Finger zur Faust (wie `FIST_L` in tools/hha_assets/kronos_model.py). */
+    const val FIST = 1.3f
+
+    /**
+     * Zerfall von den Händen her: Knochengruppen in dieser Reihenfolge, je mit dem Anteil, ab dem sie verschwinden.
+     * Der erste Knochen jeder Gruppe gibt die Lage für Sand und Licht; [DISSOLVE_DY] rückt sie in die Mitte des Glieds.
+     */
+    val DISSOLVE_GROUPS: Array<IntArray> = arrayOf(
+        intArrayOf(KronosModel.Keys.FINGERS_L, KronosModel.Keys.FINGERS_R),
+        intArrayOf(KronosModel.Keys.HAND_L, KronosModel.Keys.HAND_R, KronosModel.Keys.HARPE),
+        intArrayOf(KronosModel.Keys.FORE_L, KronosModel.Keys.FORE_R, KronosModel.Keys.CHAIN_L_1, KronosModel.Keys.CHAIN_R_1),
+        intArrayOf(KronosModel.Keys.ARM_L, KronosModel.Keys.ARM_R, KronosModel.Keys.CHAIN_L, KronosModel.Keys.CHAIN_R),
+        intArrayOf(KronosModel.Keys.RING, KronosModel.Keys.GLASS),
+        intArrayOf(KronosModel.Keys.MANTLE_3, KronosModel.Keys.MANTLE_2, KronosModel.Keys.MANTLE_1, KronosModel.Keys.LOIN_F, KronosModel.Keys.LOIN_B, KronosModel.Keys.LOIN_R, KronosModel.Keys.LOIN_L),
+        intArrayOf(KronosModel.Keys.CROWN, KronosModel.Keys.BEARD_1, KronosModel.Keys.BEARD, KronosModel.Keys.JAW, KronosModel.Keys.MANTLE_0),
+        intArrayOf(KronosModel.Keys.HEAD),
+        intArrayOf(KronosModel.Keys.CHEST, KronosModel.Keys.TORSO),
+        intArrayOf(KronosModel.Keys.FOOT_L, KronosModel.Keys.FOOT_R, KronosModel.Keys.SHIN_L, KronosModel.Keys.SHIN_R),
+        intArrayOf(KronosModel.Keys.HIPS),
+    )
+    val DISSOLVE_AT = floatArrayOf(0.04f, 0.12f, 0.22f, 0.32f, 0.4f, 0.48f, 0.56f, 0.63f, 0.72f, 0.8f, 0.88f)
+    val DISSOLVE_DY = floatArrayOf(6f, 6f, 12f, 14f, 0f, 20f, 4f, -10f, -12f, 8f, 0f)
+
+    private var source: Any? = null
+    private var hand: ModelPart? = null
+    private var ghost: KronosModel? = null
+    private val ghostState = KronosRenderState()
+
+    /** Vergisst die Kopien, wenn die Modelle neu geladen wurden (Ressourcen-Neuladen). */
+    private fun refresh() {
+        val models = MinecraftClient.getInstance().loadedEntityModels
+        if (models !== source) {
+            source = models
+            hand = null
+            ghost = null
+        }
+    }
+
+    private fun build(): ModelPart? = MinecraftClient.getInstance().loadedEntityModels?.getModelPart(BossLayers.KRONOS)
+
+    /**
+     * Die linke Hand als eigener Teil (P13, PLAN 2.10 „Handteil aus KronosModel“): Drehpunkt am Handgelenk, ohne
+     * eigene Lage, Finger zur Faust. Für `FxDraw.part` mit [TEXTURE]; Modell-y zeigt vom Gelenk zu den Knöcheln.
+     */
+    fun handPart(): ModelPart? {
+        refresh()
+        hand?.let { return it }
+        val root = build() ?: return null
+        val h = listOf("hips", "torso", "chest", "arm_l", "fore_l", "hand_l").fold(root) { p, n -> p.getChild(n) }
+        h.originX = 0f
+        h.originY = 0f
+        h.originZ = 0f
+        h.pitch = 0f
+        h.yaw = 0f
+        h.roll = 0f
+        h.getChild("fingers_l").roll = FIST
+        hand = h
+        return h
+    }
+
+    /** Ein zweites Modell nur für Nachbilder und den Zerfall ohne Wesen. */
+    fun ghostModel(): KronosModel? {
+        refresh()
+        ghost?.let { return it }
+        val root = build() ?: return null
+        return KronosModel(root).also { ghost = it }
+    }
+
+    /**
+     * Legt den Stapel so an, wie der Renderer das Wesen zeichnet: Füße bei [at] (kamerarelativ), Blick [yaw],
+     * Gestalt [form]; danach steht der Stapel im Modellraum (wie in `FeatureRenderer.render`).
+     */
+    fun modelSpace(matrices: MatrixStack, at: Vec3d, yaw: Float, form: Int) {
+        matrices.translate(at.x, at.y, at.z)
+        matrices.multiply(net.minecraft.util.math.RotationAxis.POSITIVE_Y.rotationDegrees(180f - yaw))
+        matrices.scale(-1f, -1f, 1f)
+        val size = SCALE * (1f + form * KronosEntity.FORM_GROWTH)
+        matrices.scale(size, size, size)
+        matrices.translate(0f, -1.501f, 0f)
+    }
+
+    /**
+     * Zeichnet das zweite Modell in Ruhehaltung bei [feet] (Welt) als Nachbild oder Zerfallsfigur. [id] ist die
+     * Kennung für Federn und Zerfall (negativ, damit sie keinem Wesen gehört), [time] treibt Atmen und Uhrenkranz.
+     * [anchors] bekommt die Weltlagen der Zerfallsgruppen. Nur aus `FxEffect.solid`.
+     */
+    fun renderGhost(
+        consumers: net.minecraft.client.render.VertexConsumerProvider, cam: Vec3d, feet: Vec3d, yaw: Float, form: Int,
+        time: Float, id: Int, layer: net.minecraft.client.render.RenderLayer, light: Int, argb: Int,
+        anchors: ((Int, Vec3d) -> Unit)? = null,
+    ) {
+        val model = ghostModel() ?: return
+        val s = ghostState
+        s.entityId = id
+        s.bossPose = KronosPose.IDLE
+        s.previousPose = KronosPose.IDLE
+        s.poseTime = 200f
+        s.age = time
+        s.form = form
+        s.harpeOut = false
+        s.antiAir = false
+        s.walk = 0f
+        s.walkPhase = 0f
+        model.setAngles(s)
+        val matrices = MatrixStack()
+        modelSpace(matrices, feet.subtract(cam), yaw, form)
+        model.rootBone.render(matrices, consumers.getBuffer(layer), light, OverlayTexture.DEFAULT_UV, argb)
+        if (anchors != null) {
+            for ((g, bones) in DISSOLVE_GROUPS.withIndex()) anchors(g, model.boneWorld(matrices, cam, bones[0], DISSOLVE_DY[g]))
+        }
     }
 }

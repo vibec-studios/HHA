@@ -9,6 +9,7 @@ import dev.henny.hha.entity.miniboss.ScriptedBolt
 import dev.henny.hha.logic.Fx
 import dev.henny.hha.logic.Vfx
 import dev.henny.hha.logic.boss.Arenas
+import dev.henny.hha.logic.boss.BossFx
 import dev.henny.hha.logic.boss.BossDefense
 import dev.henny.hha.logic.boss.BossScaling
 import dev.henny.hha.logic.boss.BossTimings
@@ -63,6 +64,8 @@ object ZeusAction {
     const val RISE = 12
     const val PHASE = 13
     const val YIELD = 14
+    /** Überarbeitung 3: In der Niederlage zeigt er nach unten (Szene `zeus.defeat`). Nur hinten anfügen. */
+    const val POINT = 15
 }
 
 /**
@@ -339,6 +342,8 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         val hand = entityPos.add(0.0, height * 0.78, 0.0).add(dir.multiply(0.8))
         val stuckAt = Vec3d(to.x, to.y + 0.9, to.z)
         val bolt = prop(ScriptedBolt.spawn(sw, self, HermesBoltEntity.KERAUNOS, 1f, hand))
+        // Spur des fliegenden Blitzes (endet am Client, sobald das Requisit weg ist).
+        bolt?.entity?.let { BossFx.projectile(sw, Vfx.Style.THUNDER, it, BossFx.Look.KERAUNOS) }
         for (i in 1..Z.THROW_FLIGHT) {
             bolt?.moveTo(hand.lerp(stuckAt, i.toDouble() / Z.THROW_FLIGHT))
             yield(Unit)
@@ -351,8 +356,9 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
             yieldAll(discharge(rod))
             return@sequence
         }
-        // Der Blitz steckt: leere Hand, offen.
+        // Der Blitz steckt: leere Hand, offen. Um ihn knistert ein stehender Bogen bis zum Rückruf.
         Vfx.flare(sw, Vfx.Style.THUNDER, stuckAt, 1.2f, 8)
+        BossFx.play(sw, "zeus.stuck", Vfx.Style.THUNDER, to, a = Z.THROW_STUCK_RADIUS, life = Z.THROW_STUCK + Z.THROW_RETURN)
         open(Z.THROW_F, OPEN_FACTOR)
         var zone: Telegraph.Ring? = null
         for (t in 0 until Z.THROW_STUCK) {
@@ -389,7 +395,7 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
             if (strike(player, Z.BASH_DAMAGE)) knock(player, player.entityPos.subtract(entityPos), Z.BASH_KNOCKBACK, 0.35)
         }
         Vfx.nova(sw, Vfx.Style.THUNDER, entityPos.add(dir.multiply(1.6)).add(0.0, 1.8, 0.0), 2.2f, 10)
-        telegraph.hitShake(entityPos, 2f)
+        BossFx.kick(sw, entityPos, KICK_BASH, ticks = KICK_TICKS, radius = KICK_RADIUS)
         telegraph.sound(HhaSounds.IMPACT, entityPos, 2.4f, 0.9f)
         wait(Z.BASH_HIT_END - Z.BASH_HIT)
         stopMoving()
@@ -419,9 +425,10 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
             if (strike(player, Z.SLAM_DAMAGE)) knock(player, player.entityPos.subtract(center), 1.0, 0.5)
         }
         val tip = center.add(facing().multiply(2.2))
-        Vfx.shockwave(sw, Vfx.Style.THUNDER, center, Z.SLAM_RADIUS, 16, 2f)
+        // Der eine Flächeneffekt: Risse und echte Trümmer um den Einschlag (statt der alten Stoßwelle).
+        BossFx.play(sw, "zeus.slam", Vfx.Style.THUNDER, center, tip, a = Z.SLAM_RADIUS, life = SLAM_FX_LIFE, impact = true)
         skyBolt(tip)
-        telegraph.hitShake(center, 3f)
+        BossFx.kick(sw, center, KICK_SLAM, ticks = KICK_TICKS + 1, radius = KICK_RADIUS)
         telegraph.sound(HhaSounds.THUNDER, center, 3f, 0.9f)
         for (i in 0 until Z.SLAM_RINGS) jobs.add(expandingRing(center, i * Z.SLAM_RING_GAP, i).iterator())
         val travel = ceil((courtRadius() - Z.SLAM_RADIUS) / Z.SLAM_RING_SPEED).toInt()
@@ -472,6 +479,8 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
     ): Sequence<Unit> = sequence {
         val group = chain ?: telegraph.boss()
         val pending = ArrayList<Pair<ServerPlayerEntity, Telegraph.Ring>>()
+        // Bild des Himmelsblitzes: [SKY_LEAD] Ticks vor dem Treffer entschieden (Strahl oder Bogen in den Pfeiler).
+        val announced = HashMap<Telegraph.Ring, Rod?>()
         var made = 0
         var t = 0
         while (made < waves || pending.isNotEmpty()) {
@@ -484,10 +493,13 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
             }
             yield(Unit)
             t++
+            for ((player, ring) in pending) {
+                if (ring !in announced && ring.remaining <= SKY_LEAD) announced[ring] = announceSky(player, ring)
+            }
             val due = pending.filter { !it.second.running }
             if (due.isNotEmpty()) {
                 pending.removeAll(due.toSet())
-                resolveCall(due)
+                resolveCall(due, announced)
             }
             if (t > waves * max(gap, 1) + Z.CALL_W + 40) break
         }
@@ -497,17 +509,61 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         kit.act(0)
     }
 
-    private fun resolveCall(due: List<Pair<ServerPlayerEntity, Telegraph.Ring>>) {
+    private fun resolveCall(due: List<Pair<ServerPlayerEntity, Telegraph.Ring>>, announced: Map<Telegraph.Ring, Rod?> = emptyMap()) {
         for ((target, ring) in due) {
             val rod = if (groundingAllowed()) groundingRod(target, ring) else null
             if (rod != null) {
+                // Kam die Erdung erst in den letzten Ticks zustande, biegt der Bogen jetzt noch in den Pfeiler.
+                if (announced[ring] !== rod) groundArc(ring.center, rod)
                 chargeRod(rod)
                 continue
             }
             for (player in ring.hits(fighters())) strike(player, Z.CALL_DAMAGE, BossDefense.Reach.SKY)
             skyBolt(ring.center)
+            skyImpact(target, ring.center)
         }
         telegraph.sound(HhaSounds.THUNDER, entityPos, 2.6f, 1.1f)
+    }
+
+    /**
+     * Bild eines Himmelsblitzes, [SKY_LEAD] Ticks vor dem Treffer: Steht der Gerufene dann an einem frischen Pfeiler,
+     * öffnet sich der Riss über ihm und ein Bogen biegt in den Blitzableiter; sonst `core.sky_strike` (Riss, Strahl,
+     * Einschlag genau im Treffer-Tick). Liefert den Pfeiler der Vorhersage.
+     */
+    private fun announceSky(target: ServerPlayerEntity, ring: Telegraph.Ring): Rod? {
+        val rod = if (groundingAllowed()) groundingRod(target, ring) else null
+        if (rod != null) {
+            groundArc(ring.center, rod)
+        } else {
+            skyStrike(ring.center, Z.CALL_RADIUS, ring.remaining)
+        }
+        return rod
+    }
+
+    /** `core.sky_strike` mit Treffer genau in [ticksToHit] Ticks (der Strahl kommt `delay + 6` nach dem Aufruf, P03). */
+    private fun skyStrike(ground: Vec3d, radius: Float, ticksToHit: Int) {
+        BossFx.skyStrike(sw, Vfx.Style.THUNDER, ground, radius, SKY_HEIGHT, (ticksToHit - SKY_LEAD).coerceAtLeast(0), SKY_AFTER)
+    }
+
+    /** Erdung im Bild: Riss in der Wolkendecke über [ground], ein Bogen mit zwei Strängen biegt in die Spitze von [rod]. */
+    private fun groundArc(ground: Vec3d, rod: Rod) {
+        val sky = ground.add(0.0, SKY_HEIGHT.toDouble(), 0.0)
+        BossFx.tear(sw, Vfx.Style.THUNDER, sky, flatNorm(rod.center.subtract(ground)).let { if (it.lengthSquared() < 1e-6) Vec3d(1.0, 0.0, 0.0) else it },
+            GROUND_TEAR_LENGTH, GROUND_TEAR_WIDTH, GROUND_TEAR_LIFE, GROUND_TEAR_OPEN)
+        BossFx.arc(sw, Vfx.Style.THUNDER, sky, rod.tip, bend = GROUND_ARC_BEND, width = GROUND_ARC_WIDTH, life = GROUND_ARC_LIFE, strands = 2)
+    }
+
+    /**
+     * Einschlag eines Himmels- bzw. Luftblitzes für [player] (nur seiner, auch wenn mehrere im selben Tick fallen):
+     * Stoßring durchs Bild ([BossFx.Screen.SHOCK_RIPPLE], Radius 10, Stärke 0,5, 6 Ticks) und Ruck 1,5°.
+     */
+    private fun skyImpact(player: ServerPlayerEntity, at: Vec3d) {
+        if (player.isRemoved || player.isDisconnected) return
+        BossFx.play(
+            sw, "core.screen", Vfx.Style.THUNDER, at, a = RIPPLE_RADIUS, b = RIPPLE_STRENGTH, c = 0f,
+            d = BossFx.Screen.SHOCK_RIPPLE.ordinal.toFloat(), life = RIPPLE_TICKS, to = player,
+        )
+        BossFx.kick(player, KICK_SKY, ticks = KICK_TICKS)
     }
 
     /**
@@ -525,7 +581,7 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         var t = 0
         var moved = false
         while (ring.running) {
-            if (t == Z.STEP_VANISH) Vfx.bolt(sw, Vfx.Style.THUNDER, entityPos.add(0.0, 0.5, 0.0), entityPos.add(0.0, 22.0, 0.0), 0.9f, 6)
+            if (t == Z.STEP_VANISH) stepOut(entityPos)
             if (t == Z.STEP_MOVE) {
                 place(landing, target.entityPos)
                 moved = true
@@ -537,8 +593,8 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         hold(dirTo(target.entityPos))
         for (player in ring.hits(fighters())) strike(player, Z.STEP_DAMAGE)
         Vfx.shockwave(sw, Vfx.Style.THUNDER, landing, Z.STEP_RADIUS, 14, 1.6f)
-        skyBolt(landing)
-        telegraph.hitShake(landing, 2.5f)
+        stepIn(landing)
+        BossFx.kick(sw, landing, KICK_STEP, ticks = KICK_TICKS, radius = KICK_RADIUS)
         telegraph.sound(HhaSounds.THUNDER, landing, 3f, 1f)
         if (groundingAllowed()) chargedRodNear(entityPos)?.let {
             yieldAll(discharge(it))
@@ -569,15 +625,21 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         val cone = group.cone(spot(entityPos), dir, Z.GAZE_RADIUS, Z.GAZE_HALF_ANGLE, windup)
         hint(HINT_GAZE)
         telegraph.sound(HhaSounds.CHARGE, entityPos, 3f, 0.55f)
+        // Aigis-Schein: lädt über die Ansage an der Aigis auf, im Treffer ein gerichteter Lichtkegel (kein Bildschirm-Pass).
+        BossFx.play(
+            sw, "zeus.gaze", Vfx.Style.THUNDER, gazeEye(), dir, a = Z.GAZE_RADIUS, b = Z.GAZE_HALF_ANGLE,
+            c = cone.ticks.toFloat(), life = cone.ticks + GAZE_FX_AFTER, entity = self,
+        )
         wait(cone.ticks)
         val eye = gazeEye()
         for (player in fighters()) {
+            // Wer hinsieht, bekommt eine kühle Vignette (getroffen oder hinter einem Pfeiler geschützt).
+            if (looksAt(player, eye)) BossFx.vignette(player, Vfx.Style.THUNDER, GAZE_VIGNETTE, GAZE_VIGNETTE_TICKS)
             if (!cone.contains(player) || !looksAt(player, eye) || !sees(eye, player)) continue
             if (strike(player, Z.GAZE_DAMAGE, BossDefense.Reach.SKY)) {
                 Vfx.beam(sw, Vfx.Style.THUNDER, eye, player.eyePos.subtract(0.0, 0.3, 0.0), 0.5f, 8)
             }
         }
-        Vfx.flare(sw, Vfx.Style.THUNDER, eye, 1.6f, 8)
         telegraph.sound(HhaSounds.THUNDER, entityPos, 3f, 0.7f)
         if (!chained) {
             wait(Z.GAZE_F)
@@ -680,6 +742,8 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         hint(HINT_SCALES)
         Cine.dialog(viewers(), Cine.SPEAKER_ZEUS, if (index == 0) "hha.zeus.line.scales.1" else "hha.zeus.line.scales.2", 60)
         telegraph.sound(HhaSounds.CHIME, entityPos, 2.4f, 0.6f)
+        // Er lädt die Waage über das Heben auf (Schalen ziehen sich zusammen, kein Rütteln, kein Bildschirm-Pass).
+        BossFx.charge(sw, Vfx.Style.THUNDER, self, SCALES_CHARGE_RADIUS, Z.SCALES_W)
         val stormStart = (Z.SCALES_W + Z.SCALES_STORM_START).coerceAtLeast(bowlEscape(bowlCenter, radius.toDouble()))
             .coerceAtMost(Z.SCALES_END - 60)
         val casts = intArrayOf(Z.SCALES_CAST_1, Z.SCALES_CAST_2, Z.SCALES_CAST_3, Z.SCALES_CAST_4)
@@ -688,8 +752,18 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
             for (cast in casts) {
                 if (t != cast - Z.SCALES_BOLT_W) continue
                 val spot = bowlTarget(bowlCenter, radius.toDouble(), bowl)
-                bolts.add(telegraph.boss(pace = Telegraph.Pace.QUICK).ring(spot, Z.SCALES_BOLT_RADIUS, Z.SCALES_BOLT_W))
+                val boltRing = telegraph.boss(pace = Telegraph.Pace.QUICK).ring(spot, Z.SCALES_BOLT_RADIUS, Z.SCALES_BOLT_W)
+                bolts.add(boltRing)
                 telegraph.sound(HhaSounds.THUNDER_CALL, spot, 2f, 1.3f)
+                // Riss und Strahl wie beim Himmelsblitz, aber ohne Bildschirm-Pass und ohne Ruck (Waage).
+                skyStrike(spot, Z.SCALES_BOLT_RADIUS, boltRing.ticks)
+            }
+            // Der Sturm außerhalb der Schale als weiche Regenwand (die goldene Schale bleibt frei und Ansage).
+            if (t == stormStart) {
+                BossFx.play(
+                    sw, "zeus.storm_wall", Vfx.Style.THUNDER, bowlCenter, a = radius, b = courtRadius().toFloat(),
+                    d = STORM_RAIN_HEIGHT, life = Z.SCALES_END - stormStart, extra = STORM_RING,
+                )
             }
             if (t >= stormStart && (t - stormStart) % Z.SCALES_STORM_INTERVAL == 0) {
                 val outside = fighters().filter { !bowl.contains(it) }
@@ -755,11 +829,11 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         hold(dirTo(goal))
         kit.act(ZeusAction.STEP)
         for (t in 0 until Z.STEP_APPEAR) {
-            if (t == Z.STEP_VANISH) Vfx.bolt(sw, Vfx.Style.THUNDER, entityPos.add(0.0, 0.5, 0.0), entityPos.add(0.0, 22.0, 0.0), 0.9f, 6)
+            if (t == Z.STEP_VANISH) stepOut(entityPos)
             if (t == Z.STEP_MOVE) place(goal, null)
             yield(Unit)
         }
-        skyBolt(goal)
+        stepIn(goal)
         wait(6)
     }
 
@@ -877,12 +951,14 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         telegraph.sound(HhaSounds.THUNDER, point(-reach, gap), 3f, 0.6f)
         wait(group.ticks)
         val struck = HashSet<UUID>()
+        // Die Wand als ein Effekt: Regenwand mit Lücke, läuft in [Z.STORM_TRAVEL] Ticks von −reach nach +reach (wie der
+        // Treffer unten); die Lücke hat feine goldene Pfosten (Gold = sicher).
+        BossFx.play(
+            sw, "zeus.storm_wall", Vfx.Style.THUNDER, spot(mid), axis, a = reach.toFloat(), b = gap.toFloat(), c = half.toFloat(),
+            d = STORM_WALL_HEIGHT, life = Z.STORM_TRAVEL + 1, extra = STORM_LINE,
+        )
         for (i in 0..Z.STORM_TRAVEL) {
             val at = -reach + 2.0 * reach * i / Z.STORM_TRAVEL
-            if (i % 2 == 0) {
-                Vfx.beam(sw, Vfx.Style.THUNDER, point(at, -reach).add(0.0, 1.2, 0.0), point(at, gap - half).add(0.0, 1.2, 0.0), 1.6f, 4)
-                Vfx.beam(sw, Vfx.Style.THUNDER, point(at, gap + half).add(0.0, 1.2, 0.0), point(at, reach).add(0.0, 1.2, 0.0), 1.6f, 4)
-            }
             if (i % 10 == 0) telegraph.sound(HhaSounds.WHOOSH, point(at, gap), 2.2f, 0.6f)
             for (player in fighters()) {
                 val off = player.entityPos.subtract(mid)
@@ -932,9 +1008,12 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
             return@sequence
         }
         val ring = airCalls.boss(listOf(player)).ring(spot(player.entityPos), Z.AIR_RADIUS, Z.AIR_W - Z.AIR_LOCK)
+        // Am Beginn der festen Ansage: Riss und Strahl, der genau im Treffer-Tick unten ankommt.
+        skyStrike(ring.center, Z.AIR_RADIUS, ring.ticks)
         wait(ring.ticks)
         for (hit in ring.hits(fighters())) strike(hit, Z.AIR_DAMAGE, BossDefense.Reach.SKY)
         skyBolt(ring.center)
+        skyImpact(player, ring.center)
         airActive.remove(player.uuid)
     }
 
@@ -1037,6 +1116,8 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
                 rod.nextRune = now + Z.ROD_RUNE_CYCLE
                 val life = min(Z.ROD_RUNE_CYCLE + 4, (rod.chargedUntil - now).toInt())
                 Vfx.rune(sw, Vfx.Style.GOLD, rod.center.add(0.0, 0.06, 0.0), Z.ROD_RUNE_RADIUS, life)
+                // Dazu ein kleiner, ruhiger Schein am Fuß (knistert ≤ 1 Hz); endet mit der Rune oder bei der Entladung.
+                BossFx.play(sw, "zeus.rod", Vfx.Style.THUNDER, rod.center, life = life)
             }
         }
     }
@@ -1061,7 +1142,10 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         setCopper(rod.foot, Blocks.WAXED_OXIDIZED_COPPER.defaultState)
         stopMoving()
         val chest = entityPos.add(0.0, height * 0.6, 0.0)
-        Vfx.bolt(sw, Vfx.Style.THUNDER, rod.tip, chest, 1.3f, 10)
+        // Dicker Bogen Pfeiler → Zeus (zwei Stränge), Funken an der Brust, Ruck.
+        BossFx.arc(sw, Vfx.Style.THUNDER, rod.tip, chest, bend = DISCHARGE_BEND, width = DISCHARGE_WIDTH, life = DISCHARGE_LIFE, strands = 2, toEntity = self)
+        BossFx.sparks(sw, Vfx.Style.THUNDER, chest, Vec3d(0.0, 1.0, 0.0), BossFx.SPARKS_PER_CALL, DISCHARGE_SPARK_SPEED, DISCHARGE_SPARK_LIFE)
+        BossFx.kick(sw, entityPos, KICK_DISCHARGE, ticks = KICK_TICKS + 1, radius = KICK_RADIUS)
         lightning(entityPos)
         telegraph.sound(HhaSounds.THUNDER, entityPos, 3f, 0.8f)
         val bar = BossScaling.toBar(Z.ROD_DAMAGE * BossScaling.health(crowdSize), toughness(), crowdSize)
@@ -1181,6 +1265,25 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
     /** Blitz aus dem Himmel auf [ground] (nur Bild). */
     private fun skyBolt(ground: Vec3d) = Vfx.bolt(sw, Vfx.Style.THUNDER, ground.add(0.0, 24.0, 0.0), ground, 1f, 8)
 
+    /** Donnerschritt, Verschwinden: Blitz nach oben, ein Wirbel schließt sich um seine Füße. */
+    private fun stepOut(at: Vec3d) {
+        Vfx.bolt(sw, Vfx.Style.THUNDER, at.add(0.0, 0.5, 0.0), at.add(0.0, 22.0, 0.0), 0.9f, 6)
+        BossFx.swirl(sw, Vfx.Style.THUNDER, at.add(0.0, 0.08, 0.0), Vec3d(0.0, 1.0, 0.0), STEP_SWIRL_RADIUS, STEP_SWIRL_LIFE, closing = true)
+    }
+
+    /** Donnerschritt, Erscheinen: Blitz aus dem Himmel und ein Lichtstern (`zeus.star`, kein Flächeneffekt). */
+    private fun stepIn(at: Vec3d) {
+        skyBolt(at)
+        BossFx.play(sw, "zeus.star", Vfx.Style.THUNDER, at, a = STAR_RADIUS, life = STAR_LIFE)
+    }
+
+    /** Bossthema der Phase [p] (PLAN 6.8): `music.zeus`, `music.zeus_2`, `music.zeus_3`. */
+    private fun theme(p: Int): SoundEvent = when (p) {
+        0 -> HhaSounds.THEME_ZEUS
+        1 -> HhaSounds.THEME_ZEUS_2
+        else -> HhaSounds.THEME_ZEUS_3
+    }
+
     /**
      * Echter Blitz, immer kosmetisch (kein Feuer, kein Vanilla-Schaden), höchstens [Z.LIGHTNING_PER_SECOND] je Sekunde;
      * darüber hinaus bleibt es beim gezeichneten Blitz. Ein Vanilla-Blitz lässt den ganzen Himmel aufhellen und donnert
@@ -1223,7 +1326,7 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         for (player in now) {
             if (!tuned.add(player.uuid)) continue
             val list = listOf(player)
-            if (musicOn) Cine.music(list, HhaSounds.THEME_ZEUS)
+            if (musicOn) Cine.music(list, theme(phase))
             if (stormOn) Cine.atmosphere(list, Vfx.Style.THUNDER, courtCenter(), 40)
         }
     }
@@ -1265,10 +1368,21 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
 
     internal fun sceneSkyBolt(ground: Vec3d) = skyBolt(ground)
 
+    internal fun sceneStepOut(at: Vec3d) = stepOut(at)
+
+    internal fun sceneStepIn(at: Vec3d) = stepIn(at)
+
     /** Musik an (nach dem Auftritt) für alle Teilnehmer; spätere Teilnehmer bekommen sie in [syncViewers]. */
     internal fun sceneMusic(players: List<ServerPlayerEntity>) {
         musicOn = true
-        Cine.music(players, HhaSounds.THEME_ZEUS)
+        Cine.music(players, theme(phase))
+        for (player in players) tuned.add(player.uuid)
+    }
+
+    /** Thema der neuen Phase [newPhase] (im Phasenwechsel; die Überblendung macht der Client). */
+    internal fun scenePhaseMusic(players: List<ServerPlayerEntity>, newPhase: Int) {
+        musicOn = true
+        Cine.music(players, theme(newPhase))
         for (player in players) tuned.add(player.uuid)
     }
 
@@ -1321,6 +1435,66 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
 
         /** Umwege um Pfeiler beim Weg zu sicheren Stellen. */
         private const val DETOUR = 1.15
+
+        // --- Darstellung (Überarbeitung 3, P11; keine Kampfzahlen) -------------------------------------------
+
+        /** Ein Himmelsblitz erreicht den Boden so viele Ticks nach seinem `delay` (P03 `SkyStrikeFx.IMPACT_AFTER`). */
+        const val SKY_LEAD = 6
+        /** Höhe des Risses über dem Boden (in der Gewitterwolke, [OlympusLayout.STORM_CLOUD_HEIGHT] + 2). */
+        const val SKY_HEIGHT = 26f
+        /** Nachglühen des Himmelsblitzes nach dem Riss (Ticks). */
+        const val SKY_AFTER = 16
+
+        /** Einschlag des Himmels-/Luftblitzes: Stoßring im Bild nur für den Gerufenen. */
+        const val RIPPLE_RADIUS = 10f
+        const val RIPPLE_STRENGTH = 0.5f
+        const val RIPPLE_TICKS = 6
+
+        /** Kamera-Ruck (Grad, nach unten) je Treffer; ersetzt das Rütteln dort (nie beides). */
+        const val KICK_SKY = 1.5f
+        const val KICK_BASH = 1.4f
+        const val KICK_STEP = 2f
+        const val KICK_SLAM = 2.5f
+        const val KICK_DISCHARGE = 2f
+        const val KICK_TICKS = 6
+        const val KICK_RADIUS = 32f
+
+        /** Erdung: Riss über dem Gerufenen, Bogen in die Spitze des Pfeilers (Kopf erreicht sie nach ~55 % der Zeit). */
+        const val GROUND_ARC_BEND = 0.18f
+        const val GROUND_ARC_WIDTH = 0.7f
+        const val GROUND_ARC_LIFE = 11
+        const val GROUND_TEAR_LENGTH = 6f
+        const val GROUND_TEAR_WIDTH = 1.1f
+        const val GROUND_TEAR_LIFE = 22
+        const val GROUND_TEAR_OPEN = 4
+
+        /** Entladung in Zeus: dicker Bogen und Funken. */
+        const val DISCHARGE_BEND = 0.22f
+        const val DISCHARGE_WIDTH = 1.1f
+        const val DISCHARGE_LIFE = 14
+        const val DISCHARGE_SPARK_SPEED = 0.55f
+        const val DISCHARGE_SPARK_LIFE = 18
+
+        /** Donnerschlag `zeus.slam` (Risse, Trümmer, Lichtring). */
+        const val SLAM_FX_LIFE = 50
+
+        /** Donnerschritt: Wirbel beim Verschwinden, Lichtstern beim Erscheinen. */
+        const val STEP_SWIRL_RADIUS = 1.8f
+        const val STEP_SWIRL_LIFE = 12
+        const val STAR_RADIUS = 3.6f
+        const val STAR_LIFE = 14
+
+        /** Gorgonenblick: Lichtkegel nach dem Treffer, kühle Vignette für alle, die hinsehen. */
+        const val GAZE_FX_AFTER = 20
+        const val GAZE_VIGNETTE = 0.2f
+        const val GAZE_VIGNETTE_TICKS = 34
+
+        /** Waage: Aufladen an der Waage; Regen außerhalb der Schale. */
+        const val SCALES_CHARGE_RADIUS = 2.6f
+        const val STORM_RAIN_HEIGHT = 9f
+        const val STORM_WALL_HEIGHT = 5.5f
+        const val STORM_RING = "ring"
+        const val STORM_LINE = "line"
 
         /** Lagen der Schale: zwischen den Pfeilern (die stehen bei 0°, 60° …). */
         private val BOWL_ANGLES = listOf(30.0, 90.0, 150.0, 210.0, 270.0, 330.0)

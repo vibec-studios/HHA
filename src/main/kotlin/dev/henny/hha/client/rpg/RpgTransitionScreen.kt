@@ -5,17 +5,24 @@ import net.minecraft.client.gui.screen.Screen
 import net.minecraft.text.Text
 
 /**
- * Bildschirm zwischen „Start“ und dem Laden der Welt: zeigt nur die Startanimation. Die folgenden Lade- und
- * Verbindungsbildschirme von Minecraft bekommen dieselbe Animation darübergelegt ([RpgClient]), damit kein Bruch
- * entsteht.
+ * Bildschirm zwischen „Aufbrechen“ und den Lade-/Verbindungsbildschirmen: zeigt nur die Reise ([RpgJourney.draw]).
+ * Esc bricht die Reise bewusst ab (Rückfall in die Lobby).
  */
 class RpgTransitionScreen : Screen(Text.translatable("hha.rpg.title")) {
-    override fun shouldCloseOnEsc(): Boolean = false
     override fun shouldPause(): Boolean = false
+
+    override fun close() {
+        RpgJourney.cancel()
+    }
 
     override fun renderBackground(context: DrawContext, mouseX: Int, mouseY: Int, deltaTicks: Float) {}
 
     override fun render(context: DrawContext, mouseX: Int, mouseY: Int, deltaTicks: Float) {
-        RpgLaunch.drawOverlay(context, width, height)
+        if (!RpgJourney.active) {
+            // Sollte nicht vorkommen (die Reise öffnet sonst die Lobby); nie ein stehendes Schwarzbild.
+            client?.setScreen(RpgLobbyScreen(net.minecraft.client.gui.screen.TitleScreen()))
+            return
+        }
+        RpgJourney.draw(context, width, height, mouseX, mouseY)
     }
 }

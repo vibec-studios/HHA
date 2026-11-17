@@ -8,18 +8,22 @@ import dev.henny.hha.entity.miniboss.ScriptedBolt
 import dev.henny.hha.logic.Fx
 import dev.henny.hha.logic.Vfx
 import dev.henny.hha.logic.boss.BossDefense
+import dev.henny.hha.logic.boss.BossFx
 import dev.henny.hha.logic.boss.Cine
 import dev.henny.hha.logic.boss.Telegraph
 import dev.henny.hha.logic.boss.timings.BrontesTimings
 import dev.henny.hha.world.olymp.OlympusLayout
+import net.minecraft.entity.Entity
 import net.minecraft.entity.EntityType
 import net.minecraft.entity.attribute.DefaultAttributeContainer
 import net.minecraft.entity.boss.BossBar
 import net.minecraft.particle.ParticleTypes
 import net.minecraft.server.network.ServerPlayerEntity
+import net.minecraft.server.world.ServerWorld
 import net.minecraft.sound.SoundEvent
 import net.minecraft.sound.SoundEvents
 import net.minecraft.util.hit.HitResult
+import net.minecraft.util.math.BlockPos
 import net.minecraft.util.math.Vec3d
 import net.minecraft.world.RaycastContext
 import net.minecraft.world.World
@@ -66,6 +70,11 @@ object BrontesAction {
  *   **Höhepunkt „Der Keil“** bei 35 % und 15 %: drei Glutringe vom Amboss zum Überspringen (`LOW`), dann der Wurf des
  *   Keils (`SKY`), danach leere Hände: offen. Während des Keils glühen keine Roste.
  * - **Konter** gegen Spieler über ihm: Er greift mit der Zange nach oben (`TONGS_UP`).
+ *
+ * Überarbeitung 3 (P09, nur Darstellung): eigene Effekte je Angriff (`brontes.*`, Client `BrontesFx`), echte Trümmer
+ * und glühende Risse am Hammer, Kamera-Ruck statt Rütteln, Hitzeflimmern am Blasebalg und Stoß-Pass am Keil (die
+ * einzigen zwei Bildschirm-Pässe des Kampfs), Szenen `brontes.intro`/`brontes.phase2`/`brontes.defeat` als
+ * Bühnen-Skripte (`stage/scripts/BrontesStages`). Alle Zahlen der Darstellung stehen unten im `companion`.
  */
 class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBossEntity(type, world) {
 
@@ -80,6 +89,9 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
     override val yieldAction = BrontesAction.YIELD
     override val entranceAction get() = BrontesAction.RISE
     override val music: SoundEvent get() = HhaSounds.THEME_BRONTES
+
+    /** Szenen laufen als Bühnen-Skripte (PLAN 2.1 „Einbau der Szenen“), nicht über die alten Rahmen. */
+    override val cinematic: Boolean get() = false
 
     /** Ein liegender Rohling (Requisit `INGOT`): seit [since] am Boden; [cold] = abgekühlt, zählt nicht mehr. */
     private class Ingot(var bolt: ScriptedBolt, val pos: Vec3d, val since: Long) {
@@ -101,6 +113,9 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
     private var attacksAtWedge = -1
     private var over = false
     private val spoken = HashSet<String>()
+
+    /** Sieg-Stinger schon gesendet (sonst holt der Endzustand der Szene ihn nach, z. B. nach dem Überspringen). */
+    private var stingerSent = false
 
     init {
         kit.stats(BrontesTimings.HEALTH, BrontesTimings.ARMOR, BrontesTimings.ATTACK, BrontesTimings.SPEED)
@@ -124,16 +139,32 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
     // Auftritt, Phasen, Sieg
     // ---------------------------------------------------------------------------------------------
 
-    /** Ein Hammerschlag hallt über die Insel, dann steigt er aus der Glut der Esse (`RISE`, Titelkarte, Musik). */
-    override fun entrance(): Sequence<Unit> {
-        val base = super.entrance()
-        return sequence {
-            telegraph.sound(HhaSounds.ANVIL, center(), 3f, 0.6f)
-            Vfx.pillar(sw, danger, entityPos, 1.6f, 6f, 30)
-            Fx.burst(sw, ParticleTypes.LAVA, entityPos.add(0.0, 0.6, 0.0), 8, 0.8, 0.1)
-            yieldAll(base)
-            say("hha.brontes.line.rise")
+    /**
+     * Auftritt als Szene `brontes.intro` (10 s): Schwarz, ein Hammerschlag hallt (Ton und Ruck im Skript), er kauert in
+     * der Glut der Esse (`RISE`) und richtet sich auf, das Feuer schlägt hoch, das Auge öffnet sich, Titelkarte und
+     * Zeile im Skript. Endzustand (auch übersprungen): steht, Musik läuft.
+     */
+    override fun entrance(): Sequence<Unit> = cinematics.staged(INTRO_STAGE, introInner(), finish = {
+        kit.act(0)
+        Cine.music(viewers(), music)
+    })
+
+    private fun introInner(): Sequence<Unit> = sequence {
+        stopMoving()
+        hold(null)
+        wait(INTRO_RISE_AT)
+        kit.act(BrontesAction.RISE)
+        wait(INTRO_MUSIC_AT - INTRO_RISE_AT)
+        Cine.music(viewers(), music)
+        wait(INTRO_FLARE_AT - INTRO_MUSIC_AT)
+        telegraph.sound(HhaSounds.FORGE, entityPos, 2.4f, 0.6f)
+        Vfx.pillar(sw, danger, entityPos, 1.6f, 6f, 30)
+        Fx.burst(sw, ParticleTypes.LAVA, entityPos.add(0.0, 0.6, 0.0), 8, 0.8, 0.1)
+        repeat(INTRO_STAND_UNTIL - INTRO_FLARE_AT) {
+            fighters().minByOrNull { it.squaredDistanceTo(self) }?.let { lookControl.lookAt(it, 30f, 30f) }
+            yield(Unit)
         }
+        kit.act(0)
     }
 
     override fun phaseEvent(): Sequence<Unit>? {
@@ -153,7 +184,15 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         return null
     }
 
-    override fun onPhase(newPhase: Int): Sequence<Unit>? = if (newPhase == 1) forgeBurns() else null
+    /**
+     * Phase II als Szene `brontes.phase2` (5 s). Endzustand: Thema der Phase II, erste Roste [BrontesTimings.GRATE_FIRST]
+     * Ticks nach dem Ende der Szene (wie bisher nach dem Ende des Übergangs).
+     */
+    override fun onPhase(newPhase: Int): Sequence<Unit>? = if (newPhase != 1) null else cinematics.staged(PHASE2_STAGE, forgeBurns(), finish = {
+        kit.act(0)
+        Cine.music(viewers(), HhaSounds.THEME_BRONTES_2)
+        nextGrate = sw.time + BrontesTimings.GRATE_FIRST
+    })
 
     /** Phase II „Die Esse brennt“: Er dreht sich zur Esse und facht sie mit dem Blasebalg an. Kein Treffer. */
     private fun forgeBurns(): Sequence<Unit> = sequence {
@@ -165,6 +204,9 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         say("hha.brontes.line.phase2")
         telegraph.sound(HhaSounds.FORGE, entityPos, 2.4f, 0.7f)
         wait(t.BELLOWS_HIT)
+        // Er bläst in die Esse: derselbe Funkenstrom wie im Kampf, nur in die Glut (kein Treffer, kein Pass).
+        BossFx.play(sw, FX_BELLOWS, danger, mouthPoint(), dirTo(forge), a = flat(entityPos, forge).toFloat().coerceIn(4f, 24f),
+            b = PHASE2_BELLOWS_HALF, life = BELLOWS_FX_LIFE, entity = self)
         Vfx.pillar(sw, danger, forge, 1.8f, 6f, 30)
         telegraph.sound(SoundEvents.ITEM_FIRECHARGE_USE, forge, 2.6f, 0.5f)
         wait(t.BELLOWS_END - t.BELLOWS_HIT)
@@ -172,8 +214,22 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         nextGrate = sw.time + t.GRATE_FIRST
     }
 
-    /** Er stellt den Hammer ab und nickt (`YIELD`); Beute und Fortschritt über die Basis, zwei Zeilen, dann weg. */
-    override fun victory(): Sequence<Unit> = sequence {
+    /**
+     * Niederlage als Szene `brontes.defeat` (10 s): Er stellt den Hammer ab und nickt (`YIELD`); Beute und Fortschritt
+     * über die Basis wie bisher, zwei Zeilen, Sieg-Stinger, dann weg. Endzustand: `YIELD`, Stinger (falls übersprungen).
+     */
+    override fun victory(): Sequence<Unit> {
+        var audience: List<ServerPlayerEntity> = viewers()
+        return cinematics.staged(DEFEAT_STAGE, victoryInner { audience = it }, finish = {
+            kit.act(BrontesAction.YIELD)
+            if (!stingerSent) {
+                stingerSent = true
+                Cine.music(audience.filter { !it.isRemoved && !it.isDisconnected }, HhaSounds.VICTORY_OLYMP)
+            }
+        })
+    }
+
+    private fun victoryInner(onAudience: (List<ServerPlayerEntity>) -> Unit): Sequence<Unit> = sequence {
         val t = BrontesTimings
         over = true
         clearIngots()
@@ -182,8 +238,14 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         kit.act(BrontesAction.YIELD)
         telegraph.sound(SoundEvents.BLOCK_ANVIL_PLACE, entityPos, 1.6f, 0.6f)
         val audience = viewers()
+        onAudience(audience)
         Cine.dialog(audience, SPEAKER, "hha.brontes.line.yield", t.LINE_TICKS)
         finishVictory()
+        // Sieg-Stinger des Olymp (das Bossthema blendet aus); beim stummen Vorspulen holt ihn der Endzustand nach.
+        if (!Cine.muted) {
+            stingerSent = true
+            Cine.music(audience, HhaSounds.VICTORY_OLYMP)
+        }
         wait(t.YIELD_SECOND_LINE)
         Cine.dialog(audience.filter { !it.isRemoved && !it.isDisconnected }, SPEAKER, "hha.brontes.line.yield2", t.LINE_TICKS)
         wait(DuelBossEntity.VICTORY_LINGER - t.YIELD_SECOND_LINE)
@@ -194,6 +256,19 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         clearIngots()
         grateRunning = false
         wedgeRunning = false
+        clearScreenPasses()
+    }
+
+    override fun remove(reason: Entity.RemovalReason) {
+        clearScreenPasses()
+        super.remove(reason)
+    }
+
+    /** Beendet Blasebalg-Flimmern und Keil-Stoß bei allen in Reichweite (jeder Kampfausgang, Prüfung R1-m1). */
+    private fun clearScreenPasses() {
+        val sw = entityWorld as? ServerWorld ?: return
+        BossFx.screenClear(sw, entityPos, BossFx.Screen.HEAT_HAZE, range = 96f)
+        BossFx.screenClear(sw, entityPos, BossFx.Screen.SHOCK_RIPPLE, range = 96f)
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -220,6 +295,7 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
             guard.counterHit(player)
         }
         telegraph.sound(SoundEvents.BLOCK_CHAIN_HIT, entityPos, 2f, 0.6f)
+        BossFx.sparks(sw, danger, entityPos.add(0.0, height * COUNTER_SPARK_HEIGHT, 0.0), UP, COUNTER_SPARKS, 0.4f, 16)
         guard.endCounter()
         wait(t.TONGS_END - BossDefense.COUNTER_TICKS)
         kit.act(0)
@@ -243,7 +319,8 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         var line = group.line(blow.from, blow.to, t.HAMMER_WIDTH, t.HAMMER_W, Telegraph.Pace.HEAVY)
         if (double) {
             wait(line.ticks)
-            if (falls(blow, line, ingotIn(blow), shake = false)) {
+            // Erster Hieb: Ruck 2,5° (die Ansage des zweiten beginnt erst danach im selben Tick).
+            if (falls(blow, line, ingotIn(blow), KICK_HAMMER)) {
                 group.end()
                 yieldAll(blinded())
                 return@sequence
@@ -261,7 +338,9 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         val bait = ingotIn(blow)
         val crack = if (bait == null && !blow.blocked) crackLine(group, blow) else null
         wait(line.remaining)
-        if (falls(blow, line, bait, shake = crack == null)) {
+        // Ruck am Hammer nur ohne laufende Riss-Ansage (sonst verworfen, PLAN 2.2); dann kommt er mit dem Riss.
+        val kick = if (double) KICK_DOUBLE_2 else KICK_HAMMER
+        if (falls(blow, line, bait, if (crack == null) kick else 0f)) {
             group.end()
             yieldAll(blinded())
             return@sequence
@@ -269,10 +348,12 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         // Der Hammer steckt (F 28): Er zerrt ihn aus dem Boden.
         var tail = if (double) t.DOUBLE_END - t.DOUBLE_HIT2 else t.HAMMER_END - t.HAMMER_HIT
         if (crack != null) {
+            // Der Riss frisst sich unter seiner Ansage vom Hammerkopf weiter und erreicht das Ende mit dem Treffer.
             val until = crack.remaining
+            BossFx.crack(sw, danger, crack.from, blow.dir, crack.from.distanceTo(crack.to).toFloat(), life = until + CRACK_FX_HOLD, grow = until)
             wait(until)
             tail -= until
-            cracks(crack, blow.dir)
+            cracks(crack, blow.dir, kick)
         }
         wait(tail)
         kit.act(0)
@@ -296,50 +377,67 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
 
     /**
      * Der Hammer fällt: Treffer, Einschlag, Amboss-Klang. Zerschlägt er einen Rohling, ist das der Fehlschlag (true).
-     * [shake] nur, wenn danach keine Ansage läuft (Riss, zweiter Hieb): Rütteln während einer Ansage ist verboten.
+     * [kick] = Nicken des Kamera-Rucks in Grad, 0 = keiner (wenn gleich danach eine Ansage läuft, z. B. der Riss).
      */
-    private fun falls(blow: Blow, line: Telegraph.Line, bait: Ingot?, shake: Boolean): Boolean {
+    private fun falls(blow: Blow, line: Telegraph.Line, bait: Ingot?, kick: Float): Boolean {
         val t = BrontesTimings
-        val head = ground(entityPos.add(blow.dir.multiply(min(blow.length, t.HAMMER_HEAD))))
+        val reach = min(blow.length, t.HAMMER_HEAD)
+        val head = ground(entityPos.add(blow.dir.multiply(reach)))
         val struck = line.hits(fighters())
         for (player in struck) {
             strike(player, t.HAMMER_DAMAGE)
             knock(player, blow.dir, 0.5, 0.35)
         }
-        Vfx.shockwave(sw, danger, head, 2.4f, 12, 1.2f)
+        // Am Amboss gekürzt: Risse und Trümmer bleiben vor ihm (kein Bild deutet eine Trefferfläche dahinter an).
+        val room = if (blow.blocked) (blow.length - reach + ANVIL_MARGIN).toFloat().coerceIn(HAMMER_CRACKS_MIN, HAMMER_CRACKS_RADIUS) else HAMMER_CRACKS_RADIUS
+        BossFx.play(sw, FX_HAMMER, danger, head, blow.dir, a = min(room, HAMMER_RING), life = HAMMER_FX_LIFE, impact = true)
+        BossFx.cracks(sw, danger, head, room, BossFx.CRACKS_PER_CALL, HAMMER_CRACKS_LIFE)
+        // Beim Fehlschlag bringt der zerspringende Rohling die Brocken (Budget 8 je Treffer).
+        if (bait == null) BossFx.debris(sw, head, min(room, HAMMER_DEBRIS_RADIUS), HAMMER_DEBRIS)
         telegraph.sound(HhaSounds.ANVIL, head, 2.4f, if (blow.blocked) 1.0f else 0.8f)
-        if (shake && struck.isNotEmpty()) telegraph.hitShake(head, 3f)
+        // Tiefer Schlag zum Ruck (zweiter Ton des Ticks); beim Fehlschlag gehört der Platz dem Zersplittern.
+        if (bait == null) telegraph.sound(HhaSounds.THUD, head, 2.6f, 0.8f)
+        if (kick > 0f) BossFx.kick(sw, head, kick, ticks = KICK_TICKS)
         if (blow.blocked) hint("hha.brontes.hint.anvil")
         val ingot = bait?.takeIf { it.bolt.alive } ?: return false
         shatter(ingot)
         return true
     }
 
-    /** Der Riss bricht auf: Treffer in der Linie, ein Streifen Gesteinsstaub. */
-    private fun cracks(line: Telegraph.Line, dir: Vec3d) {
+    /**
+     * Der Riss bricht auf: Treffer in der Linie, Brocken am Riss, ein Streifen Rauch; der Ruck des Hammers [kick] kommt
+     * hier, weil während der Riss-Ansage keiner erlaubt ist.
+     */
+    private fun cracks(line: Telegraph.Line, dir: Vec3d, kick: Float) {
         val t = BrontesTimings
         val struck = line.hits(fighters())
         for (player in struck) {
             strike(player, t.CRACK_DAMAGE)
             knock(player, dir, 0.4, 0.3)
         }
+        BossFx.debris(sw, line.from.lerp(line.to, CRACK_DEBRIS_AT), CRACK_DEBRIS_RADIUS, CRACK_DEBRIS)
         for (i in 0..4) {
             val p = line.from.lerp(line.to, i / 4.0)
-            Fx.spawn(sw, ParticleTypes.LAVA, p.x, p.y + 0.1, p.z, 1, 0.3, 0.05, 0.3, 0.02)
             Fx.spawn(sw, ParticleTypes.SMOKE, p.x, p.y + 0.2, p.z, 2, 0.4, 0.1, 0.4, 0.01)
         }
         telegraph.sound(SoundEvents.BLOCK_DEEPSLATE_BREAK, line.to, 2f, 0.6f)
+        if (kick > 0f) BossFx.kick(sw, line.from.lerp(line.to, 0.5), kick, ticks = KICK_TICKS)
     }
 
-    /** Der Rohling zerspringt unter dem Hammer: Funken fliegen in sein einziges Auge. */
+    /**
+     * Der Rohling zerspringt unter dem Hammer: Funken fliegen in sein einziges Auge (14 Lichtstriche zum Auge, ein
+     * Glutfaden), Brocken nur, wenn echte Bodenblöcke da sind, ein schwacher Blitz (≤ 0,25), der Schein am Auge.
+     */
     private fun shatter(ingot: Ingot) {
         val eye = eyePoint()
         val from = ingot.pos
         for (i in 1..6) {
             val p = from.lerp(eye, i / 7.0)
-            Fx.spawn(sw, ParticleTypes.FLAME, p.x, p.y, p.z, 2, 0.12, 0.12, 0.12, 0.01)
+            Fx.spawn(sw, ParticleTypes.FLAME, p.x, p.y, p.z, 1, 0.08, 0.08, 0.08, 0.01)
         }
-        Fx.burst(sw, ParticleTypes.LAVA, from, 6, 0.3, 0.05)
+        BossFx.sparks(sw, danger, from.add(0.0, 0.3, 0.0), eye.subtract(from), BossFx.SPARKS_PER_CALL, SHATTER_SPARK_SPEED, SHATTER_SPARK_LIFE)
+        if (!sw.getBlockState(BlockPos.ofFloored(from.x, from.y - 0.3, from.z)).isAir) BossFx.debris(sw, from, SHATTER_DEBRIS_RADIUS, SHATTER_DEBRIS)
+        for (player in viewers()) Vfx.screenFlash(player, danger, BLIND_FLASH, BLIND_FLASH_TICKS)
         Vfx.flare(sw, danger, eye, 1.4f, 8)
         telegraph.sound(SoundEvents.BLOCK_LAVA_EXTINGUISH, from, 2f, 0.7f)
         ingot.bolt.discard()
@@ -403,10 +501,12 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
             strike(player, t.SWING_DAMAGE)
             knock(player, dirTo(player.entityPos), t.SWING_KNOCK, t.SWING_LIFT)
         }
-        Vfx.crescent(sw, danger, entityPos.add(0.0, 1.6, 0.0), dir, t.SWING_RADIUS, 4f, 10)
+        // Glutband am Hammerkopf statt Sichel (der Effekt folgt dem Hammer im Modell).
+        BossFx.play(sw, FX_SWING, danger, entityPos.add(0.0, height * SWING_FX_HEIGHT, 0.0), dir, a = t.SWING_RADIUS, b = t.SWING_HALF_ANGLE,
+            life = SWING_FX_LIFE, entity = self, impact = true)
         if (struck.isNotEmpty()) {
             telegraph.sound(HhaSounds.IMPACT, entityPos, 2f, 0.6f)
-            telegraph.hitShake(entityPos, 3f)
+            BossFx.kick(sw, entityPos, SWING_KICK_PITCH, yaw = SWING_KICK_YAW, ticks = KICK_TICKS)
         }
         wait(t.SWING_END - t.SWING_HIT)
         kit.act(0)
@@ -427,12 +527,16 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
             strike(player, t.BELLOWS_DAMAGE)
             knock(player, dirTo(player.entityPos), t.BELLOWS_KNOCK, t.BELLOWS_LIFT)
         }
+        // Funkenstrom aus dem Mund in den Kegel und schwaches Hitzeflimmern (erste der zwei Pass-Stellen des Kampfs).
+        BossFx.play(sw, FX_BELLOWS, danger, mouthPoint(), dir, a = t.BELLOWS_RADIUS, b = t.BELLOWS_HALF_ANGLE, life = BELLOWS_FX_LIFE,
+            entity = self, impact = true)
+        val haze = apex.add(dir.multiply(t.BELLOWS_RADIUS / 2.0)).add(0.0, HAZE_HEIGHT, 0.0)
+        BossFx.screen(sw, BossFx.Screen.HEAT_HAZE, danger, haze, t.BELLOWS_RADIUS / 2f, HAZE_STRENGTH, t.BELLOWS_END - t.BELLOWS_HIT)
         for (i in 1..6) {
             val d = t.BELLOWS_RADIUS * i / 7.0
             val p = apex.add(dir.multiply(d)).add(0.0, 1.0, 0.0)
             val spread = 0.3 + d * 0.12
-            Fx.spawn(sw, ParticleTypes.SMOKE, p.x, p.y, p.z, 3, spread, 0.3, spread, 0.02)
-            if (i % 2 == 0) Fx.spawn(sw, ParticleTypes.FLAME, p.x, p.y, p.z, 2, spread, 0.2, spread, 0.01)
+            if (i % 2 == 1) Fx.spawn(sw, ParticleTypes.SMOKE, p.x, p.y, p.z, 2, spread, 0.3, spread, 0.02)
         }
         telegraph.sound(SoundEvents.ITEM_FIRECHARGE_USE, entityPos, 2.2f, 0.6f)
         wait(t.BELLOWS_END - t.BELLOWS_HIT)
@@ -470,6 +574,8 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         wait(t.TOSS_RELEASE - lead)
         val from = leftHand()
         val bolt = prop(ScriptedBolt.spawn(sw, self, HermesBoltEntity.INGOT, 1f, from))
+        val ingotEntity = entityOf(bolt)
+        ingotEntity?.let { BossFx.projectile(sw, danger, it, BossFx.Look.HOT_IRON) }
         telegraph.sound(HhaSounds.WHOOSH, from, 1.6f, 0.8f)
         val rest = spot.add(0.0, t.INGOT_REST_Y, 0.0)
         val ticks = max(1, ring.remaining)
@@ -484,12 +590,15 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
             strike(player, t.TOSS_DAMAGE, BossDefense.Reach.SKY)
             knock(player, player.entityPos.subtract(spot), 0.4, 0.4)
         }
-        Vfx.shockwave(sw, danger, spot, t.TOSS_RADIUS, 12, 1.0f)
+        BossFx.play(sw, FX_SPLASH, danger, spot, a = t.TOSS_RADIUS, life = SPLASH_FX_LIFE, impact = true)
+        BossFx.debris(sw, spot, t.TOSS_RADIUS * TOSS_DEBRIS_SCALE, TOSS_DEBRIS)
         telegraph.sound(SoundEvents.BLOCK_ANVIL_LAND, spot, 1.4f, 1.3f)
-        if (struck.isNotEmpty()) telegraph.hitShake(spot, 2.5f)
+        if (struck.isNotEmpty()) BossFx.kick(sw, spot, TOSS_KICK, ticks = KICK_TICKS)
         if (bolt != null) {
             bolt.rest()
             ingots.add(Ingot(bolt, rest, sw.time))
+            // Der liegende Rohling flimmert schwach (kein Bildschirm-Pass), solange er glüht.
+            BossFx.play(sw, FX_INGOT, danger, rest, life = t.INGOT_GLOW, entity = ingotEntity)
             hint("hha.brontes.hint.ingot")
         }
         wait(t.TOSS_END - t.TOSS_RELEASE - ticks)
@@ -569,6 +678,9 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         lastHot = hot
         for (i in hot) group.cone(mid, sectorDir(i), OlympusLayout.GRATE_OUTER.toFloat(), HALF_SECTOR.toFloat(), t.GRATE_W)
         for (i in 0 until OlympusLayout.GRATE_SECTORS) if (i !in hot) rim(group, mid, i, t.GRATE_W + t.GRATE_BURN)
+        // Glut unter den heißen Gittern: wächst unter der Ansage, brennt mit ihr (kein Flächeneffekt eines Treffers).
+        BossFx.play(sw, FX_GRATES, danger, mid, a = OlympusLayout.GRATE_OUTER.toFloat(), b = OlympusLayout.GRATE_INNER.toFloat(),
+            c = t.GRATE_W.toFloat(), d = t.GRATE_BURN.toFloat(), life = t.GRATE_W + t.GRATE_BURN, extra = hot.sorted().joinToString(","))
         telegraph.sound(HhaSounds.FORGE, mid, 2.4f, 1.1f)
         hint("hha.brontes.hint.grates")
         for (k in 0 until t.GRATE_W) {
@@ -677,7 +789,9 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
             if (k == 0) telegraph.sound(HhaSounds.FORGE, entityPos, 2.2f, 0.8f)
             wait(ring.ticks)
             telegraph.sound(HhaSounds.ANVIL, c, 2.6f, 0.7f + 0.08f * k)
-            launch(forgeWave(base, rings[k], shake = k == rings.lastIndex))
+            // Je Ambossschlag ein Ruck, steigend 1,5° / 2° / 2,5° (vor der nächsten Ring-Ansage im selben Tick).
+            BossFx.kick(sw, c, FORGE_KICKS[k], ticks = KICK_TICKS)
+            launch(forgeWave(base, rings[k]))
             group.hold(waveTicks(rings[k]) + 2)
             if (finishing()) {
                 endWedge()
@@ -708,6 +822,8 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         // Abwurf: ab jetzt leere Hände, offen.
         val from = rightHandHigh()
         val bolt = prop(ScriptedBolt.spawn(sw, self, HermesBoltEntity.HAMMER_BOLT, 1f, from))
+        // Glutspur am Keil; ohne eigenen Einschlag (impactRadius 0), weil der Keil danach noch steckt.
+        entityOf(bolt)?.let { BossFx.projectile(sw, danger, it, BossFx.Look.HOT_IRON) }
         open(t.WEDGE_F, DuelBossEntity.OPEN_FACTOR)
         telegraph.sound(HhaSounds.WHOOSH, from, 2f, 0.6f)
         val goal = spot.add(0.0, 0.6, 0.0)
@@ -721,9 +837,13 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
             strike(player, t.WEDGE_DAMAGE, BossDefense.Reach.SKY)
             knock(player, player.entityPos.subtract(spot), 0.7, 0.5)
         }
-        Vfx.shockwave(sw, danger, spot, t.WEDGE_RADIUS, 14, 1.6f)
+        // Glutsäule und Stoß-Pass (zweite der zwei Pass-Stellen des Kampfs), echte Brocken, Ruck.
+        BossFx.play(sw, FX_WEDGE, danger, spot, a = t.WEDGE_RADIUS, life = WEDGE_FX_LIFE, impact = true)
+        BossFx.screen(sw, BossFx.Screen.SHOCK_RIPPLE, danger, spot, t.WEDGE_RADIUS * RIPPLE_RADIUS_SCALE, RIPPLE_STRENGTH, RIPPLE_TICKS)
+        BossFx.debris(sw, spot, WEDGE_DEBRIS_RADIUS, BossFx.DEBRIS_PER_CALL)
         telegraph.sound(HhaSounds.THUNDER, spot, 2.6f, 0.9f)
-        if (struck.isNotEmpty()) telegraph.hitShake(spot, 3f)
+        telegraph.sound(HhaSounds.THUD, spot, 2.6f, 0.7f)
+        BossFx.kick(sw, spot, KICK_WEDGE, ticks = KICK_TICKS)
         // Der Keil steckt im Boden, solange er offen ist.
         bolt?.rest()
         window(t.WEDGE_END - t.WEDGE_RELEASE - ticks) { finishing() }
@@ -738,14 +858,16 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         nextGrate = max(nextGrate, sw.time + BrontesTimings.GRATE_AFTER_WEDGE)
     }
 
-    /** Ein Glutring läuft vom Amboss bis [radius]: Wer am Boden steht, wenn die Front vorbeikommt, wird getroffen. */
-    private fun forgeWave(center: Vec3d, radius: Float, shake: Boolean): Sequence<Unit> = sequence {
+    /**
+     * Ein Glutring läuft vom Amboss bis [radius]: Wer am Boden steht, wenn die Front vorbeikommt, wird getroffen. Bild:
+     * niedrige Flammenwand genau an der Front (`brontes.ring`); den Ruck gibt es schon am Ambossschlag.
+     */
+    private fun forgeWave(center: Vec3d, radius: Float): Sequence<Unit> = sequence {
         val t = BrontesTimings
         val floor = defaultFloor()
         val travel = waveTicks(radius)
-        Vfx.shockwave(sw, danger, center, radius, travel + 6, 1.0f)
+        BossFx.play(sw, FX_RING, danger, center, a = radius, b = travel.toFloat(), life = travel + RING_FX_TAIL, impact = true)
         val passed = HashSet<UUID>()
-        var anyHit = false
         for (step in 1..travel) {
             if (over) return@sequence
             val front = radius * step.toDouble() / travel
@@ -759,13 +881,10 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
                 val reach = if (onAnvil) BossDefense.Reach.BODY else BossDefense.Reach.LOW
                 if (strike(player, t.FORGE_RING_DAMAGE, reach, floor)) {
                     knock(player, player.entityPos.subtract(center), 0.4, 0.35)
-                    anyHit = true
                 }
             }
             yield(Unit)
         }
-        // Nur nach dem letzten Ring rütteln: Während der nächsten Ring-Ansage wäre es verboten.
-        if (shake && anyHit) telegraph.hitShake(center, 2.5f)
     }
 
     private fun waveTicks(radius: Float): Int = ceil(radius / BrontesTimings.FORGE_WAVE_SPEED).toInt().coerceAtLeast(1)
@@ -831,6 +950,12 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
     /** Sein einziges Auge (vorn am Kopf). */
     private fun eyePoint(): Vec3d = entityPos.add(facing().multiply(0.7)).add(0.0, height * 0.86, 0.0)
 
+    /** Mund vor dem Kiefer (Ursprung des Blasebalgs; der Client nimmt, wenn möglich, den Anker aus dem Modell). */
+    private fun mouthPoint(): Vec3d = entityPos.add(facing().multiply(MOUTH_FORWARD)).add(0.0, height * MOUTH_HEIGHT, 0.0)
+
+    /** Das Wesen hinter einem [ScriptedBolt]. Nur für Effekte (`BossFx.projectile`, Rohling-Flimmern). */
+    private fun entityOf(bolt: ScriptedBolt?): Entity? = bolt?.entity
+
     /** Eine Textzeile (ohne Tonaufnahme), jede höchstens einmal je Kampf. */
     private fun say(key: String) {
         if (!spoken.add(key)) return
@@ -846,6 +971,94 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
 
         /** Außerhalb des Olymp (Test-Arena) liegt die gedachte Esse so weit nördlich der Mitte. */
         private const val FORGE_TEST_DISTANCE = 21.0
+
+        // --- Überarbeitung 3: reine Darstellung (keine Kampfzahl) ---------------------------------------------------
+        /** Bühnen-Skripte (`stage/scripts/BrontesStages`). */
+        const val INTRO_STAGE = "brontes.intro"
+        const val PHASE2_STAGE = "brontes.phase2"
+        const val DEFEAT_STAGE = "brontes.defeat"
+        /** Effekt-IDs (Client `client/vfx/fx/boss/BrontesFx`). */
+        private const val FX_HAMMER = "brontes.hammer"
+        private const val FX_SPLASH = "brontes.splash"
+        private const val FX_SWING = "brontes.swing"
+        private const val FX_BELLOWS = "brontes.bellows"
+        private const val FX_INGOT = "brontes.ingot"
+        private const val FX_GRATES = "brontes.grates"
+        private const val FX_RING = "brontes.ring"
+        private const val FX_WEDGE = "brontes.wedge"
+
+        /** Auftritt (Ticks der Szene): kauert ab, Musik ab, Feuer schlägt hoch, steht bis. Szene 200 Ticks. */
+        const val INTRO_RISE_AT = 10
+        const val INTRO_MUSIC_AT = 30
+        const val INTRO_FLARE_AT = 60
+        const val INTRO_STAND_UNTIL = 192
+
+        /** Kamera-Ruck (Grad Nicken nach unten; Deckel im Kampf 2,5°, 8 Ticks). */
+        const val KICK_TICKS = 6
+        const val KICK_HAMMER = 2.5f
+        const val KICK_DOUBLE_2 = 2f
+        const val KICK_WEDGE = 2.5f
+        const val TOSS_KICK = 1.5f
+        const val SWING_KICK_PITCH = 0.8f
+        const val SWING_KICK_YAW = 1.5f
+        val FORGE_KICKS = floatArrayOf(1.5f, 2f, 2.5f)
+
+        /** Hammer: Stoßring, sternförmige Risse, Trümmer (Budget: 6 Risse, 8 Brocken je Treffer). */
+        const val HAMMER_RING = 2.6f
+        const val HAMMER_FX_LIFE = 44
+        const val HAMMER_CRACKS_RADIUS = 5f
+        const val HAMMER_CRACKS_MIN = 1.2f
+        const val HAMMER_CRACKS_LIFE = 70
+        const val HAMMER_DEBRIS = 6
+        const val HAMMER_DEBRIS_RADIUS = 2.6f
+        /** Am Amboss: so viel Abstand zum Hindernis bleibt für Risse und Trümmer. */
+        const val ANVIL_MARGIN = 0.4
+        /** Weiterlaufender Riss: sichtbar so lange nach seinem Treffer; Brocken am Riss. */
+        const val CRACK_FX_HOLD = 50
+        const val CRACK_DEBRIS_AT = 0.6
+        const val CRACK_DEBRIS_RADIUS = 1.6f
+        const val CRACK_DEBRIS = 2
+
+        /** Fehlschlag: Funken zum Auge, Brocken des Rohlings, Blitz (≤ 0,25, kubisch am Client). */
+        const val SHATTER_SPARK_SPEED = 0.7f
+        const val SHATTER_SPARK_LIFE = 18
+        const val SHATTER_DEBRIS = 6
+        const val SHATTER_DEBRIS_RADIUS = 1.4f
+        const val BLIND_FLASH = 0.22f
+        const val BLIND_FLASH_TICKS = 10
+
+        /** Rundschwung: Höhe des Ursprungs (Anteil der Größe), Lebenszeit des Glutbands. */
+        const val SWING_FX_HEIGHT = 0.32
+        const val SWING_FX_LIFE = 18
+
+        /** Blasebalg: Mund (vor, Anteil der Höhe), Funkenstrom, Hitzeflimmern (Stärke ≤ 0,35). */
+        const val MOUTH_FORWARD = 1.0
+        const val MOUTH_HEIGHT = 0.78
+        const val BELLOWS_FX_LIFE = 28
+        const val HAZE_HEIGHT = 1.2
+        const val HAZE_STRENGTH = 0.3f
+        const val PHASE2_BELLOWS_HALF = 18f
+
+        /** Glutwurf: Spritzer, Brocken (Anteil des Radius, Zahl). */
+        const val SPLASH_FX_LIFE = 40
+        const val TOSS_DEBRIS = 4
+        const val TOSS_DEBRIS_SCALE = 0.8f
+
+        /** Keil: Glutsäule, Stoß-Pass (Radius × Kreis, Stärke, Ticks), Brocken; Glutringe laufen so lange nach. */
+        const val WEDGE_FX_LIFE = 36
+        const val RIPPLE_RADIUS_SCALE = 2f
+        const val RIPPLE_STRENGTH = 0.5f
+        const val RIPPLE_TICKS = 6
+        const val WEDGE_DEBRIS_RADIUS = 3.5f
+        const val RING_FX_TAIL = 8
+
+        /** Konter: Funken an der Zange über ihm. */
+        const val COUNTER_SPARK_HEIGHT = 1.05
+        const val COUNTER_SPARKS = 8
+
+        /** Suche des Geschoss-Wesens hinter einem [ScriptedBolt] (Kantenlänge der Suchbox). */
+        const val BOLT_SEARCH = 1.2
+        val UP: Vec3d = Vec3d(0.0, 1.0, 0.0)
 
         fun attributes(): DefaultAttributeContainer.Builder = guardianAttributes()
     }

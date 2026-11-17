@@ -6,6 +6,7 @@ import dev.henny.hha.entity.miniboss.GuardianEntity
 import dev.henny.hha.entity.miniboss.MiniBossKit
 import dev.henny.hha.logic.Vfx
 import dev.henny.hha.logic.boss.BossDefense
+import dev.henny.hha.logic.boss.BossFx
 import dev.henny.hha.logic.boss.BossScaling
 import dev.henny.hha.logic.boss.Telegraph
 import dev.henny.hha.logic.boss.timings.OlympMobTimings
@@ -22,7 +23,6 @@ import net.minecraft.entity.data.TrackedDataHandlerRegistry
 import net.minecraft.entity.player.PlayerEntity
 import net.minecraft.item.ItemStack
 import net.minecraft.item.Items
-import net.minecraft.particle.ParticleTypes
 import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.server.world.ServerWorld
 import net.minecraft.text.Text
@@ -386,6 +386,8 @@ class KureteEntity(type: EntityType<out KureteEntity>, world: World) : OlympMobE
         group.cone(ground(entityPos), dir, t.SHIELD_BASH_RADIUS, t.SHIELD_BASH_HALF_ANGLE, t.SHIELD_BASH_W)
         wait(group.ticks)
         telegraph.sound(HhaSounds.IMPACT, entityPos, 1.0f, 1.4f)
+        // Überarbeitung 3 (P15): ein paar Funken am Schildrand.
+        BossFx.sparks(sw, danger, shieldEdge(dir), dir, MobFx.SPARKS, MobFx.SPARK_SPEED, MobFx.SPARK_LIFE)
         for (player in group.hits()) {
             if (strike(player, t.SHIELD_BASH_DAMAGE)) safeKnock(player, dir, t.SHIELD_BASH_PUSH, 0.25)
         }
@@ -411,8 +413,14 @@ class KureteEntity(type: EntityType<out KureteEntity>, world: World) : OlympMobE
         if (fromFront(source, OlympMobTimings.GUARD_HALF_ANGLE) != true) return 1f
         (source.attacker as? ServerPlayerEntity)?.let { hintOnce(it, "hha.kurete.hint.shield") }
         telegraph.sound(HhaSounds.KURETE_CLASH, entityPos, 0.9f, 1.5f)
+        // Abprall: Funken springen vom Schild zum Angreifer (im Kampf-Scope, damit sie die Gefahrenfarbe tragen).
+        val toward = source.attacker?.let { dirTo(it.entityPos) } ?: facing()
+        telegraph.during { BossFx.sparks(sw, danger, shieldEdge(toward), toward, MobFx.SPARKS, MobFx.SPARK_SPEED, MobFx.SPARK_LIFE) }
         return OlympMobTimings.GUARD_FACTOR
     }
+
+    /** Rand des Schilds in Richtung [dir] (Brusthöhe, knapp vor ihm). */
+    private fun shieldEdge(dir: Vec3d): Vec3d = entityPos.add(dir.multiply(MobFx.SHIELD_AHEAD)).add(0.0, MobFx.SHIELD_HEIGHT, 0.0)
 
     override fun onReset() {
         guardUntil = 0L
@@ -598,6 +606,8 @@ class GriffinEntity(type: EntityType<out GriffinEntity>, world: World) : OlympMo
         }
         land()
         telegraph.sound(HhaSounds.IMPACT, entityPos, 1.2f, 1.1f)
+        // Überarbeitung 3 (P15): kleiner Staubring beim Aufsetzen (kein Flächeneffekt: Radius ≤ 2, 10 Ticks).
+        BossFx.play(sw, "mob.griffin_land", danger, ground(entityPos), a = MobFx.LAND_RADIUS, life = MobFx.LAND_LIFE)
         // Liegt am Boden: offen × 1,5.
         kit.act(GriffinAction.LANDED)
         open(t.LANDED_TICKS, t.LANDED_FACTOR)
@@ -919,13 +929,15 @@ class AutomatonEntity(type: EntityType<out AutomatonEntity>, world: World) : Oly
         kit.act(0)
     }
 
-    /** Ein ruhiger Dampfschwall entlang des Kegels (wenige Vanilla-Wolken, kein Glühen). */
+    /**
+     * Ein ruhiger Dampfschwall entlang des Kegels. Überarbeitung 3 (P15): weicher Kegel-Schleier `mob.steam` (glatter
+     * Mantel und matte Dampfballen, kein Glühen) statt der Vanilla-Wolken; Reichweite und Winkel wie die Ansage.
+     */
     private fun puffSteam(dir: Vec3d) {
         val world = entityWorld as? ServerWorld ?: return
-        for (i in 1..3) {
-            val p = entityPos.add(dir.multiply(i * 1.6)).add(0.0, 1.4, 0.0)
-            world.spawnParticles(ParticleTypes.CLOUD, p.x, p.y, p.z, 3, 0.25 * i, 0.15, 0.25 * i, 0.02)
-        }
+        val nozzle = entityPos.add(0.0, MobFx.STEAM_HEIGHT, 0.0).add(dir.multiply(MobFx.STEAM_AHEAD))
+        val t = OlympMobTimings
+        BossFx.play(world, "mob.steam", danger, nozzle, dir, a = t.STEAM_RADIUS, b = t.STEAM_HALF_ANGLE, life = MobFx.STEAM_LIFE)
     }
 
     override fun hitFactor(source: DamageSource): Float {
@@ -948,4 +960,23 @@ class AutomatonEntity(type: EntityType<out AutomatonEntity>, world: World) : Oly
 
         fun attributes(): DefaultAttributeContainer.Builder = guardianAttributes()
     }
+}
+
+/** Überarbeitung 3 (P15): reine Darstellungs-Konstanten der Olymp-Gegner (keine Kampfzahl). */
+internal object MobFx {
+    /** Funken am Schild der Kurete (Schildschlag und Abprall): Zahl, Tempo (Blöcke/Tick), Lebenszeit. */
+    const val SPARKS = 4
+    const val SPARK_SPEED = 0.32f
+    const val SPARK_LIFE = 14
+    const val SHIELD_AHEAD = 0.8
+    const val SHIELD_HEIGHT = 1.25
+
+    /** Staubring der Greifen-Landung (`mob.griffin_land`). */
+    const val LAND_RADIUS = 2f
+    const val LAND_LIFE = 10
+
+    /** Dampfstoß der Wächterin (`mob.steam`): Düse über dem Boden und vor ihr, Lebenszeit. */
+    const val STEAM_HEIGHT = 1.4
+    const val STEAM_AHEAD = 0.6
+    const val STEAM_LIFE = 22
 }

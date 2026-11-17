@@ -9,11 +9,15 @@ import dev.henny.hha.entity.miniboss.ScriptedBolt
 import dev.henny.hha.logic.Fx
 import dev.henny.hha.logic.Vfx
 import dev.henny.hha.logic.boss.BossDefense
+import dev.henny.hha.logic.boss.BossFx
 import dev.henny.hha.logic.boss.BossTimings
 import dev.henny.hha.logic.boss.Cine
+import dev.henny.hha.logic.boss.SceneKit
 import dev.henny.hha.logic.boss.Telegraph
 import dev.henny.hha.logic.boss.timings.HekateTimings
 import dev.henny.hha.logic.world.HadesGate
+import dev.henny.hha.stage.StageScripts
+import dev.henny.hha.stage.scripts.HekateStages
 import dev.henny.hha.world.olymp.OlympusLayout
 import net.minecraft.entity.EntityType
 import net.minecraft.entity.SpawnReason
@@ -79,6 +83,16 @@ object HekateAction {
  *
  * Trugbilder sind eigene [HekateEntity] mit [echo] = true: ohne Drehbuch, ohne Leiste, ohne Mitkämpfer, nehmen keinen
  * Schaden (ein Treffer lässt sie verwehen) und sind kein Ziel für Vanilla-Mobs.
+ *
+ * **Darstellung (Überarbeitung 3, P08, PLAN 2.5)** – Mechanik, Zahlen und Reihenfolge unverändert:
+ * - Je Treffer genau ein Flächeneffekt: Schwung `hekate.torch_arc` (statt Sichel), Wurf zwei Stoßwellen wie bisher,
+ *   Pfad `hekate.path_fire`, Schlüssel und Finsternis Stoßwelle wie bisher. Dazu Beiwerk im Budget (Glut, Funken,
+ *   Bodensprung, Wirbel), der Fackelwurf als `core.projectile` (`TORCH_FLAME`), das liegende Feuer `hekate.ground_fire`.
+ * - Schlüsseldrehung: `hekate.key_ring` über dem Platz rastet zum Treffer ein; Ruck 1,5° statt Saal-Rütteln.
+ * - Mondfinsternis: der einzige Bildschirm-Pass des Kampfs ([BossFx.Screen.ECLIPSE]); er endet an jedem Ausgang
+ *   ([endEclipse]: Treffer, Phasenwechsel, Sieg, Neustart, Entfernen) und für jeden, der die Arena verlässt
+ *   ([watchEclipse]).
+ * - Szenen über `cinematics.staged` ([HekateStages]): Auftritt, beide Phasenwechsel, Niederlage (im Olymp).
  */
 class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossEntity(type, world) {
 
@@ -125,6 +139,16 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
     private var fireUntil = 0L
     private val tracks = HashMap<UUID, ArrayDeque<Vec3d>>()
 
+    // --- Darstellung (P08) ---------------------------------------------------------------------------
+    /** Spieler, die gerade den Finsternis-Pass sehen (für das Beenden an jedem Ausgang). */
+    private val eclipseViewers = HashSet<UUID>()
+
+    /** Auftritt: Standplatz nach dem Hervortreten (fester Endzustand der Szene). */
+    private var entranceSpot: Vec3d? = null
+
+    /** Die Szenen laufen als Bühnen-Skripte; die alte Rahmung von [DuelBossEntity] ist aus. */
+    override val cinematic: Boolean get() = false
+
     init {
         kit.stats(T.HEALTH, T.ARMOR, T.ATTACK, T.SPEED)
     }
@@ -165,7 +189,7 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
     private fun vanish() {
         if (isRemoved) return
         val world = entityWorld as? ServerWorld ?: return
-        Vfx.flare(world, Vfx.Style.MOON, entityPos.add(0.0, 1.8, 0.0), 1.6f, 8)
+        BossFx.play(world, FX_ECHO_FADE, Vfx.Style.MOON, entityPos, a = height, life = ECHO_FADE_TICKS)
         Fx.burst(world, ParticleTypes.SMOKE, entityPos.add(0.0, 1.4, 0.0), 10, 0.4, 0.02)
         world.playSound(null, x, y, z, HhaSounds.BLINK, net.minecraft.sound.SoundCategory.HOSTILE, 1.4f, 0.7f)
         discard()
@@ -180,16 +204,21 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         dismissEchoes()
         triformWindup = false
         fireUntil = 0L
+        endEclipse()
     }
 
     override fun remove(reason: RemovalReason) {
-        if (!entityWorld.isClient && !echo) dismissEchoes()
+        if (!entityWorld.isClient && !echo) {
+            dismissEchoes()
+            endEclipse()
+        }
         super.remove(reason)
     }
 
     /** Letzte Positionen der Mitkämpfer (für den Vorhalt des Fackelwurfs; Spielertempo ist auf dem Server unzuverlässig). */
     override fun tickBody() {
         if (echo) return
+        if (eclipseViewers.isNotEmpty()) watchEclipse()
         val present = HashSet<UUID>()
         for (player in fighters()) {
             present.add(player.uuid)
@@ -204,25 +233,40 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
     // Auftritt, Phasen, Sieg
     // ---------------------------------------------------------------------------------------------
 
-    /** Sie tritt aus dem Hekataion: Titelkarte, Musik, eine Zeile, Gleiten an ihren Platz (zusammen 50 Ticks). */
-    override fun entrance(): Sequence<Unit> = sequence {
-        val players = viewers()
-        Cine.title(players, "hha.hekate.title", "hha.hekate.title.sub", 70)
-        Cine.music(players, music)
-        say("entrance")
+    /**
+     * Auftritt als Bühnen-Szene [HekateStages.INTRO] (12 s): Sie steht vorher an der Südseite des Hekataion mit Blick
+     * den Weg hinab (= Anker und Blick der Szene); die Fackelsäulen entzünden sich, sie tritt heraus. Fester Endzustand
+     * ([finishEntrance]): an ihrem Platz, Blick frei, Musik läuft.
+     */
+    override fun framedEntrance(): Sequence<Unit> = sequence {
         val to = entityPos
         val c = plaza()
         val out = flatNorm(to.subtract(c))
         val from = Vec3d(c.x + out.x * T.ENTRANCE_FROM, to.y, c.z + out.z * T.ENTRANCE_FROM)
-        Vfx.rune(sw, danger, flatGround(from), 2.2f, T.ENTRANCE_GLIDE + 6)
-        telegraph.sound(HhaSounds.KEY, from, 2f, 0.6f)
-        hold(out)
+        entranceSpot = to
         setPosition(from)
-        for (i in 1..T.ENTRANCE_GLIDE) {
-            val u = i.toDouble() / T.ENTRANCE_GLIDE
-            setPosition(from.lerp(to, u * u * (3.0 - 2.0 * u)))
-            yield(Unit)
+        hold(out)
+        yieldAll(cinematics.staged(HekateStages.INTRO, entrance(), actors = listOf(self)) { finishEntrance() })
+    }
+
+    /**
+     * Ablauf des Auftritts im Takt der Szene (Tick 0 = Szenenbeginn): Fackelsäulen bei den Marken `torch<n>`, Gleiten
+     * ab der Marke `glide`, danach Blick in die Runde. Titel und Zeile stehen im Skript.
+     */
+    override fun entrance(): Sequence<Unit> = sequence {
+        Cine.music(viewers(), music)
+        val to = entranceSpot ?: entityPos
+        val script = StageScripts.get(HekateStages.INTRO)
+        var tick = 0
+        for (i in HekateStages.TORCHES.indices) {
+            val at = script?.takeIf { it.hasMark(HekateStages.torchMark(i)) }?.mark(HekateStages.torchMark(i)) ?: HekateStages.TORCH_TICKS[i]
+            wait(at - tick)
+            tick = maxOf(tick, at)
+            torchPillar(i)?.let { BossFx.play(sw, FX_KINDLE, Vfx.Style.MOON, it, life = KINDLE_TICKS) }
         }
+        val glideAt = script?.takeIf { it.hasMark(HekateStages.MARK_GLIDE) }?.mark(HekateStages.MARK_GLIDE) ?: HekateStages.GLIDE_TICK
+        wait(glideAt - tick)
+        yieldAll(SceneKit.glide(self, to, HekateStages.GLIDE_TICKS))
         hold(null)
         repeat(T.ENTRANCE_HOLD) {
             fighters().minByOrNull { it.squaredDistanceTo(self) }?.let { lookControl.lookAt(it, 30f, 30f) }
@@ -230,18 +274,40 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         }
     }
 
-    /** Neue Gestalt tritt nach vorn (das Modell dreht den Kopfkranz); Titel und eine Zeile, dann die Uhren der Phase. */
-    override fun onPhase(newPhase: Int): Sequence<Unit> = sequence {
+    /** Fester Endzustand des Auftritts (auch übersprungen): am Platz, Blick frei, Kampfmusik. */
+    private fun finishEntrance() {
+        entranceSpot?.let { if (entityPos.squaredDistanceTo(it) > 0.01) setPosition(it) }
+        hold(null)
+        Cine.music(viewers(), music)
+    }
+
+    /** Feuerschale der Fackelsäule [i] am Dreiweg (nur im Olymp; anderswo stehen keine Säulen). */
+    private fun torchPillar(i: Int): Vec3d? {
+        if (sw.registryKey != OlympusLayout.WORLD || arena == null) return null
+        val o = HekateStages.TORCHES.getOrNull(i) ?: return null
+        val c = plaza()
+        return Vec3d(c.x + o[0], floorY() + o[1], c.z + o[2])
+    }
+
+    /**
+     * Neue Gestalt tritt nach vorn (das Modell dreht den Kopfkranz) als Bühnen-Szene [HekateStages.PHASE2] bzw.
+     * [HekateStages.PHASE3] (5 s, Titel und Zeile im Skript); dann die Uhren der Phase. Fester Endzustand: Musik der
+     * zweiten Fassung.
+     */
+    override fun onPhase(newPhase: Int): Sequence<Unit> {
+        val id = if (newPhase == 1) HekateStages.PHASE2 else HekateStages.PHASE3
+        return cinematics.staged(id, phaseChange(newPhase), actors = listOf(self)) { Cine.music(viewers(), HhaSounds.THEME_HEKATE_2) }
+    }
+
+    private fun phaseChange(newPhase: Int): Sequence<Unit> = sequence {
         stopMoving()
         close()
         hold(null)
         dismissEchoes()
         triformWindup = false
+        endEclipse()
         kit.act(0)
-        val number = newPhase + 1
-        Cine.title(viewers(), "hha.hekate.phase.$number", "hha.hekate.phase.$number.sub", 50)
-        say(if (newPhase == 1) "phase2" else "phase3")
-        telegraph.sound(HhaSounds.KEY, entityPos, 2f, if (newPhase == 1) 1f else 0.7f)
+        Cine.music(viewers(), HhaSounds.THEME_HEKATE_2)
         Vfx.nova(sw, danger, entityPos.add(0.0, 2.0, 0.0), 4f, 12)
         rotation = 0
         val start = sw.time + T.PHASE_TRANSITION
@@ -253,15 +319,33 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         yieldAll(rest(T.PHASE_TRANSITION))
     }
 
-    /** Sie tritt zur Seite, der Schlüssel dreht sich im Schloss, das Höllentor füllt sich; nach 10 s ist sie fort. */
-    override fun victory(): Sequence<Unit> = sequence {
+    /**
+     * Sie tritt zur Seite, der Schlüssel dreht sich im Schloss, das Höllentor füllt sich. Im Olymp als Bühnen-Szene
+     * [HekateStages.DEFEAT] (10 s, Kamera fährt zum Tor; das Tor öffnet bei der Marke `gate`), danach verweht sie nach
+     * [DEFEAT_VANISH] Ticks – erst nach dem Ende der Szene, damit ihr Entfernen die Szene nicht abbricht. Anderswo (Test)
+     * die alte Kreisfahrt mit dem bisherigen Ablauf. Fester Endzustand: Tor offen.
+     */
+    override fun victory(): Sequence<Unit> {
+        if (sw.registryKey != OlympusLayout.WORLD || StageScripts.length(HekateStages.DEFEAT) <= 0) {
+            return cinematics.defeat(yieldAndOpen(staged = false), emptyList())
+        }
+        return sequence {
+            yieldAll(cinematics.staged(HekateStages.DEFEAT, yieldAndOpen(staged = true), actors = listOf(self)) { HadesGate.openOlympusGate(sw) })
+            wait(DEFEAT_VANISH)
+            vanishAfterDefeat()
+        }
+    }
+
+    /** Ablauf der Niederlage; [staged] = im Takt der Bühnen-Szene (Zeilen und Schlüssel-Klang stehen dann im Skript). */
+    private fun yieldAndOpen(staged: Boolean): Sequence<Unit> = sequence {
         stopMoving()
         close()
         hold(null)
         dismissEchoes()
         fireUntil = 0L
+        endEclipse()
         kit.act(HekateAction.YIELD)
-        say("victory")
+        if (!staged) say("victory")
         val from = entityPos
         val side = rotate(flatNorm(plaza().subtract(from)), 90.0).multiply(T.YIELD_STEP_DISTANCE)
         val to = from.add(side)
@@ -270,14 +354,26 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
             setPosition(from.lerp(to, u * u * (3.0 - 2.0 * u)))
             yield(Unit)
         }
-        telegraph.sound(HhaSounds.KEY, entityPos, 2.4f, 0.7f)
+        if (!staged) telegraph.sound(HhaSounds.KEY, entityPos, 2.4f, 0.7f)
         val players = viewers()
         finishVictory()
+        if (staged) {
+            val gateAt = StageScripts.get(HekateStages.DEFEAT)?.takeIf { it.hasMark(HekateStages.MARK_GATE) }
+                ?.mark(HekateStages.MARK_GATE) ?: HekateStages.GATE_TICK
+            wait(gateAt - T.YIELD_STEP)
+        }
         HadesGate.openOlympusGate(sw)
+        Cine.music(players, HhaSounds.VICTORY_OLYMP)
         for (player in players) player.sendMessage(Text.translatable("hha.hekate.gate.open").formatted(Formatting.GOLD), false)
+        if (staged) return@sequence
         wait(VICTORY_LINE_GAP)
         say("victory2")
         wait(DuelBossEntity.VICTORY_LINGER - T.YIELD_STEP - VICTORY_LINE_GAP)
+        vanishAfterDefeat()
+    }
+
+    private fun vanishAfterDefeat() {
+        BossFx.play(sw, FX_ECHO_FADE, Vfx.Style.MOON, entityPos, a = height, life = ECHO_FADE_TICKS)
         Vfx.flare(sw, danger, entityPos.add(0.0, 1.8, 0.0), 2f, 10)
         telegraph.sound(HhaSounds.BLINK, entityPos, 1.6f, 0.6f)
         discard()
@@ -369,22 +465,28 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         val first = group.cone(flatGround(entityPos), dir, T.SWEEP_RADIUS, T.SWEEP_HALF_ANGLE, T.SWEEP_W)
         telegraph.sound(HhaSounds.TORCH, entityPos, 1.8f, 1.1f)
         wait(first.ticks)
-        sweepHit(first, dir)
+        sweepHit(first, dir, 1f)
         // Der Schwung läuft aus, dann der zweite gespiegelt, neu gezielt.
         wait(T.SWEEP_HIT_END - T.SWEEP_HIT)
         if (target.isAlive) dir = turnToward(dir, dirTo(target.entityPos), T.SWEEP_RETARGET)
         hold(dir)
         val second = group.cone(flatGround(entityPos), dir, T.SWEEP_RADIUS, T.SWEEP_HALF_ANGLE, T.SWEEP_W2, Telegraph.Pace.FOLLOW_UP)
         wait(second.ticks)
-        sweepHit(second, dir)
+        sweepHit(second, dir, -1f)
         hold(null)
         yieldAll(rest(T.SWEEP_F))
         kit.act(0)
     }
 
-    private fun sweepHit(cone: Telegraph.Cone, dir: Vec3d) {
+    /** Treffer eines Schwungs; [side] = +1 rechte Fackel (erster Schwung), −1 linke (zweiter, gespiegelt). */
+    private fun sweepHit(cone: Telegraph.Cone, dir: Vec3d, side: Float) {
         for (player in cone.hits(fighters())) strike(player, T.SWEEP_DAMAGE)
-        Vfx.crescent(sw, danger, entityPos.add(0.0, 1.6, 0.0), dir, T.SWEEP_RADIUS, 3f, 8)
+        // Flächeneffekt: Flammenband am Fackelkopf (statt der Sichel); Beiwerk: Glut tropft in den Kegel.
+        BossFx.play(
+            sw, FX_TORCH_ARC, danger, entityPos, dir, a = TORCH_ARC_RADIUS, b = T.SWEEP_HALF_ANGLE, c = side,
+            d = TORCH_ARC_HEIGHT, life = TORCH_ARC_TICKS, entity = self, impact = true,
+        )
+        BossFx.drip(sw, danger, entityPos.add(dir.multiply(EMBER_REACH)).add(0.0, EMBER_HEIGHT, 0.0), EMBER_RADIUS, EMBER_COUNT, EMBER_TICKS, BossFx.Look.TORCH_FLAME)
         telegraph.sound(HhaSounds.WHOOSH, entityPos, 2f, 0.9f)
     }
 
@@ -410,6 +512,7 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         // Wurf: Die linke Fackel fliegt im Bogen zum vorderen Kreis.
         val hand = handPos()
         val torch = prop(ScriptedBolt.spawn(sw, this@HekateEntity, HermesBoltEntity.TORCH, 1f, hand))
+        torch?.entity?.let { BossFx.projectile(sw, danger, it, BossFx.Look.TORCH_FLAME) }
         val flight = group.ticks.coerceAtLeast(1)
         for (k in 1..flight) {
             torch?.moveTo(arc(hand, lead.add(0.0, 0.2, 0.0), k.toDouble() / flight, TORCH_ARC))
@@ -419,6 +522,7 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         for (player in group.hits(fighters())) strike(player, T.THROW_DAMAGE)
         Vfx.shockwave(sw, danger, aim, T.THROW_RADIUS, 10, 1.2f)
         if (flatDist(aim, lead) >= Telegraph.IMPACT_MERGE) Vfx.shockwave(sw, danger, lead, T.THROW_RADIUS, 10, 1.2f)
+        BossFx.sparks(sw, danger, lead.add(0.0, 0.3, 0.0), count = THROW_SPARKS, speed = 0.45f)
         telegraph.sound(HhaSounds.IMPACT, lead, 1.8f, 1.3f)
         startFire(listOf(near, ahead))
         // Eine Fackel fehlt: Sie steht offen, bis die Fackel zurück ist.
@@ -453,7 +557,7 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
     /** Das Feuer bleibt liegen (Saal-Gefahr; ist der Platz belegt, brennt nichts nach). */
     private fun startFire(spots: List<Telegraph.Ring>) {
         val hazard = telegraph.hazard(reserve = T.THROW_FIRE_TICKS) ?: return
-        for (spot in spots) Vfx.flood(sw, danger, spot.center, spot.radius.toFloat(), 0f, T.THROW_FIRE_TICKS)
+        for (spot in spots) BossFx.play(sw, FX_GROUND_FIRE, danger, spot.center, a = spot.radius.toFloat(), life = T.THROW_FIRE_TICKS)
         fireUntil = sw.time + T.THROW_FIRE_TICKS
         launch(sequence {
             var tick = 0
@@ -488,9 +592,11 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         hold(dirTo(to))
         val line = telegraph.line(from, to, T.PATH_WIDTH, T.PATH_W)
         telegraph.sound(HhaSounds.TORCH, entityPos, 2f, 0.8f)
+        // Unter der Ansage: glühender Sprung frisst sich vom Wegende zur Mitte vor, fertig mit dem Treffer.
+        BossFx.crack(sw, danger, to, from.subtract(to), T.PATH_LENGTH - T.PATH_START, line.ticks + PATH_CRACK_TAIL, line.ticks)
         wait(line.ticks)
         for (player in line.hits(fighters())) strike(player, T.PATH_DAMAGE)
-        Vfx.beam(sw, danger, from.add(0.0, 0.4, 0.0), to.add(0.0, 0.4, 0.0), 1.6f, 12)
+        BossFx.play(sw, FX_PATH_FIRE, danger, to, from, a = T.PATH_WIDTH, life = PATH_FIRE_TICKS, impact = true)
         telegraph.sound(HhaSounds.RIFT, to.lerp(from, 0.5), 2f, 1.2f)
         hold(null)
         yieldAll(rest(T.PATH_F))
@@ -523,6 +629,11 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         val safe = hazard.safeLine(c, end, T.PATH_WIDTH, ticks)
         hint("hha.hekate.hint.key")
         telegraph.sound(HhaSounds.KEY, entityPos, 2.2f, 0.8f)
+        // Runenring über dem Platz: dreht während der Ansage, rastet zum Treffer auf den goldenen Weg ein.
+        BossFx.play(
+            sw, FX_KEY_RING, danger, c.add(0.0, KEY_RING_HEIGHT, 0.0), dir, a = KEY_RING_RADIUS, b = hazard.ticks.toFloat(),
+            life = hazard.ticks + KEY_RING_TAIL,
+        )
         hold(dir)
         // Die Drehung fällt genau mit dem Treffer: Bei verlängerter Ansage hebt sie den Schlüssel entsprechend später.
         wait((hazard.ticks - T.KEY_W).coerceAtLeast(0))
@@ -532,7 +643,8 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
             if (room.contains(player) && !safe.contains(player)) strike(player, T.KEY_DAMAGE, BossDefense.Reach.SKY)
         }
         Vfx.shockwave(sw, danger, c, T.PATH_LENGTH, 16, 1.6f)
-        telegraph.roomShake(c, 2.5f)
+        // Einrasten: kurzes Nicken der Kamera statt Saal-Rütteln (nie beides).
+        BossFx.kick(sw, c, KEY_KICK_PITCH, ticks = KEY_KICK_TICKS, radius = plazaRadius().toFloat() + KICK_MARGIN)
         telegraph.sound(HhaSounds.KEY, c, 2.6f, 0.6f)
         hazard.end()
         lastHazardEnd = sw.time
@@ -552,12 +664,12 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         kit.act(HekateAction.STEP)
         hold(dirTo(target.entityPos))
         wait(T.STEP_VANISH)
-        Vfx.rune(sw, danger, flatGround(entityPos), 1.8f, T.STEP_TELEPORT - T.STEP_VANISH + 4)
+        BossFx.swirl(sw, danger, entityPos.add(0.0, STEP_SWIRL_HEIGHT, 0.0), UP, STEP_SWIRL_RADIUS, T.STEP_TELEPORT - T.STEP_VANISH + 4, closing = true)
         telegraph.sound(HhaSounds.BLINK, entityPos, 1.6f, 0.7f)
         wait(T.STEP_TELEPORT - T.STEP_VANISH)
         val end = standAt(pathPoint(stepPath(target.entityPos), T.PATH_LENGTH.toDouble()))
         setPosition(end)
-        Vfx.rune(sw, danger, flatGround(end), 1.8f, T.STEP_APPEAR - T.STEP_TELEPORT + 6)
+        BossFx.swirl(sw, danger, end.add(0.0, STEP_SWIRL_HEIGHT, 0.0), UP, STEP_SWIRL_RADIUS, T.STEP_APPEAR - T.STEP_TELEPORT + 10)
         wait(T.STEP_APPEAR - T.STEP_TELEPORT)
         // Die Linie geht vom Wegende durch das Ziel Richtung Mitte.
         val aim = flatGround(target.entityPos)
@@ -711,6 +823,7 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         hint("hha.hekate.hint.eclipse")
         // Stimmung, keine Blindheit: Der Himmel über dem Platz wird nachtblau-violett (Mondfinsternis).
         Vfx.skyMood(sw, Vfx.Style.MOON, plaza(), T.ECLIPSE_MOOD, ticks + MOOD_TAIL, plazaRadius().toFloat() + MOOD_MARGIN)
+        startEclipse(hazard.ticks + ECLIPSE_PASS_TAIL)
         telegraph.sound(HhaSounds.HOWL, entityPos, 2.4f, 0.6f)
         wait((hazard.ticks - T.ECLIPSE_W).coerceAtLeast(0))
         kit.act(HekateAction.ECLIPSE)
@@ -720,10 +833,58 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         }
         Vfx.shockwave(sw, danger, flatGround(plaza()), plazaRadius().toFloat(), 18, 1.4f)
         telegraph.sound(HhaSounds.IMPACT, plaza(), 2.6f, 0.6f)
+        endEclipse()
         hazard.end()
         lastHazardEnd = sw.time
         yieldAll(rest(T.ECLIPSE_HIT_END - T.ECLIPSE_HIT + ECLIPSE_RECOVER))
         kit.act(0)
+    }
+
+    /**
+     * Der einzige Bildschirm-Pass des Kampfs (PLAN 2.5, 6.3): Finsternis um die Platzmitte, Stärke [ECLIPSE_STRENGTH]
+     * (≤ 0,7; die Bildmitte und die goldenen Kreise bleiben hell genug, Prüfbilder P02 `eclipse_0.47/0.70`), Dauer = die
+     * Saal-Gefahr plus Nachlauf. Wer ihn bekommt, merkt sich [eclipseViewers].
+     */
+    private fun startEclipse(ticks: Int) {
+        val c = plaza()
+        val range = plazaRadius().toFloat() + ECLIPSE_RANGE_MARGIN
+        BossFx.screen(sw, BossFx.Screen.ECLIPSE, Vfx.Style.MOON, c, plazaRadius().toFloat(), ECLIPSE_STRENGTH, ticks, range = range)
+        for (player in sw.players) {
+            if (player.squaredDistanceTo(c) <= range.toDouble() * range) eclipseViewers.add(player.uuid)
+        }
+    }
+
+    /** Beendet den Finsternis-Pass bei allen, die ihn sehen (Treffer, Phasenwechsel, Sieg, Neustart, Entfernen). */
+    private fun endEclipse() {
+        if (eclipseViewers.isEmpty()) return
+        val world = entityWorld as? ServerWorld ?: return
+        val server = world.server
+        for (id in eclipseViewers) {
+            (server?.playerManager?.getPlayer(id))?.let { clearEclipse(it) }
+        }
+        eclipseViewers.clear()
+    }
+
+    /** Je Tick während der Finsternis: Wer tot ist, die Welt wechselt oder die Arena verlässt, verliert den Pass sofort. */
+    private fun watchEclipse() {
+        val server = sw.server ?: return
+        val inside = viewers().mapTo(HashSet()) { it.uuid }
+        val gone = eclipseViewers.filter { id ->
+            val player = server.playerManager.getPlayer(id)
+            player == null || !player.isAlive || player.entityWorld !== sw || id !in inside
+        }
+        for (id in gone) {
+            server.playerManager.getPlayer(id)?.let { clearEclipse(it) }
+            eclipseViewers.remove(id)
+        }
+    }
+
+    /** `core.screen_clear` (Art ECLIPSE) nur für [player], auch außerhalb der Reichweite des Platzes. */
+    private fun clearEclipse(player: ServerPlayerEntity) {
+        BossFx.play(
+            player.entityWorld as ServerWorld, "core.screen_clear", Vfx.Style.GOLD, player.entityPos,
+            d = BossFx.Screen.ECLIPSE.ordinal.toFloat(), life = 1, to = player,
+        )
     }
 
     /**
@@ -871,6 +1032,61 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         private const val MOOD_MARGIN = 20f
         private const val ECLIPSE_RECOVER = 10
         private const val SPOT_CHOICES = 3
+
+        // --- Darstellung (P08): Effekt-IDs (Client: client/vfx/fx/boss/HekateFx.kt) und reine Bildgrößen ----------------
+        private const val FX_TORCH_ARC = "hekate.torch_arc"
+        private const val FX_KEY_RING = "hekate.key_ring"
+        private const val FX_ECHO_FADE = "hekate.echo_fade"
+        private const val FX_KINDLE = "hekate.kindle"
+        private const val FX_GROUND_FIRE = "hekate.ground_fire"
+        private const val FX_PATH_FIRE = "hekate.path_fire"
+
+        private val UP = Vec3d(0.0, 1.0, 0.0)
+
+        /** Fackelschwung: Bogen des Fackelkopfs (Radius, Höhe) und Dauer des Flammenbands. */
+        private const val TORCH_ARC_RADIUS = 1.7f
+        private const val TORCH_ARC_HEIGHT = 2.0f
+        private const val TORCH_ARC_TICKS = 16
+
+        /** Glut aus dem Schwung: tropft so weit vorn aus dieser Höhe in diesen Umkreis. */
+        private const val EMBER_REACH = 3.5
+        private const val EMBER_HEIGHT = 1.8
+        private const val EMBER_RADIUS = 2.5f
+        private const val EMBER_COUNT = 6
+        private const val EMBER_TICKS = 50
+
+        /** Fackelwurf: Funken beim Einschlag. */
+        private const val THROW_SPARKS = 10
+
+        /** Feuerpfad: der Sprung glüht so lange nach dem Treffer; die Flammenwand so lange. */
+        private const val PATH_CRACK_TAIL = 30
+        private const val PATH_FIRE_TICKS = 16
+
+        /** Schlüsseldrehung: Runenring so hoch über dem Platz, so groß, Nachlauf nach dem Einrasten; Ruck (Nicken). */
+        private const val KEY_RING_HEIGHT = 9.0
+        private const val KEY_RING_RADIUS = 6.5f
+        private const val KEY_RING_TAIL = 16
+        private const val KEY_KICK_PITCH = 1.5f
+        private const val KEY_KICK_TICKS = 6
+        private const val KICK_MARGIN = 8f
+
+        /** Schwellentritt: Wirbel in dieser Höhe und Größe. */
+        private const val STEP_SWIRL_HEIGHT = 1.4
+        private const val STEP_SWIRL_RADIUS = 1.6f
+
+        /** Trugbild verweht so lange. */
+        private const val ECHO_FADE_TICKS = 24
+
+        /** Auftritt: Aufflammen einer Fackelsäule. */
+        private const val KINDLE_TICKS = 40
+
+        /** Mondfinsternis: Stärke des Passes (Deckel 0,7), Nachlauf über die Ansage hinaus, Reichweite über den Platz. */
+        private const val ECLIPSE_STRENGTH = 0.5f
+        private const val ECLIPSE_PASS_TAIL = 20
+        private const val ECLIPSE_RANGE_MARGIN = 16f
+
+        /** Niederlage im Olymp: Nach dem Ende der Szene bleibt sie so lange stehen, dann verweht sie. */
+        private const val DEFEAT_VANISH = 20
 
         fun attributes(): DefaultAttributeContainer.Builder = guardianAttributes()
     }

@@ -45,6 +45,12 @@ A fixed path of six islands leads upward, each with its own fight:
 
 Every attack is announced on the floor, gold always means safe or open, no boss summons adds, and nothing takes away your control. Bosses grow with the number of players and counter repeated mace smashes from above. Every piece of the Heaven and Hell sets drops **once per world** from its boss; a second win gives ingots. Curetes, griffins and golden automatons guard the islands.
 
+Since the third overhaul every attack has its own smooth effect, hits turn the camera slightly instead of shaking it, and intros, phase changes and defeats are staged cutscenes with a guided camera and their own music per phase. Screen effects can be switched off with `/hhac toggle screen_fx`.
+
+## RPG mode
+
+**HHA RPG** in the main menu turns the adventure into its own game for a group. The lobby is a tunnel of light where your group floats with their skins and the armor of the chosen path; friends join with a six-letter code. After departing, the tunnel keeps running instead of loading screens and everyone lands together in an arrival cutscene. A story in chapters leads from Hermes to Zeus and down through Tartarus to Kronos, with goals, a direction arrow, chapter cards, island cutscenes and credits at the end. RPG worlds have their own HUD, a journal (J), a pause menu, rests that heal you and set your respawn, and no hunger by default. Normal worlds stay exactly as they are.
+
 ## Config
 
 Basically everything can be turned off or tuned: `/hha toggle` and `/hha set` change abilities, damage values and cooldowns live, no restart needed.

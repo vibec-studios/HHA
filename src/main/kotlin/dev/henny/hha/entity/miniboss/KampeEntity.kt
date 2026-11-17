@@ -5,9 +5,12 @@ import dev.henny.hha.HhaSounds
 import dev.henny.hha.entity.boss.HermesBoltEntity
 import dev.henny.hha.logic.Vfx
 import dev.henny.hha.logic.boss.BossDefense
+import dev.henny.hha.logic.boss.BossFx
 import dev.henny.hha.logic.boss.BossTimings
+import dev.henny.hha.logic.boss.SceneKit
 import dev.henny.hha.logic.boss.Telegraph
 import dev.henny.hha.logic.world.TartarosChain
+import dev.henny.hha.stage.scripts.KampeStages
 import net.minecraft.entity.EntityStatuses
 import net.minecraft.entity.EntityType
 import net.minecraft.entity.SpawnReason
@@ -25,6 +28,7 @@ import net.minecraft.world.RaycastContext
 import net.minecraft.world.World
 import java.util.UUID
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.max
 
 /** Animationszustände der Kampe; die Werte gehen über die Leitung, also nur hinten anfügen. Zeiten: `BossTimings.Kampe`. */
@@ -139,6 +143,80 @@ class KampeEntity(type: EntityType<out KampeEntity>, world: World) : TartarosGua
         play(KampePose.IDLE)
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Überarbeitung 3 (P15): Auftritt als Bühnen-Szene `kampe.intro`
+    // ---------------------------------------------------------------------------------------------
+
+    /**
+     * Auftritt (PLAN 2.12, Skript `kampe.intro` über `TartarosGuardian.introScript`): Sie gleitet am angeketteten Titanen
+     * herab, die Kamera folgt von oben nach unten, dann brüllt sie und die Titelkarte kommt (8 s). Vor dem Start dreht
+     * sie sich vom Titanen weg ([beforeIntro]), damit „vorn" im Skript vom Titanen fortzeigt und die Kamerapunkte
+     * seitlich vor ihr liegen (nie im Titanen). Ohne Titanen (z. B. `/summon`) bleibt sie stehen und brüllt nur. Fester
+     * Endzustand ([introFinish]): an ihrem Platz, am Boden, Ruhepose. Thema und Erzählerzeile kommen aus der Basis.
+     */
+    private var introHome: Vec3d? = null
+
+    override fun beforeIntro() {
+        val home = entityPos
+        introHome = home
+        val base = titan
+        if (base != null && flat(home, base) > 1.0) face(flatNorm(home.subtract(base)))
+    }
+
+    override fun introInner(): Sequence<Unit> = introScene(introHome ?: entityPos, titan)
+
+    override fun introFinish() {
+        endIntro(introHome ?: entityPos)
+        hold(null)
+    }
+
+    /** Das Drehbuch zur Szene; die Zeiten stehen in [KampeStages] (dieselben Zahlen wie die Kamera). */
+    private fun introScene(home: Vec3d, base: Vec3d?): Sequence<Unit> = sequence {
+        val perch = base?.let { b -> PERCHES.map { b.add(it) }.minByOrNull { it.squaredDistanceTo(home) } }
+        if (perch != null) {
+            scripted(true)
+            place(perch)
+        }
+        play(KampePose.IDLE)
+        for (t in 0 until KampeStages.INTRO_DESCEND) {
+            if (t == KampeStages.INTRO_HISS) telegraph.sound(HhaSounds.HISS, entityPos, 2.2f, 0.6f)
+            yield(Unit)
+        }
+        val descent = KampeStages.INTRO_LAND - KampeStages.INTRO_DESCEND
+        if (perch != null) {
+            play(KampePose.COIL_UP)
+            yieldAll(SceneKit.glide(self, home, descent))
+            scripted(false)
+            place(home)
+            // Aufsetzen: Risse und echte Blöcke unter ihr (der Ruck steht im Skript).
+            BossFx.debris(sw, ground(home), INTRO_DEBRIS_RADIUS, 6)
+            BossFx.cracks(sw, danger, ground(home), INTRO_CRACK_RADIUS, 4)
+        } else {
+            wait(descent)
+        }
+        // Wie der Auftritt des Bestands: Brüllen und Zischen.
+        play(KampePose.ROAR)
+        telegraph.sound(HhaSounds.HISS, entityPos, 2.6f, 0.7f)
+        wait(BossTimings.Kampe.ROAR)
+        play(KampePose.IDLE)
+    }
+
+    /** Fester Endzustand des Auftritts, auch beim Überspringen. */
+    private fun endIntro(home: Vec3d) {
+        scripted(false)
+        if (entityPos.squaredDistanceTo(home) > 0.25) place(home)
+        play(KampePose.IDLE)
+    }
+
+    /** Sofort in Richtung [dir] schauen (Körper und Kopf) und dort halten. */
+    private fun face(dir: Vec3d) {
+        val y = Math.toDegrees(atan2(-dir.x, dir.z)).toFloat()
+        yaw = y
+        bodyYaw = y
+        headYaw = y
+        hold(dir)
+    }
+
     override fun phaseEvent(): Sequence<Unit>? {
         if (!coiled && health < maxHealth * COIL_AT) {
             coiled = true
@@ -148,6 +226,7 @@ class KampeEntity(type: EntityType<out KampeEntity>, world: World) : TartarosGua
     }
 
     override fun onReset() {
+        super.onReset()
         scripted(false)
         play(KampePose.IDLE)
     }
@@ -185,9 +264,11 @@ class KampeEntity(type: EntityType<out KampeEntity>, world: World) : TartarosGua
         // Schwanzfeger flach über den Boden: zum Überspringen (LOW).
         val struck = cone.hits(fighters()).filter { !airborne(it) && hit(it, 14f, BossDefense.Reach.LOW) }
         for (player in struck) knock(player, dirTo(player.entityPos), 1.0, 0.5)
-        Vfx.crescent(sw, danger, entityPos.add(0.0, 0.5, 0.0), back, k.SWEEP_RADIUS, 6f, 10)
+        // Überarbeitung 3: Staubband hinter der Schwanzspitze statt der Sichel (der eine Flächeneffekt des Treffers).
+        BossFx.play(sw, "kampe.sweep", danger, ground(entityPos), back, a = k.SWEEP_RADIUS, b = k.SWEEP_HALF_ANGLE, life = SWEEP_FX_LIFE, impact = true)
         telegraph.sound(HhaSounds.WHOOSH, entityPos, 2f, 0.6f)
-        if (struck.isNotEmpty()) telegraph.hitShake(entityPos, 3f)
+        // Seitlicher Ruck in Schlagrichtung statt Rütteln (nur wenn jemand getroffen ist, wie bisher).
+        if (struck.isNotEmpty()) BossFx.kick(sw, entityPos, SWEEP_KICK_PITCH, SWEEP_KICK_YAW, ticks = KICK_TICKS, radius = KICK_RADIUS)
         wait(k.SWEEP_END - k.SWEEP_WINDUP)
         hold(null)
         play(KampePose.IDLE)
@@ -203,6 +284,8 @@ class KampeEntity(type: EntityType<out KampeEntity>, world: World) : TartarosGua
         play(KampePose.SPIT)
         val cone = telegraph.cone(ground(entityPos), dir, k.SPIT_RANGE, k.SPIT_HALF_ANGLE, k.SPIT_WINDUP, Telegraph.Pace.PROJECTILE)
         telegraph.sound(HhaSounds.HISS, entityPos, 2.4f, 1.1f)
+        // Gift sammelt sich im Maul (am Kopf, nicht auf der Ansage).
+        BossFx.play(sw, "kampe.venom", danger, entityPos.add(0.0, height * 0.82, 0.0).add(dir), life = k.SPIT_WINDUP, entity = self)
         wait(cone.ticks)
         val mouth = entityPos.add(0.0, height * 0.82, 0.0).add(dir.multiply(1.0))
         val flat = kotlin.math.sqrt(dir.x * dir.x + dir.z * dir.z).coerceAtLeast(1e-6)
@@ -229,6 +312,9 @@ class KampeEntity(type: EntityType<out KampeEntity>, world: World) : TartarosGua
             sw.spawnEntity(bolt)
         }
         telegraph.sound(SoundEvents.ENTITY_LLAMA_SPIT, mouth, 2f, 0.5f)
+        // Der Fächer kommt aus dem Maul des Modells; Tropfen bilden Lachen (nur Optik, kein Schaden).
+        BossFx.play(sw, "kampe.spit", danger, mouth, aim, a = range.toFloat(), b = k.SPIT_HALF_ANGLE * 0.8f, c = k.SPIT_SHOTS.toFloat(), life = SPIT_FX_LIFE, entity = self)
+        BossFx.drip(sw, danger, mouth.add(dir.multiply(SPIT_DRIP_AHEAD)), SPIT_DRIP_RADIUS, SPIT_DRIPS, SPIT_DRIP_LIFE, BossFx.Look.VENOM)
         wait(k.SPIT_END - k.SPIT_WINDUP)
         hold(null)
         play(KampePose.IDLE)
@@ -248,8 +334,9 @@ class KampeEntity(type: EntityType<out KampeEntity>, world: World) : TartarosGua
         val struck = ring.hits(fighters()).filter { hit(it, 18f, BossDefense.Reach.BODY, spot.y) }
         for (player in struck) knock(player, dir, 0.6, 0.45)
         Vfx.shockwave(sw, danger, spot, k.STING_RADIUS + 0.5f, 12, 1.4f)
+        BossFx.cracks(sw, danger, spot, k.STING_RADIUS + 0.3f, STING_CRACKS)
         telegraph.sound(HhaSounds.IMPACT, spot, 2f, 0.9f)
-        if (struck.isNotEmpty()) telegraph.hitShake(spot, 3f)
+        if (struck.isNotEmpty()) BossFx.kick(sw, spot, STING_KICK_PITCH, ticks = KICK_TICKS, radius = KICK_RADIUS)
         // Der Stachel steckt im Boden: Sie zerrt, Treffer zählen mehr (der Stachel glüht golden, BossGlow).
         hint("hha.guardian.hint.sting")
         open(k.STING_STUCK_END - k.STING_WINDUP, OPEN_FACTOR, at = spot)
@@ -292,6 +379,8 @@ class KampeEntity(type: EntityType<out KampeEntity>, world: World) : TartarosGua
             play(KampePose.COIL_UP)
             scripted(true)
             val from = entityPos
+            // Hochwinden: ein Wirbel, wo sie sich vom Boden löst.
+            BossFx.swirl(sw, danger, ground(from), UP, COIL_SWIRL_RADIUS, k.COIL)
             for (i in 1..k.COIL) {
                 val t = i.toDouble() / k.COIL
                 val e = t * t * (3.0 - 2.0 * t)
@@ -331,9 +420,12 @@ class KampeEntity(type: EntityType<out KampeEntity>, world: World) : TartarosGua
                 yield(Unit)
             }
             Vfx.shockwave(sw, danger, ground(g0), 3f, 12, 1.6f)
+            // Einschlag: echte Blöcke, Risse und ein Ruck (ersetzt das Rütteln am Ende der Linie).
+            BossFx.debris(sw, ground(g0), DIVE_DEBRIS_RADIUS, 6)
+            BossFx.cracks(sw, danger, ground(g0), DIVE_CRACK_RADIUS, 5)
+            BossFx.kick(sw, g0, DIVE_KICK_PITCH, ticks = KICK_TICKS, radius = KICK_RADIUS)
             telegraph.sound(HhaSounds.IMPACT, g0, 2.6f, 0.7f)
             val struck = HashSet<UUID>()
-            var anyHit = false
             for (i in 0..k.DIVE_SLIDE) {
                 val p = g0.lerp(g1, i.toDouble() / k.DIVE_SLIDE)
                 place(p)
@@ -346,16 +438,16 @@ class KampeEntity(type: EntityType<out KampeEntity>, world: World) : TartarosGua
                     if (!line.contains(player)) continue
                     struck.add(player.uuid)
                     if (!hit(player, 16f, BossDefense.Reach.SKY, base.y)) continue
-                    anyHit = true
                     knock(player, dir, 1.0, 0.5)
                 }
                 yield(Unit)
             }
-            if (anyHit) telegraph.hitShake(g1, 4f)
         }
         // Nach dem dritten Stoß liegt sie benommen am Boden (F 60, offen).
         scripted(false)
         play(KampePose.DAZED)
+        // Kleiner goldener Sternenring über dem Kopf: benommen = offen.
+        BossFx.play(sw, "kampe.daze", Vfx.Style.GOLD, entityPos.add(0.0, height * 0.6, 0.0), life = k.DAZED, entity = self)
         open(k.DAZED, OPEN_FACTOR)
         wait(k.DAZED)
         close()
@@ -405,7 +497,10 @@ class KampeEntity(type: EntityType<out KampeEntity>, world: World) : TartarosGua
         super.onDeath(damageSource)
     }
 
-    /** Die Todesbewegung braucht 40 Ticks, nicht 20. */
+    /**
+     * Die Todesbewegung braucht 40 Ticks, nicht 20. Die Niederlage-Szene `kampe.defeat` spielt die Basis
+     * (`TartarosGuardian.onDefeated` über `defeatScript`) unabhängig vom Körper weiter.
+     */
     override fun updatePostDeath() {
         deathTime++
         if (deathTime >= BossTimings.Kampe.DEATH && !entityWorld.isClient && !isRemoved) {
@@ -417,6 +512,38 @@ class KampeEntity(type: EntityType<out KampeEntity>, world: World) : TartarosGua
     companion object {
         /** PLAN 4.1: 420 → 920. */
         const val HEALTH = 920.0
+
+        // --- Überarbeitung 3: reine Darstellung (keine Kampfzahl) ---
+
+        /** Flächeneffekt des Schwanzfegers (`kampe.sweep`) und des Giftfächers (`kampe.spit`), Ticks. */
+        private const val SWEEP_FX_LIFE = 20
+        private const val SPIT_FX_LIFE = 16
+
+        /** Gifttropfen nach dem Speien: so weit vor dem Maul, Umkreis, Zahl, Lebenszeit der Lachen (nur Optik). */
+        private const val SPIT_DRIP_AHEAD = 2.4
+        private const val SPIT_DRIP_RADIUS = 2.2f
+        private const val SPIT_DRIPS = 8
+        private const val SPIT_DRIP_LIFE = 60
+
+        /** Bodenrisse am Einstich. */
+        private const val STING_CRACKS = 4
+
+        /** Kamera-Ruck (Grad, Ticks, Reichweite): Feger seitlich, Stich und Sturzstoß nach unten. */
+        private const val SWEEP_KICK_PITCH = 0.6f
+        private const val SWEEP_KICK_YAW = 1.5f
+        private const val STING_KICK_PITCH = 1.5f
+        private const val DIVE_KICK_PITCH = 2f
+        private const val KICK_TICKS = 6
+        private const val KICK_RADIUS = 28f
+
+        /** Wirbel beim Hochwinden, Trümmer und Risse am Einschlag des Sturzstoßes und beim Aufsetzen im Auftritt. */
+        private const val COIL_SWIRL_RADIUS = 2.6f
+        private const val DIVE_DEBRIS_RADIUS = 2.6f
+        private const val DIVE_CRACK_RADIUS = 3.2f
+        private const val INTRO_DEBRIS_RADIUS = 2.4f
+        private const val INTRO_CRACK_RADIUS = 3f
+
+        private val UP = Vec3d(0.0, 1.0, 0.0)
 
         /** Fluggeschwindigkeit der Giftgeschosse (Blöcke je Tick). */
         private const val SPIT_SPEED = 0.85

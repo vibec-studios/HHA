@@ -56,6 +56,46 @@ object HhaSounds {
     val THEME_KRATOS = register("music.kratos")
     val THEME_ZEUS = register("music.zeus")
 
+    // Überarbeitung 3 (PLAN 6.8): IDs vorab registriert (P00); Dateien und sounds.json-Einträge liefert P04.
+    // Musik (Schleifen außer den Stingern):
+    val THEME_TARTAROS = register("music.tartaros")
+    val THEME_TUNNEL = register("music.tunnel")
+    val THEME_HEKATE_2 = register("music.hekate_2")
+    val THEME_BRONTES_2 = register("music.brontes_2")
+    val THEME_KRATOS_2 = register("music.kratos_2")
+    val THEME_ZEUS_2 = register("music.zeus_2")
+    val THEME_ZEUS_3 = register("music.zeus_3")
+    val THEME_HADES_2 = register("music.hades_2")
+    val THEME_KRONOS = register("music.kronos")
+    val THEME_KRONOS_2 = register("music.kronos_2")
+    val THEME_GUARDIAN = register("music.guardian")
+    val THEME_GUARDIAN_2 = register("music.guardian_2")
+    val VICTORY_OLYMP = register("music.victory_olymp")
+    val VICTORY_TARTAROS = register("music.victory_tartaros")
+    val THEME_CREDITS = register("music.credits")
+
+    // Klänge der neuen Effekte:
+    val CRACK = register("boss.crack")
+    val DEBRIS = register("boss.debris")
+    /** Tiefer Schlag zum Kamera-Ruck. */
+    val THUD = register("boss.thud")
+    val LENS = register("boss.lens")
+    val TIME_STOP = register("boss.time_stop")
+    val TEAR = register("boss.tear")
+    val SWIRL = register("boss.swirl")
+    val WAVE = register("boss.wave")
+
+    // RPG-Modus:
+    val RPG_TUNNEL_LOOP = register("rpg.tunnel_loop")
+    val RPG_DEPART = register("rpg.depart")
+    val RPG_ARRIVE = register("rpg.arrive")
+    val RPG_CHAPTER = register("rpg.chapter")
+    val RPG_OBJECTIVE = register("rpg.objective")
+    val RPG_JOURNAL = register("rpg.journal")
+    val RPG_REST = register("rpg.rest")
+    val RPG_FALLEN = register("rpg.fallen")
+    val RPG_DISSOLVE = register("rpg.dissolve")
+
     private fun register(path: String): SoundEvent {
         val id = Hha.id(path)
         return Registry.register(Registries.SOUND_EVENT, id, SoundEvent.of(id))

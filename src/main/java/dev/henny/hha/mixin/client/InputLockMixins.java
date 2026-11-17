@@ -13,7 +13,7 @@ public abstract class InputLockMixins {
 
     @Inject(method = "handleInputEvents", at = @At("HEAD"), cancellable = true)
     private void hha$lockActions(CallbackInfo ci) {
-        if (CinePlayer.getActive()) {
+        if (CinePlayer.isInputLocked()) {
             ci.cancel();
         }
     }

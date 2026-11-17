@@ -1,5 +1,7 @@
 package dev.henny.hha.client.model
 
+import dev.henny.hha.client.anim.PoseMemory
+import dev.henny.hha.client.anim.Spring
 import dev.henny.hha.entity.miniboss.WardenAction
 import dev.henny.hha.logic.boss.BossDefense
 import dev.henny.hha.logic.boss.BossTimings
@@ -73,6 +75,8 @@ class WardenModel(root: ModelPart) : GuardianModel(root) {
         val w = walk(state)
         val p = phase(state)
         val a = state.actionTime
+        val rig = RIGS.of(state.entityId)
+        rig.begin(t, state.action, a)
 
         // --- Ruhe und Gang: breitbeinig stapfend, das Beil ruht auf der Schulter -------------------------------------
         val breath = sin(t * 0.08f)
@@ -182,7 +186,88 @@ class WardenModel(root: ModelPart) : GuardianModel(root) {
         // Die Laterne pendelt bei jedem Schritt und schwingt nach, wenn er sich bewegt.
         lantern.pitch += sin(p * 2f) * 0.12f * w + sin(t * 0.07f) * 0.04f
         lantern.roll += sin(p) * 0.15f * w + sin(t * 0.05f) * 0.03f
+
+        // --- Überarbeitung 3: Überblenden aus der gezeigten Pose, Nachschwingen von Kette und Schurz ---------------
+        collect(pose)
+        rig.blend(pose, state.action, t, BLEND)
+        write(pose)
+        for (hit in hitTimes(state.action)) {
+            if (!rig.crossed(hit)) continue
+            rig.springs[CHAIN].kick(CHAIN_KICK)
+            rig.springs[CLOTH].kick(CLOTH_KICK)
+        }
+        // Der Haken löst sich: die Kette federt zurück.
+        if (rig.changed && rig.previous == WardenAction.HOOKED) rig.springs[CHAIN].kick(-RELEASE_KICK)
+        val swing = rig.spring(CHAIN)
+        val cloth = rig.spring(CLOTH)
+        for (i in links.indices) {
+            links[i].pitch += swing * (0.35f + 0.2f * i)
+            links[i].roll += swing * 0.12f * i
+        }
+        apron.pitch += cloth * 0.5f
+        drape.pitch += cloth * 0.8f
+
+        // Leuchten an den Kampfzustand gekoppelt: in der Raserei (unter 40 %) heller, taumelnd gedämpft.
+        val living = net.minecraft.client.MinecraftClient.getInstance().world?.getEntityById(state.entityId) as? net.minecraft.entity.LivingEntity
+        val rage = living != null && living.health < living.maxHealth * RAGE_AT
+        val glowTarget = when {
+            state.action == WardenAction.STAGGER -> GLOW_OPEN
+            rage -> 1f
+            else -> GLOW_REST
+        }
+        rig.glow = if (rig.glow < 0f) glowTarget else rig.glow + (glowTarget - rig.glow) * min(1f, GLOW_FOLLOW * rig.dt)
     }
+
+    override fun glowAlpha(state: GuardianRenderState): Float = RIGS.peek(state.entityId)?.glow?.takeIf { it >= 0f } ?: GLOW_REST
+
+    /** Zeitpunkte harter Bewegungen je Aktion (Stoß für Kette und Schurz), aus [BossTimings.Warden]. */
+    private fun hitTimes(action: Int): FloatArray = when (action) {
+        WardenAction.CHOP -> floatArrayOf(T.CHOP_WINDUP.f + T.CHOP_STRIKE)
+        WardenAction.DOUBLE_CHOP -> floatArrayOf(T.CHOP_WINDUP.f + T.CHOP_STRIKE, T.DOUBLE_CHOP_SECOND.f + T.CHOP_STRIKE)
+        WardenAction.ROUND -> floatArrayOf(T.ROUND_WINDUP.f + T.ROUND_STRIKE)
+        WardenAction.CHAIN -> floatArrayOf(T.CHAIN_WINDUP.f + 2f, T.CHAIN_PULL.f + 3f)
+        WardenAction.RAGE -> floatArrayOf(6f)
+        WardenAction.STAGGER -> floatArrayOf(8f)
+        BossDefense.ANTI_AIR -> floatArrayOf(G.ANTI_AIR_HIT.f)
+        else -> NO_HITS
+    }
+
+    /** Alle Knochen (pitch, yaw, roll, Versatz zur Ruhelage) in [out]. */
+    private fun collect(out: FloatArray) {
+        for (i in parts.indices) {
+            val part = parts[i]
+            out[i * 6] = part.pitch
+            // Das erste Kettenglied kreist beim Kettenwurf einmal ganz herum: in −π..π halten, sonst dreht die
+            // Überblendung es beim Aktionswechsel ein zweites Mal zurück.
+            out[i * 6 + 1] = if (part === links[0]) wrap(part.yaw) else part.yaw
+            out[i * 6 + 2] = part.roll
+            out[i * 6 + 3] = part.originX - rest[i * 3]
+            out[i * 6 + 4] = part.originY - rest[i * 3 + 1]
+            out[i * 6 + 5] = part.originZ - rest[i * 3 + 2]
+        }
+    }
+
+    private fun wrap(x: Float): Float {
+        var d = x % TAU
+        if (d > PI.toFloat()) d -= TAU
+        if (d < -PI.toFloat()) d += TAU
+        return d
+    }
+
+    private fun write(from: FloatArray) {
+        for (i in parts.indices) {
+            val part = parts[i]
+            part.pitch = from[i * 6]
+            part.yaw = from[i * 6 + 1]
+            part.roll = from[i * 6 + 2]
+            part.originX = rest[i * 3] + from[i * 6 + 3]
+            part.originY = rest[i * 3 + 1] + from[i * 6 + 4]
+            part.originZ = rest[i * 3 + 2] + from[i * 6 + 5]
+        }
+    }
+
+    private val pose = FloatArray(BONES.size * 6)
+    private val RIGS = GuardianRigs { GuardianRig(BONES.size * 6, 2, SPRING_FREQ, SPRING_DAMP) }
 
     /** Merkt sich die Ruhe-/Ganglage aller Knochen (Ziel von `null` in der Zeitleiste). */
     private fun capture() {
@@ -242,6 +327,23 @@ class WardenModel(root: ModelPart) : GuardianModel(root) {
         val Int.f get() = toFloat()
         const val SOFT = 7f
         const val TAU = (PI * 2).toFloat()
+
+        // --- Überarbeitung 3 (P14): Überblenden, Federn, Leuchten ---
+        /** Überblendung aus der gezeigten Pose bei jedem Aktionswechsel (Ticks). */
+        const val BLEND = 6f
+        const val CHAIN = 0
+        const val CLOTH = 1
+        /** Federn: rad/Tick, Dämpfung (unter 1 schwingt nach). */
+        const val SPRING_FREQ = 0.35f
+        const val SPRING_DAMP = 0.25f
+        const val CHAIN_KICK = 0.09f
+        const val CLOTH_KICK = 0.06f
+        const val RELEASE_KICK = 0.14f
+        const val RAGE_AT = 0.4f
+        const val GLOW_REST = 0.85f
+        const val GLOW_OPEN = 0.55f
+        const val GLOW_FOLLOW = 0.08f
+        val NO_HITS = FloatArray(0)
         const val N = Float.NaN
 
         // POSES BEGIN (generiert aus tools/hha_assets/warden_model.py --kotlin)
@@ -457,5 +559,107 @@ class WardenModel(root: ModelPart) : GuardianModel(root) {
             -1.0000f, 0.0000f, 0.0000f, 0.0000f, 0.0000f, 0.0000f, 0.6000f, 0.0000f, 0.0000f, 0.0000f, 0.0000f, 0.0000f,
         )
         // POSES END
+    }
+}
+
+/**
+ * Animationszustand je Wesen für die Modelle der Tartaros-Wächter (Überarbeitung 3, P14, PLAN 2.1 Punkt 3): Ein Modell
+ * zeichnet alle Wesen seines Typs, also hält jedes Wesen hier seine eigene [memory] (Überblenden aus der zuletzt
+ * **gezeigten** Pose statt „vorige Aktion bei ihrem Alter“), seine [springs] (Nachschwingen weicher Teile) und seine
+ * Uhr. Werte sind Felder aus (pitch, yaw, roll, dx, dy, dz) je Knochen; NaN (ausgeblendeter Knochen) bleibt NaN.
+ */
+internal class GuardianRig(size: Int, springCount: Int, freq: Float, damp: Float) {
+    val memory = PoseMemory(size)
+    val springs = Array(springCount) { Spring(freq, damp) }
+    private val work = FloatArray(size)
+    private val hidden = BooleanArray(size)
+    private var lastAge = Float.NaN
+    private var lastAction = Int.MIN_VALUE
+    private var lastTime = 0f
+    internal var seen = 0L
+
+    /** Geglätteter Leuchtwert des Modells (−1 = noch keiner). */
+    var glow = -1f
+
+    /** Ticks seit dem letzten Bild dieses Wesens (0 beim ersten Bild oder nach einem Zeitsprung). */
+    var dt = 0f
+        private set
+
+    /** Aktion dieses Bildes wechselte gegenüber dem letzten Bild (von [previous]). */
+    var changed = false
+        private set
+    var previous = Int.MIN_VALUE
+        private set
+
+    /** Dieselbe Aktion begann neu (ihre Zeit lief rückwärts). */
+    var restarted = false
+        private set
+
+    /** Zu Beginn jedes Bildes: Uhr und Aktionswechsel bestimmen. */
+    fun begin(age: Float, action: Int, time: Float) {
+        val d = age - lastAge
+        dt = if (d.isNaN() || d < 0f || d > MAX_DT) 0f else d
+        lastAge = age
+        changed = lastAction != Int.MIN_VALUE && action != lastAction
+        previous = lastAction
+        restarted = !changed && action == lastAction && time < lastTime - 0.5f
+        crossedFrom = when {
+            lastAction == Int.MIN_VALUE -> time
+            changed || restarted -> -1f
+            else -> lastTime
+        }
+        lastAction = action
+        lastTime = time
+    }
+
+    private var crossedFrom = -1f
+
+    /** Hat die laufende Aktion seit dem letzten Bild den Zeitpunkt [at] überschritten? (für Stöße an Federn) */
+    fun crossed(at: Float): Boolean = crossedFrom < at && lastTime >= at
+
+    /** Feder [i] einen Schritt Richtung 0 führen und ihre Lage liefern. */
+    fun spring(i: Int): Float = springs[i].step(0f, dt)
+
+    /** Überblendet [target] (wird überschrieben) aus der gezeigten Pose; [fade] Ticks nach jedem Aktionswechsel. */
+    fun blend(target: FloatArray, action: Int, now: Float, fade: Float) {
+        for (i in target.indices) {
+            hidden[i] = target[i].isNaN()
+            work[i] = if (hidden[i]) 0f else target[i]
+        }
+        val out = memory.blend(action, work, now, fade, restarted)
+        for (i in target.indices) target[i] = if (hidden[i]) Float.NaN else out[i]
+    }
+
+    companion object {
+        const val MAX_DT = 4f
+    }
+}
+
+/**
+ * Tabelle der [GuardianRig]s eines Modells nach Wesens-ID. Einträge, die länger als [FORGET_TICKS] Spielzeit nicht
+ * gezeichnet wurden, und alle Einträge einer anderen Welt werden vergessen (wie `IxionModel`).
+ */
+internal class GuardianRigs(private val create: () -> GuardianRig) {
+    private val rigs = HashMap<Int, GuardianRig>()
+    private var worldId = 0
+
+    fun of(id: Int): GuardianRig {
+        val world = net.minecraft.client.MinecraftClient.getInstance().world
+        val wid = System.identityHashCode(world)
+        if (wid != worldId) {
+            rigs.clear()
+            worldId = wid
+        }
+        val now = world?.time ?: 0L
+        if (rigs.size > 4) rigs.values.removeIf { now < it.seen || now - it.seen > FORGET_TICKS }
+        val rig = rigs.getOrPut(id, create)
+        rig.seen = now
+        return rig
+    }
+
+    fun peek(id: Int): GuardianRig? = rigs[id]
+
+    companion object {
+        const val FORGET_TICKS = 200L
     }
 }

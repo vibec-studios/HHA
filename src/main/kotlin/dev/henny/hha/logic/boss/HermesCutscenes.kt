@@ -1,5 +1,6 @@
 package dev.henny.hha.logic.boss
 
+import dev.henny.hha.Hha
 import dev.henny.hha.HhaEntities
 import dev.henny.hha.HhaItems
 import dev.henny.hha.HhaParticles
@@ -10,6 +11,9 @@ import dev.henny.hha.entity.boss.HermesPose
 import dev.henny.hha.logic.Fx
 import dev.henny.hha.logic.Vfx
 import dev.henny.hha.logic.world.OlympusPath
+import dev.henny.hha.stage.StageScripts
+import dev.henny.hha.stage.scripts.HermesStages
+import net.minecraft.entity.Entity
 import net.minecraft.entity.SpawnReason
 import net.minecraft.entity.effect.StatusEffectInstance
 import net.minecraft.entity.effect.StatusEffects
@@ -41,6 +45,10 @@ class HermesCutscenes(private val fight: HermesFight) {
         /** Der zugeworfene Brief fliegt so lange, mit so hohem Bogen. */
         const val TOSS_FLIGHT = 16
         const val TOSS_ARC = 1.6
+
+        /** Kometensturz im Prolog: Flugzeit (wie bisher) und Breite der Lichtbahn. */
+        const val COMET_TICKS = 18
+        const val COMET_WIDTH = 0.7f
     }
 
     private val world get() = fight.world
@@ -92,25 +100,64 @@ class HermesCutscenes(private val fight: HermesFight) {
         boss.entityPos.add(cos(Math.toRadians(angle)) * radius, height, sin(Math.toRadians(angle)) * radius)
 
     // ---------------------------------------------------------------------------------------------
+    // Bühne (Überarbeitung 3, P07): Die Kamera jeder Szene ist ein Bühnen-Skript (`stage/scripts/HermesStages`).
+    // Es beginnt an der Stelle des früheren ersten Kamera-Aufrufs; an jeder weiteren früheren Stelle steht `cue`.
+    // Zeilen, Wartezeiten, Posen, Effekte und Musik bleiben genau, wie sie waren.
+    // ---------------------------------------------------------------------------------------------
+
+    private var stageId: String? = null
+    private var stageAnchor: Vec3d = Vec3d.ZERO
+    private var stageActors: List<Entity> = emptyList()
+    private var stageStart = 0
+
+    /** Startet das Skript [id] (Anker [anchor], Blick 0, Darsteller [actors]) ab Tick [startTick] bei allen. */
+    private fun beginStage(id: String, anchor: Vec3d, actors: List<Entity>, startTick: Int = 0) {
+        stageId = id
+        stageAnchor = anchor
+        stageActors = actors
+        stageStart = fight.clock - startTick
+        // Beim Vorspulen verschluckt `Cine` das Paket (OP_STAGE); der Endzustand kommt aus dem Drehbuch selbst.
+        Cine.stage(players, id, anchor, 0f, actors, startTick)
+    }
+
+    /**
+     * Hier stand früher ein Kamera-Aufruf: Die Zeitleiste muss jetzt bei der Marke [mark] stehen. Weicht sie ab (sollte
+     * nie passieren, die Zeiten sind dieselben), wird sie ab der Marke neu aufgesetzt – ein Schnitt war es ohnehin.
+     */
+    private fun cue(mark: String) {
+        val id = stageId ?: return
+        if (Cine.muted) return
+        val script = StageScripts.get(id) ?: return
+        if (!script.hasMark(mark)) return
+        val expected = script.mark(mark)
+        val elapsed = fight.clock - stageStart
+        if (elapsed != expected) {
+            Hha.LOGGER.warn("Hermes-Bühne {}: Marke {} bei Tick {} statt {} – Zeitleiste neu aufgesetzt", id, mark, elapsed, expected)
+            beginStage(id, stageAnchor, stageActors, expected)
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------
     // Prolog: Der Brief
     // ---------------------------------------------------------------------------------------------
 
     fun prologue(): Sequence<Unit> = sequence {
         val origin = fight.origin
-        val summoner = fight.targets().firstOrNull()
         val everyone = players
         Cine.start(everyone)
         Cine.fade(everyone, 0x000000, 1.0, 0.0, 20)
         fight.setMusic(null)
 
-        // Die Gaben verglühen auf dem Altar, der Himmel öffnet sich.
-        Cine.orbit(everyone, origin, 7.0, 2.4, 30.0, 95.0, 110, 62.0, 56.0, summoner, 1.2, 4.5, 1.6)
+        // Die Gaben verglühen auf dem Altar, der Himmel öffnet sich. Kamera: `hermes.prolog` (Teil 1: Anker Altar,
+        // Blick auf die Gruppe); ohne Tempel fehlt die Altar-Zeile, das Skript beginnt entsprechend später.
+        val temple = fight.mode == HermesFight.Mode.TEMPLE
+        beginStage(HermesStages.PROLOG, origin, everyone, if (temple) 0 else HermesStages.prologSkip())
         Vfx.flare(world, Vfx.Style.GOLD, origin.add(0.0, 1.3, 0.0), 2.4f, 18)
         Vfx.feathers(world, Vfx.Style.HEAVEN, origin.add(0.0, 1.5, 0.0), 24, 1.4f, 90)
         sound(HhaSounds.CHIME, 2f, 0.8f, origin)
         wait(10)
         // Der Test am Standort (außerhalb des Olymp) hat keinen Altar: dort fehlt die erste Zeile.
-        if (fight.mode == HermesFight.Mode.TEMPLE) say(Cine.SPEAKER_NARRATOR, "prologue.altar", 56)
+        if (temple) say(Cine.SPEAKER_NARRATOR, "prologue.altar", 56)
         Vfx.rift(world, Vfx.Style.GOLD, origin.add(0.0, 26.0, 0.0), Vec3d(0.0, -1.0, 0.0), 13f, 120)
         Vfx.skyMood(world, Vfx.Style.STORM, origin, 1f, 130, 64f)
         Vfx.clouds(world, Vfx.Style.STORM, origin, 60f, 30f, 150)
@@ -119,10 +166,7 @@ class HermesCutscenes(private val fight: HermesFight) {
         sound(HhaSounds.RIFT, 3f, 0.8f, origin)
 
         // Der Himmel saugt uns hinauf — Schnitt von unten.
-        Cine.camera(
-            everyone, origin.add(5.0, 0.6, 5.0), origin.add(1.5, 16.0, 1.5),
-            origin.add(0.0, 26.0, 0.0), origin.add(0.0, 26.0, 0.0), 70, 66.0, 96.0,
-        )
+        cue("cam1")
         say(Cine.SPEAKER_NARRATOR, "prologue.pull", 44)
         Vfx.pillar(world, Vfx.Style.GOLD, origin, 4.5f, 40f, 40)
         Cine.fade(everyone, 0xFFF6D8, 0.0, 1.0, 18)
@@ -137,18 +181,18 @@ class HermesCutscenes(private val fight: HermesFight) {
         fight.setMusic(HhaSounds.THEME_MESSENGER)
         wait(8)
 
-        // Totale über dem Forum.
+        // Totale über dem Forum. Das Bild ist noch weiß: Teil 2 der Zeitleiste (Anker Forum, Darsteller 0 = Hermes).
         Cine.fade(everyone, 0xFFF6D8, 1.0, 0.0, 24)
-        Cine.orbit(everyone, center, 40.0, 16.0, 200.0, 240.0, 62, 72.0, 60.0, null, 0.0, 30.0, 8.0)
+        beginStage(HermesStages.PROLOG, center, listOf(boss), StageScripts.get(HermesStages.PROLOG)?.mark(HermesStages.PROLOG_FORUM) ?: 0)
         Cine.title(everyone, "hha.hermes.title.forum", "hha.hermes.title.forum.sub", 56)
         Vfx.godRays(world, Vfx.Style.GOLD, center, 26f, 80f, 120)
         wait(58)
 
-        // Hermes stürzt wie ein Komet aufs Forum.
-        Cine.camera(everyone, center.add(12.0, 2.0, 12.0), center.add(9.0, 1.0, 9.0), center.add(0.0, 30.0, 0.0), center.add(0.0, 1.0, 0.0), 30, 72.0, 58.0)
-        Vfx.trail(world, Vfx.Style.GOLD, boss, 0.9f, 40)
+        // Hermes stürzt wie ein Komet aufs Forum (die Kamera folgt ihm hinab).
+        cue("cam3")
+        HermesLook.streak(world, Vfx.Style.GOLD, boss, boss.entityPos, center.add(0.0, 0.2, 0.0), COMET_TICKS, COMET_WIDTH)
         sound(HhaSounds.DASH, 3f, 0.7f, center.add(0.0, 30.0, 0.0))
-        glide(center.add(0.0, 0.2, 0.0), 18, smooth = false)
+        glide(center.add(0.0, 0.2, 0.0), COMET_TICKS, smooth = false)
         // Gelandet: ein Knie am Boden, der Stab steckt (SLAM ist seit Plan 7 das Ausholen in der Luft).
         boss.pose = HermesPose.STUCK
         Vfx.shockwave(world, Vfx.Style.GOLD, center, 22f, 26, 5f)
@@ -162,16 +206,16 @@ class HermesCutscenes(private val fight: HermesFight) {
         // Er richtet sich auf und liest die Zustellung vor.
         faceBossToPlayers()
         boss.pose = HermesPose.READ
-        Cine.orbit(everyone, center, 3.8, 1.6, 75.0, 105.0, 200, 52.0, 48.0, boss, 2.3, 3.4, 1.8)
+        cue("cam4")
         say(Cine.SPEAKER_HERMES, "prologue.delivery", 54)
         say(Cine.SPEAKER_HERMES, "prologue.sender", 84)
-        Cine.orbit(everyone, center, 3.0, 2.3, 110.0, 130.0, 80, 46.0, 40.0, boss, 2.6)
+        cue("cam5")
         say(Cine.SPEAKER_HERMES, "prologue.condition", 74)
         boss.pose = HermesPose.TAUNT
-        Cine.orbit(everyone, center, 5.5, 1.2, 150.0, 190.0, 120, 58.0, 54.0, boss, 2.0)
+        cue("cam6")
         say(Cine.SPEAKER_HERMES, "prologue.apollo", 104)
         boss.pose = HermesPose.CAST
-        Cine.camera(everyone, boss.entityPos.add(0.0, 2.6, 3.4), boss.entityPos.add(0.0, 2.4, 2.4), boss.entityPos, boss.entityPos, 50, 44.0, 36.0, boss, 2.9)
+        cue("cam7")
         say(Cine.SPEAKER_HERMES, "prologue.catch", 46)
 
         // Los geht's: Titelkarte, Kamera zurück zum Spieler.
@@ -202,21 +246,21 @@ class HermesCutscenes(private val fight: HermesFight) {
         // Nahaufnahme: eine einzelne Feder löst sich und sinkt.
         val shin = boss.entityPos.add(0.3, 0.5, 0.0)
         Vfx.fallingFeather(world, Vfx.Style.HEAVEN, shin, 2.4f, 120)
-        Cine.camera(everyone, shin.add(1.8, 0.6, 1.8), shin.add(1.3, -1.6, 1.3), shin, shin.add(0.0, -2.4, 0.0), 120, 34.0, 28.0)
+        beginStage(HermesStages.STAGE2, center, listOf(boss))
         say(Cine.SPEAKER_NARRATOR, "feather.falls", 110)
 
         boss.pose = HermesPose.IDLE
-        Cine.orbit(everyone, boss.entityPos, 3.4, 0.6, 60.0, 80.0, 70, 46.0, 42.0, boss, 2.7)
+        cue("cam1")
         say(Cine.SPEAKER_HERMES, "feather.moment", 30)
         say(Cine.SPEAKER_HERMES, "feather.touched", 80)
 
         boss.pose = HermesPose.TAUNT
         sound(HhaSounds.CHIME, 2f, 1.6f)
-        Cine.orbit(everyone, boss.entityPos, 4.6, 0.3, 80.0, 120.0, 80, 58.0, 52.0, boss, 2.2)
+        cue("cam2")
         say(Cine.SPEAKER_HERMES, "feather.other_job", 70)
 
         boss.pose = HermesPose.SNAP
-        Cine.orbit(everyone, boss.entityPos, 7.0, 1.6, 120.0, 160.0, 96, 62.0, 66.0, boss, 1.6)
+        cue("cam3")
         say(Cine.SPEAKER_HERMES, "feather.thief", 76)
 
         // Fingerschnipp: Trugbilder klappen aus ihm heraus.
@@ -232,17 +276,20 @@ class HermesCutscenes(private val fight: HermesFight) {
             world.spawnEntity(ghost)
             ghosts.add(ghost)
         }
-        for (step in 1..24) {
-            val t = step / 24.0
+        for (step in 1..HermesStages.GHOST_SPREAD) {
+            val t = step / HermesStages.GHOST_SPREAD.toDouble()
             for ((i, ghost) in ghosts.withIndex()) {
                 val a = i * Math.PI / 2.0 + t * 1.2
                 ghost.setPosition(boss.entityPos.add(cos(a) * 7.0 * t, 0.0, sin(a) * 7.0 * t))
             }
             yield(Unit)
         }
-        wait(16)
-        for (ghost in ghosts) ghost.discard()
-        Vfx.feathers(world, Vfx.Style.HEAVEN, boss.entityPos.add(0.0, 1.5, 0.0), 30, 2f, 50)
+        wait(HermesStages.GHOST_HOLD)
+        // Die Trugbilder lösen sich als schließender Wirbel in Federn auf (PLAN 2.4).
+        for (ghost in ghosts) {
+            HermesLook.dissolve(world, Vfx.Style.HEAVEN, ghost.entityPos.add(0.0, 1.5, 0.0))
+            ghost.discard()
+        }
 
         Cine.title(everyone, "hha.hermes.stage.2", "hha.hermes.stage.2.sub", 60)
         sound(HhaSounds.STING, 2f, 1.12f)
@@ -266,16 +313,16 @@ class HermesCutscenes(private val fight: HermesFight) {
         boss.pose = HermesPose.IDLE
         fight.setMusic(null)
 
-        Cine.camera(everyone, boss.entityPos.add(0.0, 2.2, 5.0), boss.entityPos.add(0.0, 2.5, 3.0), boss.entityPos, boss.entityPos, 60, 46.0, 38.0, boss, 2.9)
+        beginStage(HermesStages.STAGE3, center, listOf(boss))
         wait(10)
         say(Cine.SPEAKER_HERMES, "descent.enough", 44)
-        Cine.orbit(everyone, boss.entityPos, 3.4, 1.0, 100.0, 70.0, 150, 44.0, 40.0, boss, 2.6)
+        cue("cam1")
         say(Cine.SPEAKER_HERMES, "descent.dead_know", 76)
         say(Cine.SPEAKER_HERMES, "descent.every_soul", 80)
 
         // Der Stab schlägt auf den Boden: der Marmor bricht, das Reich der Toten steigt auf.
         boss.pose = HermesPose.PLANT
-        Cine.orbit(everyone, center, 18.0, 6.0, 40.0, 70.0, 100, 64.0, 74.0, boss, 1.0)
+        cue("cam2")
         wait(BossTimings.Hermes.TWINS_PLANT_STRIKE)
         Vfx.shockwave(world, Vfx.Style.SOUL, center, 26f, 40, 6f)
         Vfx.pillar(world, Vfx.Style.SOUL, center, 3f, 34f, 50)
@@ -287,15 +334,15 @@ class HermesCutscenes(private val fight: HermesFight) {
         wait(90)
 
         boss.pose = HermesPose.CAST
-        Cine.orbit(everyone, boss.entityPos, 4.4, 0.6, 200.0, 230.0, 90, 52.0, 48.0, boss, 2.4)
+        cue("cam3")
         say(Cine.SPEAKER_HERMES, "descent.way_short", 62)
 
         // Die Schlangen lösen sich vom Stab: ein Vorgeschmack auf „Die Zwillinge“. Danach kehren sie zurück.
         val serpents = fight.spawnSerpents()
-        Cine.orbit(everyone, boss.entityPos.add(0.0, 5.0, 0.0), 11.0, 2.0, 230.0, 280.0, 100, 56.0, 52.0, serpents.firstOrNull(), 0.4)
+        cue("cam4")
         sound(HhaSounds.ROAR, 2.5f, 1f)
         // Die Szene läuft mindestens so lange, wie der Satz gesprochen wird.
-        for (t in 0 until maxOf(90, 14 + HhaVoiceLengths.ticks("hha.hermes.line.descent.serpents", 70))) {
+        for (t in 0 until HermesStages.serpentDance()) {
             for ((i, serpent) in serpents.withIndex()) {
                 val a = t * 0.11 + i * Math.PI
                 val r = 2.0 + t * 0.09
@@ -356,7 +403,8 @@ class HermesCutscenes(private val fight: HermesFight) {
         val eyesLife = 40 + HhaVoiceLengths.ticks("hha.hermes.line.zeus.name", 46) + HhaVoiceLengths.ticks("hha.hermes.line.zeus.end_it", 64) + 30
         Vfx.zeusEyes(world, center, eyesHeight.toFloat(), eyesLife)
         val sky = center.add(0.0, eyesHeight, 0.0)
-        Cine.camera(everyone, center.add(9.0, 0.9, 13.0), center.add(4.0, 1.3, 7.0), sky.add(0.0, -30.0, 0.0), sky, 90, 78.0, 62.0)
+        val hero = fight.targets().firstOrNull()
+        beginStage(HermesStages.STAGE4, center, listOfNotNull(boss, hero))
         wait(40)
         sound(HhaSounds.IMPACT, 4f, 0.5f)
         say(Cine.SPEAKER_ZEUS, "zeus.name", 46)
@@ -366,23 +414,24 @@ class HermesCutscenes(private val fight: HermesFight) {
         for (player in players) Vfx.screenFlash(player, Vfx.Style.STORM, 0.5f, 8)
         Vfx.shake(world, center, 9f, 24, 60f)
         sound(HhaSounds.THUNDER, 4f, 0.85f)
-        Cine.camera(everyone, boss.entityPos.add(-5.0, 0.6, 6.0), boss.entityPos.add(-3.4, 0.9, 4.0), sky, boss.entityPos.add(0.0, 8.0, 0.0), 80, 70.0, 58.0)
+        cue("cam1")
         say(Cine.SPEAKER_ZEUS, "zeus.end_it", 64)
 
-        Cine.camera(everyone, boss.entityPos.add(1.8, 0.8, 2.6), boss.entityPos.add(1.2, 1.0, 2.0), boss.entityPos, boss.entityPos, 60, 42.0, 36.0, boss, 1.1)
+        cue("cam2")
         say(Cine.SPEAKER_HERMES, "zeus.yes_father", 44)
 
         boss.pose = HermesPose.IDLE
         faceBossToPlayers()
-        Cine.orbit(everyone, boss.entityPos, 3.2, 1.6, 95.0, 70.0, 180, 44.0, 40.0, boss, 2.4)
+        cue("cam3")
         say(Cine.SPEAKER_HERMES, "zeus.fun", 80)
         say(Cine.SPEAKER_HERMES, "zeus.rule", 88)
 
-        // Die Feder kehrt zurück und schenkt dem Spieler Flügel.
-        val hero = fight.targets().firstOrNull()
-        if (hero != null) {
-            Vfx.fallingFeather(world, Vfx.Style.HEAVEN, hero.eyePos.add(0.0, 2.6, 0.0), 2.2f, 90)
-            Cine.orbit(everyone, hero.entityPos, 3.8, 1.4, 20.0, 60.0, 92, 50.0, 44.0, hero, 1.3)
+        // Die Feder kehrt zurück und schenkt dem Spieler Flügel. (Der Held ist Darsteller 1 der Bühne; dieselbe Wahl
+        // wie früher an dieser Stelle, `targets()` ändert sich in der Szene nicht.)
+        val feathered = fight.targets().firstOrNull()
+        if (feathered != null) {
+            Vfx.fallingFeather(world, Vfx.Style.HEAVEN, feathered.eyePos.add(0.0, 2.6, 0.0), 2.2f, 90)
+            cue("cam4")
             say(Cine.SPEAKER_NARRATOR, "zeus.feather", 84)
         }
         for (player in fight.targets()) {
@@ -395,10 +444,10 @@ class HermesCutscenes(private val fight: HermesFight) {
         // Hermes steigt auf: die letzte Form. Nur für den Moment; im Kampf trägt das Modell den Halo (Plan 3.4).
         boss.pose = HermesPose.ASCEND
         Vfx.wings(world, Vfx.Style.HEAVEN, boss, 80, 1.35f)
-        Cine.orbit(everyone, center, 12.0, 1.0, 10.0, 50.0, 80, 60.0, 76.0, boss, 2.0, 12.0, 0.6)
+        cue("cam5")
         Vfx.pillar(world, Vfx.Style.GOLD, center, 2.6f, 60f, 60)
         sound(HhaSounds.RIFT, 3f, 1.3f)
-        glide(center.add(0.0, 12.0, 0.0), 60)
+        glide(center.add(0.0, 12.0, 0.0), HermesStages.ASCEND_TICKS)
         say(Cine.SPEAKER_HERMES, "zeus.breath", 56)
 
         Cine.title(everyone, "hha.hermes.stage.4", "hha.hermes.stage.4.sub", 60)
@@ -437,21 +486,21 @@ class HermesCutscenes(private val fight: HermesFight) {
         Vfx.godRays(world, Vfx.Style.HEAVEN, center, 30f, 90f, 280)
         sound(HhaSounds.IMPACT, 3f, 1.4f)
 
-        Cine.orbit(everyone, center, 9.0, 3.0, 60.0, 100.0, 96, 50.0, 56.0, boss, 1.0)
+        beginStage(HermesStages.FINALE, center, listOf(boss))
         Vfx.feathers(world, Vfx.Style.HEAVEN, boss.entityPos.add(0.0, 1.0, 0.0), 60, 2.6f, 120)
         say(Cine.SPEAKER_NARRATOR, "finale.catch", 92)
-        glide(center.add(0.0, 0.1, 0.0), 40)
+        glide(center.add(0.0, 0.1, 0.0), HermesStages.FINALE_GLIDE)
         Vfx.shockwave(world, Vfx.Style.GOLD, center, 8f, 18, 2f)
         sound(SoundEvents.ITEM_MACE_SMASH_GROUND, 3f, 1f)
 
         faceBossToPlayers()
         boss.pose = HermesPose.KNEEL
-        Cine.orbit(everyone, center, 3.4, 0.6, 80.0, 100.0, 120, 46.0, 42.0, boss, 1.2)
+        cue("cam1")
         wait(16)
         say(Cine.SPEAKER_HERMES, "finale.caught", 56)
 
         boss.pose = HermesPose.READ
-        Cine.camera(everyone, boss.entityPos.add(0.0, 2.2, 3.6), boss.entityPos.add(0.0, 2.2, 2.6), boss.entityPos, boss.entityPos, 60, 46.0, 40.0, boss, 2.4)
+        cue("cam2")
         say(Cine.SPEAKER_HERMES, "finale.sign", 50)
 
         // Das Paket kommt vom Himmel.
@@ -464,9 +513,9 @@ class HermesCutscenes(private val fight: HermesFight) {
         Vfx.godRays(world, Vfx.Style.GOLD, landing, 10f, 70f, 170)
         Vfx.rift(world, Vfx.Style.GOLD, landing.add(0.0, 48.0, 0.0), Vec3d(0.0, -1.0, 0.0), 9f, 110)
         sound(HhaSounds.CHIME, 3f, 0.7f)
-        Cine.orbit(everyone, landing, 14.0, 1.0, 320.0, 360.0, 110, 62.0, 52.0, parcelEntity, 0.6, 7.0, 1.4)
-        for (i in 1..96) {
-            val t = 1.0 - (1.0 - i / 96.0).let { it * it }
+        cue("cam3")
+        for (i in 1..HermesStages.PARCEL_FALL) {
+            val t = 1.0 - (1.0 - i / HermesStages.PARCEL_FALL.toDouble()).let { it * it }
             parcelEntity.setPosition(landing.add(0.0, 46.0 * (1.0 - t), 0.0))
             yield(Unit)
         }
@@ -474,15 +523,17 @@ class HermesCutscenes(private val fight: HermesFight) {
         Vfx.feathers(world, Vfx.Style.HEAVEN, landing.add(0.0, 1.0, 0.0), 30, 1.8f, 70)
         Vfx.shake(world, landing, 3f, 12, 40f)
         sound(SoundEvents.BLOCK_ANVIL_LAND, 1.5f, 1.3f)
-        wait(10)
+        wait(HermesStages.PARCEL_REST)
 
         boss.pose = HermesPose.TAUNT
         faceBossToPlayers()
-        Cine.orbit(everyone, boss.entityPos, 4.0, 1.0, 100.0, 130.0, 170, 52.0, 48.0, boss, 2.1)
+        cue("cam4")
         say(Cine.SPEAKER_HERMES, "finale.delivered", 84)
 
         // Er bleibt neben dem Paket stehen, bis jemand es öffnet; der zweite Brief kommt dann (parcelOpened).
         Cine.title(everyone, "hha.hermes.title.delivered", "hha.hermes.title.delivered.sub", 70)
+        // Sieg-Stinger des Olymp (PLAN 6.8); `Cine.music` spielt ihn als Stinger, das Thema ist schon aus.
+        fight.setMusic(HhaSounds.VICTORY_OLYMP)
         Cine.end(players)
         fight.inCutscene = false
         boss.pose = HermesPose.IDLE
@@ -587,10 +638,10 @@ class HermesCutscenes(private val fight: HermesFight) {
         // Abgang: ein Windstoß und ein paar Federn.
         messenger.pose = HermesPose.DASH
         fight.face(messenger, messenger.entityPos.add(0.0, 0.0, 10.0))
-        Vfx.trail(world, Vfx.Style.GOLD, messenger, 0.8f, 40)
-        sound(HhaSounds.DASH, 3f, 1.1f)
         val stay = messenger.entityPos
         val leave = stay.add(0.0, 60.0, 90.0)
+        HermesLook.streak(world, Vfx.Style.GOLD, messenger, stay, stay.lerp(leave, 0.5), 8)
+        sound(HhaSounds.DASH, 3f, 1.1f)
         for (i in 1..8) {
             messenger.setPosition(stay.lerp(stay.lerp(leave, 0.5), i / 8.0))
             yield(Unit)

@@ -1,14 +1,24 @@
 package dev.henny.hha.client.model
 
+import dev.henny.hha.client.anim.Motion
+import dev.henny.hha.client.anim.PoseMemory
+import dev.henny.hha.client.anim.Spring
+import dev.henny.hha.client.cine.CinePlayer
+import dev.henny.hha.client.vfx.fx.boss.KratosFx
 import dev.henny.hha.entity.boss.olymp.BiaAction
 import dev.henny.hha.entity.boss.olymp.KratosAction
 import dev.henny.hha.logic.boss.timings.KratosTimings
+import dev.henny.hha.stage.scripts.KratosStages
+import net.minecraft.client.MinecraftClient
 import net.minecraft.client.model.ModelPart
+import net.minecraft.entity.LivingEntity
 import org.joml.Quaternionf
 import org.joml.Vector3f
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.PI
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sin
 
 /**
@@ -23,14 +33,21 @@ class ThroneKey(val at: Float, val pose: ThronePose?, val hard: Boolean = false)
 
 /**
  * Gemeinsamer Unterbau von Kratos und Bia: Knochen aus einer Tabelle, Zeitleisten aus Schlüsselposen (Ausholen weich,
- * Schlag beschleunigt), weiches Ausblenden der vorigen Bewegung und frei liegende Requisiten. Gerechnet wird nur in
- * Python (IK, Bodenkontakt); hier wird nur zwischen den fertigen Posen überblendet.
+ * Schlag beschleunigt) und frei liegende Requisiten. Gerechnet wird nur in Python (IK, Bodenkontakt); hier wird nur
+ * zwischen den fertigen Posen überblendet.
+ *
+ * Überarbeitung 3 (PLAN 2.1 Punkt 3): Ein Aktionswechsel blendet aus der zuletzt **gezeigten** Pose über [FADE] Ticks
+ * in die neue ([remember], `PoseMemory`), nicht mehr aus „vorige Aktion bei ihrem Alter“. Dazu je Wesen ein [Rig] mit
+ * Federn ([springSpec]) und Bewegungsmessung (`Motion`); vergessen wird ein Wesen, das [RIG_FORGET_NS] lang kein Bild
+ * bekam.
  */
 abstract class ThroneGuardModel(
     root: ModelPart,
     private val names: Array<String>,
     private val parentOf: IntArray,
     propNames: Array<String>,
+    /** Federn je Wesen: (Frequenz rad/Tick, Dämpfung), Reihenfolge legt die Unterklasse fest. */
+    private val springSpec: Array<Pair<Float, Float>> = emptyArray(),
 ) : GuardianModel(root) {
     protected val parts: Array<ModelPart>
     private val rest: FloatArray
@@ -77,6 +94,117 @@ abstract class ThroneGuardModel(
     }
 
     protected fun bone(name: String): ModelPart = parts[names.indexOf(name)]
+
+    /** Zustand eines Wesens zwischen zwei Bildern (Überblenden, Federn, Bewegung, Stöße). */
+    protected class Rig(size: Int, spec: Array<Pair<Float, Float>>) {
+        val memory = PoseMemory(size)
+        val target = FloatArray(size)
+        val shown = FloatArray(size)
+        var hasShown = false
+        val springs = Array(spec.size) { Spring(spec[it].first, spec[it].second) }
+        val motion = Motion()
+        /** Zeitschritt dieses Bilds in Ticks (0 beim ersten Bild und beim zweiten Aufruf im selben Bild). */
+        var dt = 0f
+        var lastAge = Float.NaN
+        var lastAction = Int.MIN_VALUE
+        var lastActionTime = 0f
+        /** Für Stöße an Schlag-Marken: Aktion und Aktionszeit des vorigen Bilds. */
+        var kickAction = Int.MIN_VALUE
+        var kickTime = 0f
+        /** Bia: Landung dieser Aktion schon gestoßen; letzte gemessene Senkrecht-Geschwindigkeit. */
+        var landed = false
+        var lastVy = 0f
+        var seen = 0L
+    }
+
+    private val rigs = HashMap<Int, Rig>()
+    private var pruneClock = 0
+
+    /** Rig des Wesens aus [state] (neu bei einem neuen oder zurückgesetzten Wesen); setzt [Rig.dt]. */
+    protected fun rig(state: GuardianRenderState): Rig {
+        val now = System.nanoTime()
+        if (++pruneClock >= RIG_PRUNE_EVERY) {
+            pruneClock = 0
+            rigs.values.removeIf { now - it.seen > RIG_FORGET_NS }
+        }
+        var r = rigs.getOrPut(state.entityId) { Rig(parts.size * 6, springSpec) }
+        if (!r.lastAge.isNaN() && state.age < r.lastAge - 1f) {
+            r = Rig(parts.size * 6, springSpec)
+            rigs[state.entityId] = r
+        }
+        r.seen = now
+        r.dt = if (r.lastAge.isNaN()) 0f else (state.age - r.lastAge).coerceIn(0f, 4f)
+        r.lastAge = state.age
+        return r
+    }
+
+    /** Das Wesen hinter [state] in der Client-Welt (für `Motion`), sonst `null`. */
+    protected fun entity(state: GuardianRenderState): LivingEntity? =
+        MinecraftClient.getInstance().world?.getEntityById(state.entityId) as? LivingEntity
+
+    /** Misst die Bewegung des Wesens (Tempo, Fallen, Drehrate, Neustart einer Aktion) für dieses Bild. */
+    protected fun measure(state: GuardianRenderState, rig: Rig): LivingEntity? {
+        val e = entity(state) ?: return null
+        rig.motion.update(e, (state.age - e.age).coerceIn(0f, 1f), state.action, state.actionTime.toInt())
+        return e
+    }
+
+    /**
+     * Überblenden aus der zuletzt gezeigten Pose: liest alle Knochen (nach [settlePins]), mischt sie mit `PoseMemory`
+     * und schreibt das Ergebnis zurück. Winkel werden vorher auf die Seite der gezeigten Pose gelegt (kein Umweg über
+     * ±π bei frei liegenden Requisiten). Ein Neustart derselben Aktion blendet ebenfalls.
+     */
+    protected fun remember(state: GuardianRenderState, rig: Rig) {
+        val restart = state.action == rig.lastAction && state.actionTime < rig.lastActionTime - 0.5f
+        rig.lastAction = state.action
+        rig.lastActionTime = state.actionTime
+        val tg = rig.target
+        for (i in parts.indices) {
+            val part = parts[i]
+            val o = i * 6
+            tg[o] = part.pitch
+            tg[o + 1] = part.yaw
+            tg[o + 2] = part.roll
+            tg[o + 3] = part.originX
+            tg[o + 4] = part.originY
+            tg[o + 5] = part.originZ
+        }
+        if (rig.hasShown) {
+            for (i in parts.indices) for (k in 0 until 3) {
+                val o = i * 6 + k
+                var v = tg[o]
+                val ref = rig.shown[o]
+                while (v - ref > PI_F) v -= TWO_PI_F
+                while (v - ref < -PI_F) v += TWO_PI_F
+                tg[o] = v
+            }
+        }
+        val out = rig.memory.blend(state.action, tg, state.age, FADE, restart)
+        out.copyInto(rig.shown)
+        rig.hasShown = true
+        for (i in parts.indices) {
+            val o = i * 6
+            val part = parts[i]
+            part.pitch = out[o]
+            part.yaw = out[o + 1]
+            part.roll = out[o + 2]
+            part.originX = out[o + 3]
+            part.originY = out[o + 4]
+            part.originZ = out[o + 5]
+        }
+    }
+
+    /** Hat die laufende Aktion seit dem vorigen Bild die Aktionszeit [mark] überschritten? (Stoß an Schlag-Marken.) */
+    protected fun crossed(state: GuardianRenderState, rig: Rig, mark: Float): Boolean {
+        if (state.action != rig.kickAction) return state.actionTime >= mark && state.actionTime < mark + 1f
+        return rig.kickTime < mark && state.actionTime >= mark
+    }
+
+    /** Merkt Aktion und Zeit dieses Bilds für [crossed] (am Ende der Stöße aufrufen). */
+    protected fun kicked(state: GuardianRenderState, rig: Rig) {
+        rig.kickAction = state.action
+        rig.kickTime = state.actionTime
+    }
 
     /** Beginn jedes Bilds: keine Requisite liegt frei. */
     protected fun beginPose() {
@@ -241,24 +369,22 @@ abstract class ThroneGuardModel(
     protected fun window(t: Float, from: Float, to: Float) = step(t, from, from + 3f) * (1f - step(t, to - 3f, to))
 
     /**
-     * Spielt die laufende Bewegung und blendet die vorige über [FADE] Ticks aus, falls sie unterbrochen wurde. Die
-     * vorige läuft dabei mit ihrer eigenen Uhr weiter; danach wird ihr Stand zur Grundlage der neuen.
+     * Spielt die laufende Bewegung. Den Übergang aus der vorigen macht jetzt [remember] (aus der gezeigten Pose), nicht
+     * mehr ein Nachspielen der vorigen Aktion mit ihrer eigenen Uhr.
      */
     protected fun playActions(state: GuardianRenderState, timeline: (Int, Float) -> Array<ThroneKey>?) {
-        val prev = state.previousAction
-        if (prev != 0 && state.actionTime < FADE) {
-            val keys = timeline(prev, state.previousTime + state.actionTime)
-            if (keys != null) {
-                play(state.previousTime + state.actionTime, keys, 1f - step(state.actionTime, 0f, FADE))
-                capture()
-            }
-        }
         if (state.action != 0) timeline(state.action, state.actionTime)?.let { play(state.actionTime, it) }
     }
 
     protected companion object {
         const val N = Float.NaN
         const val FADE = 6f
+
+        /** Rig vergessen nach so langer Zeit ohne Bild (5 s), geprüft alle so viele Aufrufe. */
+        const val RIG_FORGET_NS = 5_000_000_000L
+        const val RIG_PRUNE_EVERY = 240
+        val PI_F = PI.toFloat()
+        val TWO_PI_F = (2.0 * PI).toFloat()
     }
 }
 
@@ -271,8 +397,12 @@ abstract class ThroneGuardModel(
  * Winkel wie `POSES` dort). Jede Aktion läuft über `actionTime` selbst durch Ausholen → Schlag → Nachlauf/offen →
  * zurück, mit den Zeiten aus [KratosTimings]. Befehle: Er stellt den Hammer senkrecht ab und befiehlt mit der rechten
  * Hand (flache Hand vor: weichen; Faust an die Brust: heran; Arm gestreckt nach unten: knien).
+ *
+ * Überarbeitung 3: Umhang (zwei Glieder) und Helmbusch schwingen über Federn nach ([secondary]): Sie folgen der
+ * Pose mit Verzug, bekommen an jeder Schlag-Marke einen Stoß und wehen mit dem gemessenen Tempo nach hinten. Der Helm
+ * ist geschlossen (kein Kiefer): Beim Sprechen nickt der Kopf leicht im Takt der Silben (`CinePlayer.mouthOf`).
  */
-class KratosModel(root: ModelPart) : ThroneGuardModel(root, BONES, PARENTS, PROPS) {
+class KratosModel(root: ModelPart) : ThroneGuardModel(root, BONES, PARENTS, PROPS, SPRINGS) {
     private val body = bone("body")
     private val chest = bone("chest")
     private val head = bone("head")
@@ -291,9 +421,28 @@ class KratosModel(root: ModelPart) : ThroneGuardModel(root, BONES, PARENTS, PROP
     private val shinR = bone("shin_r")
     private val shinL = bone("shin_l")
 
+    /**
+     * Leuchten an den Kampfzustand gekoppelt (PLAN 2.1 Punkt 7): steigt beim Ausholen bis zum Schlag, sinkt, solange
+     * er taumelt (offen), sonst ruhig. Alle Übergänge weich, langsamer als 1 Hz.
+     */
+    override fun glowAlpha(state: GuardianRenderState): Float {
+        val a = state.actionTime
+        val charge = when (state.action) {
+            KratosAction.SMASH -> hold(a, T.SMASH_HIT.f, T.SMASH_HIT_END.f, T.SMASH_HIT_END + GLOW_RELEASE)
+            KratosAction.DOUBLE_SMASH -> hold(a, T.DOUBLE_HIT.f, T.DOUBLE_HIT2.f, T.DOUBLE_HIT2 + GLOW_RELEASE)
+            KratosAction.BASH -> hold(a, T.BASH_HIT.f, T.BASH_HIT_END.f, T.BASH_HIT_END + GLOW_RELEASE)
+            KratosAction.CMD_BACK, KratosAction.CMD_COME, KratosAction.CMD_KNEEL -> hold(a, GLOW_COMMAND_RISE, GLOW_COMMAND_HOLD, GLOW_COMMAND_HOLD + GLOW_RELEASE)
+            KratosAction.STAGGER -> -hold(a, GLOW_OPEN_FALL, T.STAGGER_END - GLOW_RELEASE, T.STAGGER_END.f)
+            KratosAction.YIELD -> -step(a, 0f, GLOW_YIELD_FALL)
+            else -> 0f
+        }
+        return (GLOW_BASE + (if (charge >= 0f) GLOW_CHARGE else GLOW_OPEN) * charge).coerceIn(0f, 1f)
+    }
+
     override fun setAngles(state: GuardianRenderState) {
         super.setAngles(state)
         beginPose()
+        val rig = rig(state)
         val t = state.age
         val w = walk(state)
         val p = phase(state)
@@ -355,11 +504,62 @@ class KratosModel(root: ModelPart) : ThroneGuardModel(root, BONES, PARENTS, PROP
                 // Schweres Atmen auf dem Knie.
                 chest.pitch += sin(t * 0.3f) * 0.025f * step(a, 6f, 12f)
             }
+            KratosAction.SLAM -> {
+                // Auftritt: Der Schild kracht auf den Boden, der Körper geht mit ins Knie.
+                val jolt = window(a, S.SLAM_HIT.f, S.SLAM_HIT + SLAM_JOLT)
+                body.originY += jolt * SLAM_DIP
+                chest.pitch += jolt * SLAM_BOW
+            }
+            KratosAction.YIELD -> {
+                // Auf dem Knie: langsames schweres Atmen.
+                chest.pitch += sin(t * 0.12f) * 0.02f * step(a, YIELD_KNEEL_AT, YIELD_KNEEL_AT + 10f)
+            }
         }
         if (state.action != KratosAction.STAGGER && state.action != KratosAction.YIELD) look(head, state)
         crest.roll = -head.roll * 0.3f
         shield.visible = if (state.action == KratosAction.DROP_SHIELD) a < T.DROP_SHIELD_GONE else !bare
         settlePins()
+        remember(state, rig)
+        secondary(state, rig)
+    }
+
+    /**
+     * Nachschwingen: Umhang und Busch folgen ihrer „Weltlage“ (eigene Pose plus Neigung von Rumpf bzw. Kopf) über
+     * Federn, das gemessene Tempo weht den Umhang nach hinten, die Drehrate legt den Busch zur Seite. Stöße an den
+     * Schlag-Marken jeder Aktion; zuletzt das Nicken beim Sprechen.
+     */
+    private fun secondary(state: GuardianRenderState, rig: Rig) {
+        measure(state, rig)
+        val m = rig.motion
+        if (hitMark(state, rig)) {
+            rig.springs[CAPE].kick(CAPE_KICK)
+            rig.springs[CAPE_1].kick(CAPE_KICK * 0.6f)
+            rig.springs[CREST_PITCH].kick(CREST_KICK)
+        }
+        kicked(state, rig)
+        val dt = rig.dt
+        val torso = body.pitch + chest.pitch
+        cape.pitch = rig.springs[CAPE].step(cape.pitch + torso + min(m.speed, SPEED_CAP) * CAPE_SPEED, dt) - torso
+        cape1.pitch = rig.springs[CAPE_1].step(cape1.pitch + cape.pitch + torso + min(m.speed, SPEED_CAP) * CAPE_1_SPEED, dt) - cape.pitch - torso
+        val crown = torso + head.pitch
+        crest.pitch = rig.springs[CREST_PITCH].step(crest.pitch + crown + min(m.speed, SPEED_CAP) * CREST_SPEED, dt) - crown
+        crest.roll = rig.springs[CREST_ROLL].step(crest.roll + head.roll - m.turn * CREST_TURN, dt) - head.roll
+        head.pitch += CinePlayer.mouthOf(state.entityId) * MOUTH_NOD
+    }
+
+    /** Fällt in diesem Bild ein Schlag (Hammer, Schild, Stampfen, Ruck, Taumeln, Wurf, Knie)? */
+    private fun hitMark(state: GuardianRenderState, rig: Rig): Boolean = when (state.action) {
+        KratosAction.SMASH -> crossed(state, rig, T.SMASH_HIT_END.f)
+        KratosAction.DOUBLE_SMASH -> crossed(state, rig, T.DOUBLE_HIT + 2f) || crossed(state, rig, T.DOUBLE_HIT2 + 2f)
+        KratosAction.BASH -> crossed(state, rig, T.BASH_HIT_END.f)
+        KratosAction.CMD_BACK -> crossed(state, rig, T.BACK_HIT_END.f)
+        KratosAction.CMD_COME -> crossed(state, rig, T.COME_HIT.f)
+        KratosAction.STAGGER -> crossed(state, rig, STAGGER_HIT)
+        KratosAction.DROP_SHIELD -> crossed(state, rig, T.DROP_SHIELD_GONE.f)
+        KratosAction.SHIELD_UP -> crossed(state, rig, T.SHIELD_UP_HIT_END.f)
+        KratosAction.SLAM -> crossed(state, rig, S.SLAM_HIT.f)
+        KratosAction.YIELD -> crossed(state, rig, YIELD_KNEEL_AT)
+        else -> false
     }
 
     /** Zeitleiste jeder Aktion; [bare] wählt in Phase II die Posen ohne Schild. */
@@ -374,12 +574,56 @@ class KratosModel(root: ModelPart) : ThroneGuardModel(root, BONES, PARENTS, PROP
         KratosAction.DROP_SHIELD -> DROP_KEYS
         KratosAction.SHIELD_UP -> if (bare) SHIELD_UP_BARE else SHIELD_UP_KEYS
         KratosAction.YIELD -> YIELD_KEYS
+        KratosAction.SLAM -> SLAM_KEYS
         else -> null
     }
 
     private companion object {
         val T = KratosTimings
+        val S = KratosStages
         val Int.f get() = toFloat()
+
+        // --- Federn (Reihenfolge = Index im Rig) ---
+        const val CAPE = 0
+        const val CAPE_1 = 1
+        const val CREST_PITCH = 2
+        const val CREST_ROLL = 3
+        /** (Frequenz rad/Tick, Dämpfung): Umhang schwer und träge, Glied 2 noch träger, Busch leicht und lebhaft. */
+        val SPRINGS = arrayOf(0.34f to 0.42f, 0.27f to 0.36f, 0.5f to 0.3f, 0.45f to 0.32f)
+        /** Stoß an Schlag-Marken (rad/Tick, + = Umhang nach hinten oben). */
+        const val CAPE_KICK = 0.22f
+        const val CREST_KICK = -0.18f
+        /** Tempo (Blöcke/Tick) → Wehen nach hinten (rad), gedeckelt. */
+        const val SPEED_CAP = 0.4f
+        const val CAPE_SPEED = 0.9f
+        const val CAPE_1_SPEED = 0.6f
+        const val CREST_SPEED = -0.5f
+        /** Drehrate (Grad/Tick) → Busch zur Seite (rad). */
+        const val CREST_TURN = 0.012f
+        /** Nicken beim Sprechen (rad bei vollem Mund). */
+        const val MOUTH_NOD = 0.045f
+        /** Taumeln: der Schlag aufs Knie (Schlüssel bei 6). */
+        const val STAGGER_HIT = 6f
+
+        // --- Leuchten ---
+        const val GLOW_BASE = 0.85f
+        const val GLOW_CHARGE = 0.15f
+        const val GLOW_OPEN = 0.25f
+        const val GLOW_RELEASE = 10f
+        const val GLOW_COMMAND_RISE = 8f
+        const val GLOW_COMMAND_HOLD = 30f
+        const val GLOW_OPEN_FALL = 12f
+        const val GLOW_YIELD_FALL = 40f
+
+        // --- Auftritt: Schildschlag (Aktion SLAM) ---
+        const val SLAM_RAISE = 10f
+        const val SLAM_JOLT = 7f
+        const val SLAM_DIP = 1.6f
+        const val SLAM_BOW = 0.1f
+
+        // --- Niederlage: erst Faust an die Brust, dann aufs Knie ---
+        const val YIELD_KNEEL_FROM = 44f
+        const val YIELD_KNEEL_AT = 62f
 
         // KRATOS POSES BEGIN (generiert aus tools/hha_assets/kratos_model.py --kotlin)
         val BONES = arrayOf("body", "chest", "head", "crest", "arm_r", "fore_r", "fingers_r", "hammer", "arm_l", "fore_l", "shield", "cape", "cape_1", "skirt_f", "skirt_b", "leg_r", "shin_r", "leg_l", "shin_l")
@@ -726,8 +970,28 @@ class KratosModel(root: ModelPart) : ThroneGuardModel(root, BONES, PARENTS, PROP
             ThroneKey(T.SHIELD_UP_END - 4f, SHIELD_UP_HIT_SHIELDLESS), ThroneKey(T.SHIELD_UP_END + 4f, null),
         )
 
-        /** Aufgeben: Hammer abstellen, Schritt zur Seite, Faust an die Brust (Schleife). */
-        val YIELD_KEYS = arrayOf(ThroneKey(0f, null), ThroneKey(12f, YIELD))
+        /**
+         * Kniend (Niederlage): Beine, Rumpf und liegende Requisiten aus dem Taumeln (Hammer fällt um), dazu der Kopf
+         * tief gesenkt. Aus der Tabelle abgeleitet, keine neue Geometrie.
+         */
+        val KNEEL: ThronePose = STAGGER.bones.copyOf().let { b ->
+            val head = BONES.indexOf("head") * 6
+            b[head] = 0.42f; b[head + 1] = 0f; b[head + 2] = 0f; b[head + 3] = 0f; b[head + 4] = 0f; b[head + 5] = 0f
+            val chest = BONES.indexOf("chest") * 6
+            if (!b[chest].isNaN()) b[chest] += 0.12f
+            ThronePose(b, STAGGER.pins)
+        }
+
+        /** Aufgeben: Hammer abstellen, Faust an die Brust (bis 44), dann sinkt er aufs Knie (62) und bleibt dort. */
+        val YIELD_KEYS = arrayOf(
+            ThroneKey(0f, null), ThroneKey(12f, YIELD), ThroneKey(YIELD_KNEEL_FROM, YIELD), ThroneKey(YIELD_KNEEL_AT, KNEEL),
+        )
+
+        /** Auftritt: Schild über den Kopf (bis 10), halten, dann krachend vor sich auf den Boden (14), zurück bis 34. */
+        val SLAM_KEYS = arrayOf(
+            ThroneKey(0f, null), ThroneKey(SLAM_RAISE, SHIELD_UP_WINDUP), ThroneKey(S.SLAM_HIT - 2f, SHIELD_UP_WINDUP),
+            ThroneKey(S.SLAM_HIT.f, null, true), ThroneKey(S.SLAM_END.f, null),
+        )
     }
 }
 
@@ -735,13 +999,20 @@ class KratosModel(root: ModelPart) : ThroneGuardModel(root, BONES, PARENTS, PROP
  * Bia, die Gewalt: schmal, kahl, wehende Stirnbinde, zwei lange gerade Klingen. Sie spricht nie und steht die meiste
  * Zeit als Statue auf ihrem Sockel: dann **kein Atmen, keine Sekundärbewegung**. Schlüsselposen wie bei Kratos aus
  * `tools/hha_assets/kratos_model.py` (`POSES_BIA`).
+ *
+ * Überarbeitung 3: Landestoß aus der gemessenen Bewegung (`Motion`) statt fester Zeit ([landing]): eine Feder senkt
+ * Körper und Knie beim Aufsetzen, so stark wie sie fiel. Die Augen pulsieren auf, wenn Kratos ihr befiehlt oder sie
+ * erwacht (`KratosFx.eyePulse`).
  */
-class BiaModel(root: ModelPart) : ThroneGuardModel(root, BONES, PARENTS, emptyArray()) {
+class BiaModel(root: ModelPart) : ThroneGuardModel(root, BONES, PARENTS, emptyArray(), SPRINGS) {
 
-    /** Brief: Als Statue glimmen die Augen nur, beim Sprung, Sturm und Fegen leuchten sie auf. */
-    override fun glowAlpha(state: GuardianRenderState): Float = when (state.action) {
-        BiaAction.LEAP, BiaAction.RUSH, BiaAction.SWEEP -> 1f
-        else -> 0.5f
+    /** Brief: Als Statue glimmen die Augen nur, beim Sprung, Sturm und Fegen leuchten sie auf; Befehl/Erwachen = Puls. */
+    override fun glowAlpha(state: GuardianRenderState): Float {
+        val base = when (state.action) {
+            BiaAction.LEAP, BiaAction.RUSH, BiaAction.SWEEP -> 1f
+            else -> 0.5f
+        }
+        return (base + KratosFx.eyePulse(state.entityId, state.age)).coerceIn(0f, 1f)
     }
     private val legR = bone("leg_r")
     private val legL = bone("leg_l")
@@ -753,6 +1024,7 @@ class BiaModel(root: ModelPart) : ThroneGuardModel(root, BONES, PARENTS, emptyAr
     override fun setAngles(state: GuardianRenderState) {
         super.setAngles(state)
         beginPose()
+        val rig = rig(state)
         val a = state.actionTime
         val t = state.age
         // Statue: die Grundhaltung des Modells, sonst nichts.
@@ -780,6 +1052,40 @@ class BiaModel(root: ModelPart) : ThroneGuardModel(root, BONES, PARENTS, emptyAr
             }
             BiaAction.LEAP -> flutter(t, 0.4f * step(a, 4f, 10f))
         }
+        remember(state, rig)
+        landing(state, rig)
+    }
+
+    /**
+     * Landestoß: Rückkehr (`RETURN`) beginnt beim Aufsetzen, „KNIET!“ (`SWEEP`) landet nach dem Sprung irgendwann
+     * ([Motion.landing]). Beide stoßen eine Feder an, so stark wie die zuletzt gemessene Fallgeschwindigkeit; die
+     * Feder senkt Körper und Knie und setzt weich nach. Als Statue ruht die Feder (reglos).
+     */
+    private fun landing(state: GuardianRenderState, rig: Rig) {
+        val e = measure(state, rig)
+        val m = rig.motion
+        if (m.started) rig.landed = false
+        val down = when (state.action) {
+            BiaAction.RETURN -> !rig.landed
+            BiaAction.SWEEP -> e != null && m.landing(e, state.actionTime, LAND_FROM, T.KNEEL_LEAP + LAND_LATE) >= 0f && !rig.landed
+            else -> false
+        }
+        if (down) {
+            rig.landed = true
+            val fall = (-min(rig.lastVy, m.vy)).coerceIn(LAND_MIN_FALL, LAND_MAX_FALL)
+            rig.springs[DIP].kick(fall * LAND_KICK)
+        }
+        rig.lastVy = m.vy
+        val dip = if (state.action == BiaAction.STATUE) {
+            rig.springs[DIP].reset()
+            0f
+        } else rig.springs[DIP].step(0f, rig.dt)
+        if (dip == 0f) return
+        body.originY += dip
+        legR.pitch -= dip * LAND_HIP
+        legL.pitch -= dip * LAND_HIP
+        shinR.pitch += dip * LAND_KNEE
+        shinL.pitch += dip * LAND_KNEE
     }
 
     /** Die zwei Enden der Stirnbinde flattern (zwei Glieder, phasenversetzt). */
@@ -803,6 +1109,20 @@ class BiaModel(root: ModelPart) : ThroneGuardModel(root, BONES, PARENTS, emptyAr
     private companion object {
         val T = KratosTimings
         val Int.f get() = toFloat()
+
+        // --- Landestoß (Feder auf der Körperhöhe, Modell-Pixel; + = tiefer) ---
+        const val DIP = 0
+        val SPRINGS = arrayOf(0.42f to 0.45f)
+        /** Fallgeschwindigkeit (Blöcke/Tick) → Stoß (Pixel/Tick), begrenzt. */
+        const val LAND_KICK = 5.5f
+        const val LAND_MIN_FALL = 0.2f
+        const val LAND_MAX_FALL = 1.2f
+        /** Knie und Hüfte je Pixel Senkung (rad). */
+        const val LAND_KNEE = 0.09f
+        const val LAND_HIP = 0.045f
+        /** „KNIET!“: Landung frühestens ab diesem Aktions-Tick suchen, spätestens Sprungdauer + so viel. */
+        const val LAND_FROM = 2f
+        const val LAND_LATE = 6f
 
         // BIA POSES BEGIN (generiert aus tools/hha_assets/kratos_model.py --kotlin)
         val BONES = arrayOf("body", "chest", "head", "band_r_0", "band_r_1", "band_l_0", "band_l_1", "arm_r", "fore_r", "blade_r", "arm_l", "fore_l", "blade_l", "leg_r", "shin_r", "leg_l", "shin_l")

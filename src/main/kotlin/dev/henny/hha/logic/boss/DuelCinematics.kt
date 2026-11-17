@@ -39,14 +39,8 @@ class DuelCinematics(
      * Auftritt: Blende aus Schwarz, die Kamera fährt von weit vorn bis vor sein Gesicht, während [inner] (der eigene
      * Auftritt des Bosses: Titel, Musik, Aufstehen …) läuft; dazu [lines]. Die Szene dauert mindestens [minTicks].
      */
-    fun intro(inner: Sequence<Unit>, lines: List<Line>, minTicks: Int = 110): Sequence<Unit> = framed(inner, lines, minTicks, Int.MAX_VALUE) { players ->
-        Cine.fade(players, 0x000000, 1.0, 0.0, 16)
-        val front = facing()
-        val eye = boss.height * 0.85
-        val far = boss.entityPos.add(front.multiply(16.0 + boss.width * 2)).add(0.0, eye + 5.0, 0.0)
-        val near = boss.entityPos.add(front.multiply(4.5 + boss.width * 1.5)).add(side().multiply(1.2)).add(0.0, eye * 0.85, 0.0)
-        Cine.camera(players, far, near, boss.entityPos.add(0.0, eye * 0.6, 0.0), boss.entityPos.add(0.0, eye, 0.0), minTicks, 62.0, 52.0, boss, eye)
-    }
+    fun intro(inner: Sequence<Unit>, lines: List<Line>, minTicks: Int = 110): Sequence<Unit> =
+        framed(inner, lines, minTicks, Int.MAX_VALUE, camera = introCamera(minTicks))
 
     /** Phasenwechsel: Kamera kreist halb um den Boss, während [inner] (Titel, Zeile, Umbau) läuft; höchstens [maxTicks]. */
     fun phase(inner: Sequence<Unit>, lines: List<Line>, minTicks: Int = 70, maxTicks: Int = 120): Sequence<Unit> = framed(inner, lines, minTicks, maxTicks) { players ->
@@ -65,16 +59,59 @@ class DuelCinematics(
         Cine.orbit(players, boss.entityPos, r, boss.height * 0.45, yaw - 20.0, yaw + 25.0, maxTicks, 60.0, 50.0, boss, boss.height * 0.7, r * 0.8)
     }
 
+    /**
+     * Überarbeitung 3 (PLAN 6.5): Szene als Bühnen-Skript [scriptId] (`stage/StageScripts`) um [inner].
+     * - Anker = Lage des Bosses beim Start, Blick = sein `yaw`; [actors] sind die Darsteller (Index 0 = Boss).
+     * - Dauer = `StageScripts.length(scriptId)`; läuft [inner] länger, hält die Kamera bis zu [STAGE_GRACE_TICKS] das
+     *   letzte Bild, danach läuft der Rest von [inner] ohne Kamera weiter (wie bei [defeat]).
+     * - [lines] kommen wie bei den alten Rahmen über `Cine.dialog` (Zeilen stehen meist im Skript selbst).
+     * - Überspringen spult [inner] stumm vor (die Spielzustände ändern sich wie beim Abspielen), dann ruft es [finish]:
+     *   der feste Endzustand. [finish] läuft genau einmal am Ende der Szene, auch ohne Überspringen und ohne Zuschauer.
+     * - Ein unbekanntes Skript fällt auf [intro] (Auftritt-Kamera des Bestands) zurück; [finish] läuft trotzdem.
+     */
+    fun staged(
+        scriptId: String, inner: Sequence<Unit>, lines: List<Line> = emptyList(), actors: List<net.minecraft.entity.Entity> = listOf(boss),
+        finish: () -> Unit = {},
+    ): Sequence<Unit> = sequence {
+        val length = dev.henny.hha.stage.StageScripts.length(scriptId)
+        if (length <= 0) {
+            yieldAll(framed(inner, lines, 110, Int.MAX_VALUE, finish, introCamera(110)))
+            return@sequence
+        }
+        val anchor = boss.entityPos
+        val yaw = boss.yaw
+        yieldAll(framed(inner, lines, length, length + STAGE_GRACE_TICKS, finish) { players ->
+            Cine.stage(players, scriptId, anchor, yaw, actors.filter { !it.isRemoved })
+        })
+    }
+
+    /** Kamera des Auftritts (auch Rückfall von [staged]). */
+    private fun introCamera(minTicks: Int): (List<ServerPlayerEntity>) -> Unit = { players ->
+        Cine.fade(players, 0x000000, 1.0, 0.0, 16)
+        val front = facing()
+        val eye = boss.height * 0.85
+        val far = boss.entityPos.add(front.multiply(16.0 + boss.width * 2)).add(0.0, eye + 5.0, 0.0)
+        val near = boss.entityPos.add(front.multiply(4.5 + boss.width * 1.5)).add(side().multiply(1.2)).add(0.0, eye * 0.85, 0.0)
+        Cine.camera(players, far, near, boss.entityPos.add(0.0, eye * 0.6, 0.0), boss.entityPos.add(0.0, eye, 0.0), minTicks, 62.0, 52.0, boss, eye)
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Ablauf
     // ---------------------------------------------------------------------------------------------
 
+    /**
+     * Rahmen um [inner]: Szene von [minTicks] bis höchstens [maxTicks], [camera] startet die Kamera. [after] ist der
+     * feste Endzustand: er läuft genau einmal, sobald die Szene endet (abgespielt, übersprungen oder ohne Zuschauer),
+     * vor dem Rest von [inner].
+     */
     private fun framed(
-        inner: Sequence<Unit>, lines: List<Line>, minTicks: Int, maxTicks: Int, camera: (List<ServerPlayerEntity>) -> Unit,
+        inner: Sequence<Unit>, lines: List<Line>, minTicks: Int, maxTicks: Int, after: () -> Unit = {},
+        camera: (List<ServerPlayerEntity>) -> Unit,
     ): Sequence<Unit> = sequence {
         val players = viewers().filter { !it.isRemoved && !it.isDisconnected }
         if (players.isEmpty()) {
             yieldAll(inner)
+            after()
             return@sequence
         }
         register()
@@ -105,6 +142,7 @@ class DuelCinematics(
             yield(Unit)
         }
         finish()
+        after()
         // Was vom inneren Ablauf noch übrig ist (z. B. Verschwinden nach dem Sieg), läuft ohne Kamera weiter.
         while (innerIt.hasNext()) {
             innerIt.next()
@@ -170,6 +208,9 @@ class DuelCinematics(
     private val world: ServerWorld? get() = boss.entityWorld as? ServerWorld
 
     private companion object {
+        /** So lange hält eine Bühnen-Szene ([staged]) höchstens das letzte Bild, wenn [inner] länger läuft als das Skript. */
+        const val STAGE_GRACE_TICKS = 60
+
         private val active = HashSet<DuelCinematics>()
         private var registered = false
 

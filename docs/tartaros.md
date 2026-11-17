@@ -93,6 +93,23 @@ Beute gibt es nur über die Reliquien-Tabelle: Kerkermeister Hells Mace, Kampe H
 Ixion Hells Sword, Tantalos Hell Leggings (je einmal je Welt), dazu jedes Mal Hell-Barren, Diamanten, goldene Äpfel und 30
 Level.
 
+**Inszenierung (Überarbeitung 3):** Jeder Wächter hat jetzt die HHA-Lebensleiste (Name, Beiname, seine Farbe) statt der
+Vanilla-Bossleiste, ein Kampfthema (`music.guardian`, ab 50 % `music.guardian_2`), einen Sieg-Stinger
+(`music.victory_tartaros`) und einen inszenierten Auftritt (`warden.intro`, `sisyphus.intro`, `ixion.intro`,
+`tantalus.intro`, `kampe.intro`). Nach jedem Sieg zeigt `guardian.defeat` das Kettenglied, das aufglüht und springt.
+
+- **Kerkermeister:** Das Richtbeil frisst einen Glutsprung in Schlagrichtung, Brocken fliegen; die gespannte Kette
+  bekommt eine helle Kante und schwingt beim Lösen aus; unter 40 % sprühen Funken, die Laterne atmet heller.
+- **Kampe:** Auftritt auf dem Rücken des Titanen, sie schraubt sich herab. Der Schwanz zieht beim Drehen sichtbar nach
+  und federt nach dem Feger aus; Gift kommt aus dem Maul des Modells und hinterlässt kleine Lachen; Sturzstöße mit
+  Trümmern und Rissen; benommen kreisen drei goldene Lichtpunkte über ihrem Kopf (`kampe.defeat` bei der Niederlage).
+- **Sisyphos:** Felswurf mit Staubfahne, Einschlag mit echten Bodenblöcken; nach dem Wurf fliegen Brocken zu seinem
+  Nacken, und der Fels wächst daraus neu.
+- **Ixion:** glühender Ring um das Rad, beim Rollen hell; das Speichenfeuer dreht sechs Feuerbalken ohne Blinken genau
+  dort, wo sie treffen; beim Sturz schlingert das Rad aus und lässt Glut liegen.
+- **Tantalos:** Geysire als Wassersäulen, die zerspringen; die Flutwelle als Wasserring, der mit der Front läuft (darüber
+  springen); beim Trinken fließt Wasser zu ihm, ein weggeschlagener Kelch lässt das Wasser zurückweichen (3 s Hitzeflimmern).
+
 ## Hades und Kronos
 
 Rechtsklick auf das Siegel im Portal des Palasts startet den Kampf (bei 5/5 Gliedern). Alle Spieler im Umkreis von 70
@@ -127,3 +144,17 @@ geht, landet vor dem Portal und behält sein Inventar. **Beute:** Hell Helmet al
 Hell-Barren, ein Netherstern, zwei verzauberte goldene Äpfel und 80 Level.
 
 Zeilen ohne Tonaufnahme laufen als Text mit Stimm-Lauten (Kronos tief, Hades ruhig).
+
+**Inszenierung (Überarbeitung 3):** Alle sechs Szenen laufen als Bühnen-Skripte (`hades.intro`, `hades.phase2`,
+`hades.phase3`, `hades.yield`, `kronos.wake`, `kronos.end`). Hades' Hiebe ziehen ein grünes Sichelband am Bident mit
+leichtem Rollen der Kamera, das Urteil fällt als Lichtsäulen von oben (nie in einen goldenen Kreis), die Pforten der
+Hölle stehen als Risse mit dunklem Kern, die Seelenkette schnellt federnd zurück, Säulen zerspringen in echte Brocken; im
+Schattenschritt pulsiert ein schwacher roter Herzschlag am Bildrand, der nie verrät, wo er ist. In `kronos.wake` bricht
+die Kuppel, kurz biegt eine schwache Linse das Bild, Kronos sinkt herab. Kronos: Sichelband mit Nachbild, Uhrzeiger als
+leuchtende Zeiger mit weichem Nachlauf, Äon-Risse in der Kuppel (3, ab Phase II 6, breiter bei sinkendem Leben). Beim
+**Stillstand** verliert die Welt ihre Farbe und alle 3D-Effekte frieren ein, danach schlägt eine steinerne Faust aus
+einem Riss auf jeden Kreis. Beim **Verschlingen** biegt eine Gravitationslinse das Bild hinter ihm, der Gefahrenkreis
+bleibt gerade und lesbar, Bodenblöcke werden zum Schlund gesogen. In `kronos.end` binden ihn Ketten, er zerfällt von den
+Händen her in Sand und Licht. Musik: `music.hades` → `music.hades_2` → `music.kronos` → `music.kronos_2` →
+`music.victory_tartaros`. Jeder Ausgang (Tod, Abbruch, Verlassen) beendet Linse und Zeitstopp sofort.
+

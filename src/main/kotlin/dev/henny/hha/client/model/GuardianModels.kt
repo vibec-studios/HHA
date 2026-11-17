@@ -18,6 +18,8 @@ import net.minecraft.client.render.entity.state.LivingEntityRenderState
 import net.minecraft.client.util.math.MatrixStack
 import net.minecraft.entity.mob.MobEntity
 import net.minecraft.util.Identifier
+import net.minecraft.util.math.Box
+import net.minecraft.util.math.Vec3d
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.min
@@ -108,6 +110,8 @@ class GuardianRenderer<T>(
     name: String,
     shadow: Float,
     private val modelScale: Float,
+    /** Zugabe zur Sichtbox (seitlich je Seite, nach oben; [GuardianCull]), damit hohe Posen nicht verschwinden (P20). */
+    private val cullGrow: Vec3d = Vec3d.ZERO,
     private val variant: (GuardianRenderState) -> String? = { null },
 ) : MobEntityRenderer<T, GuardianRenderState, GuardianModel>(context, model, shadow) where T : MobEntity, T : MiniBoss {
 
@@ -131,6 +135,9 @@ class GuardianRenderer<T>(
     }
 
     override fun createRenderState() = GuardianRenderState()
+
+    override fun getBoundingBox(entity: T): Box =
+        if (cullGrow == Vec3d.ZERO) super.getBoundingBox(entity) else GuardianCull.grow(super.getBoundingBox(entity), cullGrow)
 
     override fun getTexture(state: GuardianRenderState): Identifier =
         variant(state)?.let { v -> variantTextures.getOrPut(v) { Hha.id("textures/entity/boss/$v.png") } } ?: texture

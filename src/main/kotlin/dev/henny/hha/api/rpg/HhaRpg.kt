@@ -1,7 +1,9 @@
 package dev.henny.hha.api.rpg
 
+import dev.henny.hha.rpg.Arrival
 import dev.henny.hha.rpg.RpgWorld
 import net.fabricmc.loader.api.FabricLoader
+import net.minecraft.item.ItemStack
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.network.ServerPlayerEntity
 
@@ -22,8 +24,15 @@ import net.minecraft.server.network.ServerPlayerEntity
 object HhaRpg {
 
     /**
-     * Ein Weg, den die Gruppe in der Lobby wählt. [start] wird für jeden Spieler einmal beim ersten Betreten der
-     * RPG-Welt aufgerufen (Teleport zum Anfang, Startausrüstung …). Texte: [titleKey], [descKey] (Sprachschlüssel).
+     * Ein Weg, den die Gruppe in der Lobby wählt. Texte: [titleKey], [descKey] (Sprachschlüssel).
+     *
+     * - Ohne [arrival] (bisheriges Verhalten): [start] wird für jeden Spieler einmal beim ersten Betreten der RPG-Welt
+     *   aufgerufen, 20 Ticks nach dem Beitritt (Teleport zum Anfang, Startausrüstung …).
+     * - Mit [arrival] (Überarbeitung 3): Die Welt beginnt direkt dort (Weltspawn), die Gruppe wartet gemeinsam und
+     *   landet zusammen in der Ankunftsszene [arrivalStage] (Standard `rpg.arrival.<id>`). HHA teleportiert dann
+     *   selbst; [start] läuft je Spieler **einmal nach seiner Ankunft** (nach der Szene) für weg-eigene Dinge.
+     * - [costume]: Rüstung, die die Figuren in Lobby und Ankunftsszene tragen (rein am Client, nie im Inventar);
+     *   leer = Heaven-Set.
      */
     class Path(
         val id: String,
@@ -32,7 +41,24 @@ object HhaRpg {
         val descKey: String,
         val color: Int,
         val start: (ServerPlayerEntity) -> Unit,
-    )
+        val costume: () -> List<ItemStack> = { emptyList() },
+        val arrival: ((MinecraftServer) -> Arrival)? = null,
+        val arrivalStage: String? = null,
+    ) {
+        /**
+         * Die bisherige Form (`Path(id, addon, titel, text, farbe) { player -> … }`): Ein nachgestelltes Lambda bindet
+         * in Kotlin an den **letzten** Parameter; dieser Konstruktor hält deshalb [start] am Ende, damit Addons
+         * unverändert kompilieren.
+         */
+        constructor(
+            id: String,
+            addonId: String,
+            titleKey: String,
+            descKey: String,
+            color: Int,
+            start: (ServerPlayerEntity) -> Unit,
+        ) : this(id, addonId, titleKey, descKey, color, start, { emptyList() }, null, null)
+    }
 
     private val paths = LinkedHashMap<String, Path>()
     private val declared = HashSet<String>()

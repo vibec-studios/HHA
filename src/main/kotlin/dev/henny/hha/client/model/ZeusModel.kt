@@ -1,5 +1,8 @@
 package dev.henny.hha.client.model
 
+import dev.henny.hha.client.anim.PoseMemory
+import dev.henny.hha.client.anim.Spring
+import dev.henny.hha.client.cine.CinePlayer
 import dev.henny.hha.entity.boss.olymp.ZeusAction
 import dev.henny.hha.logic.boss.timings.ZeusTimings
 import net.minecraft.client.model.ModelPart
@@ -123,6 +126,8 @@ class ZeusModel(private val rootPart: ModelPart) : GuardianModel(rootPart) {
             ZeusAction.RISE -> track(Keys.RISE.v, t).to(4f, z.RISE_END.toFloat(), Keys.IDLE, s).get()
             ZeusAction.PHASE -> track(from, t).to(0f, 12f, Keys.PHASE, s).to(30f, z.PHASE_END.toFloat(), Keys.IDLE, s).get()
             ZeusAction.YIELD -> track(from, t).to(0f, 20f, Keys.YIELD, s).get()
+            // Niederlage: Er zeigt mit dem gesenkten Blitz nach unten (Szene `zeus.defeat`).
+            ZeusAction.POINT -> track(from, t).to(0f, POINT_RAISE, POINT_KEY, s).get()
             else -> track(from, t).to(0f, 10f, Keys.IDLE, s).get()
         }
     }
@@ -134,13 +139,60 @@ class ZeusModel(private val rootPart: ModelPart) : GuardianModel(rootPart) {
         else -> true
     }
 
+    /**
+     * Zustand je Wesen (Überarbeitung 3): zuletzt gezeigte Pose ([PoseMemory]) und die Federn für Mantel, Bart, Kranz
+     * und Keraunos. Nach `entityId`; Wesen, die [FORGET_NANOS] lang nicht gezeichnet wurden, werden vergessen.
+     */
+    private class Anim {
+        val memory = PoseMemory(Keys.COUNT * 6)
+        val shown = FloatArray(Keys.COUNT * 6)
+        val from = FloatArray(Keys.COUNT * 6)
+        var hasShown = false
+        var action = Int.MIN_VALUE
+        var lastT = 0f
+        var lastAge = Float.NaN
+        var yaw = 0f
+        var lastBodyYaw = Float.NaN
+        var seen = 0L
+        val mantle = Spring(MANTLE_FREQ, MANTLE_DAMP)
+        val mantleTurn = Spring(TURN_FREQ, TURN_DAMP)
+        val beard = Spring(BEARD_FREQ, BEARD_DAMP)
+        val crown = Spring(CROWN_FREQ, CROWN_DAMP)
+        val bolt = Spring(BOLT_FREQ, BOLT_DAMP)
+    }
+
+    private val anims = HashMap<Int, Anim>()
+    private var lastPrune = 0L
+
+    private fun animOf(id: Int): Anim {
+        val now = System.nanoTime()
+        if (now - lastPrune > FORGET_NANOS) {
+            lastPrune = now
+            anims.values.removeIf { now - it.seen > FORGET_NANOS }
+        }
+        return anims.getOrPut(id) { Anim() }.also { it.seen = now }
+    }
+
     override fun setAngles(state: GuardianRenderState) {
         super.setAngles(state)
         val action = state.action
         val t = state.actionTime
         val age = state.age
-        val start = evaluate(state.previousAction, state.previousTime, Keys.IDLE.v)
-        val v = evaluate(action, t, start)
+        val anim = animOf(state.entityId)
+        // Überblenden aus der zuletzt gezeigten Pose: Beim Wechsel (oder Neustart derselben Aktion) beginnt die Bahn der
+        // neuen Aktion dort, wo das Bild gerade stand – nicht bei der vorigen Aktion „bei ihrem Alter“.
+        val restarted = action == anim.action && t + 0.5f < anim.lastT
+        if (action != anim.action || restarted) {
+            if (anim.hasShown) anim.shown.copyInto(anim.from) else Keys.IDLE.v.copyInto(anim.from)
+        }
+        val crossedFrom = if (action == anim.action && !restarted) anim.lastT else -1f
+        anim.action = action
+        anim.lastT = t
+        val v = anim.memory.blend(action, evaluate(action, t, anim.from), age, BLEND_TICKS, restarted)
+        v.copyInto(anim.shown)
+        anim.hasShown = true
+        val dt = if (anim.lastAge.isNaN()) 0f else (age - anim.lastAge).coerceIn(0f, 4f)
+        anim.lastAge = age
         for (b in 0 until Keys.COUNT) {
             val p = parts[b]
             val o = b * 6
@@ -243,6 +295,59 @@ class ZeusModel(private val rootPart: ModelPart) : GuardianModel(rootPart) {
         part(Keys.SKIRT_F).pitch += sin(age * 0.05f) * 0.015f
         part(Keys.SKIRT_B).pitch += sin(age * 0.05f + 1f) * 0.015f
         part(Keys.CROWN).pitch += sin(age * 0.04f) * 0.01f + abs(walkSwing) * 0.01f
+
+        springs(state, anim, v, action, t, crossedFrom, dt, w)
+    }
+
+    /**
+     * Weiche Teile (PLAN 2.1 Punkt 3): Mantel, Bart, Kranz und der Keraunos in der Hand folgen der Bewegung über
+     * gedämpfte Federn. Jede Feder läuft hinter einem Zielwinkel her (Brust/Körper, Kopf, Arm, Drehung); die
+     * Abweichung `Feder − Ziel` dreht das Teil gegen die Bewegung, es schwingt also nach. Stöße bei Treffer, Landung,
+     * Erscheinen. Der Bart öffnet sich zum Text (`CinePlayer.mouthOf`): Das Modell hat keinen Kiefer, der Bart sitzt
+     * unter dem Mund und trägt die Bewegung.
+     */
+    private fun springs(state: GuardianRenderState, anim: Anim, v: FloatArray, action: Int, t: Float, from: Float, dt: Float, walking: Float) {
+        fun crossed(at: Int) = from >= 0f && from < at && t >= at
+        // Stöße: harter Schlag, Landung des Donnerschritts, Griff zurück zum Blitz.
+        when (action) {
+            ZeusAction.SLAM -> if (crossed(ZeusTimings.SLAM_HIT_END)) { anim.mantle.kick(-KICK_HIT); anim.beard.kick(KICK_BEARD) }
+            ZeusAction.BASH -> if (crossed(ZeusTimings.BASH_HIT_END)) anim.mantle.kick(-KICK_HIT * 0.7f)
+            ZeusAction.CALL -> if (crossed(ZeusTimings.CALL_HIT_END)) anim.bolt.kick(KICK_BOLT)
+            ZeusAction.STEP -> if (crossed(ZeusTimings.STEP_APPEAR)) { anim.mantle.kick(KICK_LAND); anim.crown.kick(KICK_BEARD) }
+            ZeusAction.STAGGER -> if (crossed(2)) { anim.mantle.kick(KICK_LAND); anim.beard.kick(-KICK_BEARD) }
+        }
+        val bodyPitch = v[Keys.BODY * 6] + v[Keys.CHEST * 6] + walking * WALK_LEAN
+        val mantleLag = (anim.mantle.step(bodyPitch, dt) - bodyPitch).coerceIn(-LAG_MAX, LAG_MAX)
+        // Drehung: der Körper dreht (oder er wendet sich), der Mantel bleibt kurz zurück.
+        if (!anim.lastBodyYaw.isNaN()) anim.yaw += MathHelper.wrapDegrees((state.bodyYaw - anim.lastBodyYaw)) * DEG
+        anim.lastBodyYaw = state.bodyYaw
+        if (abs(anim.yaw) > YAW_RESET) { anim.mantleTurn.reset(); anim.yaw = 0f }
+        val turnLag = (anim.mantleTurn.step(anim.yaw, dt) - anim.yaw).coerceIn(-LAG_MAX, LAG_MAX)
+        part(Keys.MANTLE_0).pitch -= mantleLag * 0.55f
+        part(Keys.MANTLE_1).pitch -= mantleLag * 0.3f
+        part(Keys.MANTLE_2).pitch -= mantleLag * 0.2f
+        part(Keys.MANTLE_0).roll += turnLag * 0.35f
+        part(Keys.MANTLE_1).roll += turnLag * 0.25f
+        part(Keys.MANTLE_2).roll += turnLag * 0.2f
+        part(Keys.SKIRT_B).pitch -= mantleLag * 0.25f
+        part(Keys.SKIRT_B).roll += turnLag * 0.15f
+
+        val headPitch = v[Keys.HEAD * 6] + v[Keys.CHEST * 6]
+        val beardLag = (anim.beard.step(headPitch, dt) - headPitch).coerceIn(-LAG_MAX, LAG_MAX)
+        val mouth = CinePlayer.mouthOf(state.entityId).coerceIn(0f, 1f)
+        part(Keys.BEARD).pitch -= beardLag * 0.8f
+        part(Keys.BEARD).pitch += mouth * MOUTH_OPEN
+        part(Keys.BEARD).originY += mouth * MOUTH_DROP
+        head.pitch -= mouth * MOUTH_HEAD
+
+        val crownLag = (anim.crown.step(headPitch, dt) - headPitch).coerceIn(-LAG_MAX, LAG_MAX)
+        part(Keys.CROWN).pitch -= crownLag * 0.4f
+
+        // Der Keraunos zieht hinter dem Arm her (Nachzieh-Feder), am stärksten beim Ausholen und Schlagen.
+        val armPitch = v[Keys.ARM_R * 6] + v[Keys.FORE_R * 6]
+        val boltLag = (anim.bolt.step(armPitch, dt) - armPitch).coerceIn(-BOLT_LAG_MAX, BOLT_LAG_MAX)
+        keraunos.pitch -= boltLag * BOLT_FOLLOW
+        keraunos.roll += turnLag * 0.2f
     }
 
     /** Ist der Blitz in der Hand zu sehen (nach dem letzten [setAngles])? */
@@ -271,6 +376,59 @@ class ZeusModel(private val rootPart: ModelPart) : GuardianModel(rootPart) {
     private companion object {
         /** Mitte des Blitzes entlang seiner Achse (Einheiten vom Griff, -y = zur Spitze); siehe olymp_props_model.py. */
         const val KERAUNOS_MID = -21f
+
+        // --- Überarbeitung 3: Überblenden, Federn, Mund (nur Darstellung) -----------------------------------------
+
+        /** Kurze Glättung über [PoseMemory] zusätzlich zur Bahn jeder Aktion (Ticks). */
+        const val BLEND_TICKS = 3f
+        /** Zustand nicht mehr gezeichneter Wesen vergessen (10 s). */
+        const val FORGET_NANOS = 10_000_000_000L
+        /** Federn: Frequenz (rad/Tick) und Dämpfung (1 = kritisch). Mantel schwer und weich, Bart leichter. */
+        const val MANTLE_FREQ = 0.32f
+        const val MANTLE_DAMP = 0.35f
+        const val TURN_FREQ = 0.28f
+        const val TURN_DAMP = 0.4f
+        const val BEARD_FREQ = 0.5f
+        const val BEARD_DAMP = 0.38f
+        const val CROWN_FREQ = 0.8f
+        const val CROWN_DAMP = 0.5f
+        const val BOLT_FREQ = 0.6f
+        const val BOLT_DAMP = 0.3f
+        /** Größte Auslenkung einer Feder (rad), damit Sprünge (Donnerschritt, Wenden) nichts umklappen. */
+        const val LAG_MAX = 0.45f
+        const val BOLT_LAG_MAX = 0.35f
+        const val BOLT_FOLLOW = 0.6f
+        /** Größere Drehsprünge (Versetzen, Szene) setzen die Drehfeder zurück statt nachzuschwingen. */
+        const val YAW_RESET = 3f
+        const val WALK_LEAN = 0.08f
+        /** Stöße (Geschwindigkeit in rad/Tick). */
+        const val KICK_HIT = 0.09f
+        const val KICK_LAND = 0.07f
+        const val KICK_BEARD = 0.06f
+        const val KICK_BOLT = 0.08f
+        /** Bart zum Text: Öffnen (rad), Absenken (Modell-Pixel), Kopf hebt sich leicht. */
+        const val MOUTH_OPEN = 0.14f
+        const val MOUTH_DROP = 0.6f
+        const val MOUTH_HEAD = 0.03f
+
+        /** Zeigen (`POINT`): Heben in so vielen Ticks. */
+        const val POINT_RAISE = 14f
+
+        /**
+         * Zeige-Pose: wie `YIELD` (Blitz gesenkt), aber der rechte Arm hebt sich nach vorn, der Blitz zeigt schräg nach
+         * unten (Summe der Arm-Neigungen ≈ −0,8 rad), der Kopf blickt hinab.
+         */
+        val POINT_KEY: ZeusKey = Keys.YIELD.v.copyOf().let { p ->
+            fun set(bone: Int, pitch: Float, yaw: Float, roll: Float) {
+                p[bone * 6] = pitch; p[bone * 6 + 1] = yaw; p[bone * 6 + 2] = roll
+            }
+            set(Keys.ARM_R, -1.2f, 0.1f, 0.05f)
+            set(Keys.FORE_R, -0.1f, 0f, 0f)
+            set(Keys.HAND_R, 0.5f, 0f, 0f)
+            set(Keys.HEAD, 0.32f, 0.05f, 0f)
+            p[Keys.CHEST * 6] = 0.08f
+            ZeusKey(p, Keys.YIELD.hidden)
+        }
     }
 
     // <keys> erzeugt von tools/hha_assets/zeus_model.py --kotlin; nicht von Hand ändern

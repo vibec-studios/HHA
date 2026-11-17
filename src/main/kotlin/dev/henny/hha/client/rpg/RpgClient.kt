@@ -1,20 +1,33 @@
 package dev.henny.hha.client.rpg
 
+import dev.henny.hha.client.rpg.tunnel.TunnelRenderer
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents
-import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback
+import net.fabricmc.fabric.api.client.rendering.v1.SpecialGuiElementRegistry
+import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents
+import net.fabricmc.fabric.api.client.screen.v1.ScreenKeyboardEvents
+import net.fabricmc.fabric.api.client.screen.v1.ScreenMouseEvents
 import net.fabricmc.fabric.api.client.screen.v1.Screens
 import net.minecraft.client.gui.screen.TitleScreen
+import net.minecraft.client.gui.screen.multiplayer.ConnectScreen
 import net.minecraft.client.gui.widget.ButtonWidget
 import net.minecraft.text.Text
+import org.lwjgl.glfw.GLFW
 
-/** Client-Seite des RPG-Modus: Knopf im Hauptmenü, Startanimation über allen Ladebildschirmen, Ereignisse. */
+/**
+ * Client-Seite des RPG-Modus: Knopf im Hauptmenü, Tunnelbühne (GUI-Sonderelement), Reise über allen Ladebildschirmen,
+ * Ping, Join/Disconnect-Hooks. [init] ruft `HhaClient.onInitializeClient` (Client-Start, also früh genug für die
+ * Registrierung des Sonderelements).
+ */
 object RpgClient {
 
     private var pingTicks = 0
 
     fun init() {
+        // Tunnelbühne als GUI-Sonderelement; muss vor dem Aufbau des GuiRenderer registriert sein.
+        SpecialGuiElementRegistry.register { context -> TunnelRenderer(context.vertexConsumers()) }
+
         ScreenEvents.AFTER_INIT.register { client, screen, width, height ->
             if (screen is TitleScreen) {
                 // Rechts neben „Einzelspieler“: der Einstieg in den RPG-Modus
@@ -25,27 +38,34 @@ object RpgClient {
                         .build(),
                 )
             }
-            // Fehler- und Titelbildschirm beenden den Start sichtbar (sonst läge die Animation über der Fehlermeldung)
-            if (RpgLaunch.active && RpgLaunch.phase != RpgLaunch.Phase.PREPARE &&
-                (screen is net.minecraft.client.gui.screen.DisconnectedScreen || screen is TitleScreen)
-            ) RpgLaunch.abortVisible()
-            // Während des Starts liegt über jedem Lade- und Verbindungsbildschirm dieselbe Animation
-            if (RpgLaunch.active && screen !is RpgTransitionScreen && screen !is RpgLobbyScreen) {
-                ScreenEvents.afterRender(screen).register { s, ctx, _, _, _ -> RpgLaunch.drawOverlay(ctx, s.width, s.height) }
+            // Fehler- und Titelbildschirm beenden die Reise sichtbar (nie liegt die Animation über einer Fehlermeldung)
+            RpgJourney.onScreen(screen)
+            if (RpgJourney.active && RpgScreens.isLoadingScreen(screen)) {
+                // Die ersetzten Bildschirme sind unsichtbar: keine versehentlichen Klicks (z. B. auf „Abbrechen“)
+                ScreenMouseEvents.allowMouseClick(screen).register { _, _ -> !RpgJourney.active }
+                if (screen is ConnectScreen) {
+                    // Esc bricht bewusst ab (Rückfall in die Lobby)
+                    ScreenKeyboardEvents.allowKeyPress(screen).register { _, input ->
+                        if (RpgJourney.active && input.key() == GLFW.GLFW_KEY_ESCAPE) {
+                            RpgJourney.cancel(input)
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                }
             }
         }
-        HudRenderCallback.EVENT.register { ctx, _ ->
-            if (RpgLaunch.phase == RpgLaunch.Phase.FADE) RpgLaunch.drawOverlay(ctx, ctx.scaledWindowWidth, ctx.scaledWindowHeight)
-        }
+        WorldRenderEvents.END_MAIN.register { _ -> RpgJourney.onWorldFrame() }
         ClientTickEvents.END_CLIENT_TICK.register { client ->
-            RpgLaunch.tick(client)
+            RpgJourney.tick(client)
             // Cloudflare trennt stille WebSockets nach etwa 100 s: in der Lobby alle 30 s ein Lebenszeichen
             if (++pingTicks >= 600) {
                 pingTicks = 0
                 if (RpgNet.status == RpgNet.Status.ONLINE) RpgNet.send("ping")
             }
         }
-        ClientPlayConnectionEvents.JOIN.register { _, _, client -> client.execute { RpgLaunch.onJoined(client) } }
-        ClientPlayConnectionEvents.DISCONNECT.register { _, client -> client.execute { RpgLaunch.onDisconnected() } }
+        ClientPlayConnectionEvents.JOIN.register { _, _, client -> client.execute { RpgJourney.onJoined(client) } }
+        ClientPlayConnectionEvents.DISCONNECT.register { _, client -> client.execute { RpgJourney.onDisconnected() } }
     }
 }

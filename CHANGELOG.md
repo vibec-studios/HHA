@@ -1,6 +1,25 @@
 # Changelog
 
-## Unreleased
+## 0.8.5 — Olympus, RPG mode, boss presentation (unreleased)
+
+### Added — Third overhaul: boss presentation, RPG as its own game, tunnel lobby
+- **New effect system** for all bosses: smooth shader effects (light trails, shells, rifts, flames, water walls, runes) in their own render pipelines with a simple fallback, real floor blocks that fly and land, glowing ground cracks, projectile trails; every attack of Hermes, Hekate, Brontes, Kratos and Bia, Zeus, Hades, Kronos, the five Tartarus wardens and the Olympus enemies has its own look ([docs](docs/bosse-allgemein.md#effekte-kamera-szenen))
+- **Screen passes** at fixed moments: shock ripple (Zeus' lightning, Brontes' wedge), heat haze (bellows, parched Tantalus), Hekate's lunar eclipse, Kronos' time stop (colour drains, 3D effects freeze) and his gravity lens while devouring (the danger circle stays undistorted). At most one at a time, ending on every exit
+- **Staged cutscenes** with timeline, guided camera (curves, follow, collision guard, light handheld sway), puppets, poses and costumes: intros, phase changes and defeats of every boss (45 scripts together with the RPG scenes), all skippable with a fixed end state
+- **Music per phase** for every boss with smooth crossfades and victory stingers, area music in RPG worlds, 20 new pieces and 25 new sounds
+- **RPG mode as its own game** ([docs](docs/rpg.md)): shared arrival cutscene after a hold in which everyone waits, chapters with goals and a direction arrow, chapter cards, island cutscenes, act end, Tartarus and palace scenes, an ending with credits; own HUD, journal (key J), pause menu, death screen, event cards; rests, pilgrim kit, fall protection, no hunger by default
+- **Tunnel lobby**: the group floats in a tunnel of light with skins and the armor of the path; after departing the tunnel keeps running over loading and connection screens and opens into the arrival scene
+- New client switches `screen_fx`, `cine_handheld`, `rpg_hud`; server keys `rpg_hunger`, `rpg_boss_health`, `rpg_boss_damage`, `rpg_wait_ticks` (RPG group in the control center)
+- New commands (OP): `/hha fx list|play|screen|kick`, `/hha stage list|play|stop`, `/hha rpg state|chapter|arrive|rest|scene`
+- Addon API: `HhaRpg.Path` takes optional `costume`, `arrival` and `arrivalStage` (existing calls compile unchanged)
+
+### Changed — Third overhaul
+- Camera shake is now a short rotation (kick) instead of moving the camera; with *Distortion Effects* at 0 % there is no kick, no shake and the screen passes become a 2D tint
+- Bosses blend smoothly out of the last shown pose; capes, beards, wings, tails and chains swing with springs
+- Tartarus wardens use the HHA health bar with their own theme instead of the vanilla boss bar
+- Cutscenes hide the block outline; dialogue lines stay readable for a minimum time
+- The RPG lobby and start animation are replaced by the tunnel lobby; old lobby texts removed
+- Fight numbers (announcements, damage, health, windows, attack choice) are unchanged
 
 ### Added — RPG mode, cutscenes, new weapons
 - **RPG mode** ([docs](docs/rpg.md)): new **HHA RPG** button in the main menu. Pick a path (Heaven: Olympus to Zeus, Hell: through the hell gate to Hades) and the addons that take part, create a lobby and let friends join with a six-letter code (four recommended, up to 16). The host presses start, everyone sees the same start animation instead of loading screens and lands at the start of the chosen path. The host runs the world locally; friends connect through a relay (`backend/rpg-lobby`, no worlds on the server). Addons opt in with `"hha:rpg": true` or `HhaRpg.declareSupport`/`registerPath`

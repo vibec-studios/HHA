@@ -780,6 +780,9 @@ class ScriptedBolt private constructor(private val bolt: HermesBoltEntity) {
     val pos: Vec3d get() = bolt.entityPos
     val alive: Boolean get() = !bolt.isRemoved
 
+    /** Das geführte Geschoss selbst (nur lesen; für Effekte wie `BossFx.projectile`). */
+    val entity: Entity get() = bolt
+
     /** Setzt das Geschoss nach [to] und meldet den Schritt dem Client. */
     fun moveTo(to: Vec3d) {
         if (bolt.isRemoved) return

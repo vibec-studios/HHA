@@ -1,6 +1,9 @@
 package dev.henny.hha.client.model
 
 import dev.henny.hha.Hha
+import dev.henny.hha.client.anim.PoseMemory
+import dev.henny.hha.client.anim.Spring
+import dev.henny.hha.client.cine.CinePlayer
 import dev.henny.hha.client.vfx.BossGlow
 import dev.henny.hha.entity.boss.HadesEntity
 import dev.henny.hha.entity.boss.HadesPose
@@ -47,6 +50,69 @@ class HadesRenderState : LivingEntityRenderState() {
     var walkPhase = 0f
     var lookYaw = 0f
     var lookPitch = 0f
+
+    /** Überarbeitung 3: Mundbewegung zur laufenden Zeile (0..1, `CinePlayer.mouthOf`); bewegt den Kiefer unter dem Bart. */
+    var mouth = 0f
+}
+
+/**
+ * Überarbeitung 3 (P12): Weltlage der Bident-Spitze je Bild, als kurzer Verlauf je Hades-Wesen. Der Renderer schreibt
+ * ([record]), der Effekt `hades.bident` (`HadesFx`) liest ([trail]); so zeichnet das Sichelband genau die Bahn, die die
+ * Waffe im Modell gefahren ist, auch den Teil des Hiebs, der vor dem Eintreffen des Effekts lag. Zeit = Alter des
+ * Wesens in Ticks (mit Zwischenbild). Ein Verlauf wird vergessen, wenn das Wesen [FORGET_TICKS] lang nicht gezeichnet wurde.
+ */
+object HadesAnchors {
+    /** So viele Ticks Verlauf bleiben stehen (länger als jede Spur). */
+    const val KEEP_TICKS = 8f
+
+    /** Höchstens so viele Bilder je Wesen (bei sehr hoher Bildrate fallen die ältesten weg). */
+    const val MAX_SAMPLES = 160
+
+    /** Nicht mehr gezeichnet seit so vielen Ticks: Verlauf weg. */
+    const val FORGET_TICKS = 100f
+
+    class Sample(val time: Float, val tip: Vec3d)
+
+    private class Track {
+        val samples = ArrayDeque<Sample>()
+        var hand: Vec3d = Vec3d.ZERO
+        var chest: Vec3d = Vec3d.ZERO
+        var seen = 0f
+    }
+
+    private val tracks = HashMap<Int, Track>()
+
+    /** Vom Renderer je Bild: [tip] = Mitte der beiden Zinken (null, wenn der Bident gerade nicht in der Hand ist). */
+    fun record(entityId: Int, time: Float, tip: Vec3d?, hand: Vec3d, chest: Vec3d) {
+        val track = tracks.getOrPut(entityId) { Track() }
+        // Zeitsprung rückwärts (neues Wesen mit derselben ID) oder lange nicht gesehen: von vorn.
+        if (time < track.seen - 0.01f || time - track.seen > FORGET_TICKS) track.samples.clear()
+        track.seen = time
+        track.hand = hand
+        track.chest = chest
+        if (tip == null) {
+            track.samples.clear()
+        } else if (track.samples.lastOrNull()?.time != time) {
+            track.samples.addLast(Sample(time, tip))
+        }
+        while (track.samples.isNotEmpty() && (track.samples.size > MAX_SAMPLES || time - track.samples.first().time > KEEP_TICKS)) {
+            track.samples.removeFirst()
+        }
+        if (tracks.size > 16) tracks.entries.removeIf { it.key != entityId && time - it.value.seen > FORGET_TICKS }
+    }
+
+    /** Bident-Spitze ab Zeit [since] (älteste zuerst); leer, wenn nichts Frisches vorliegt. */
+    fun trail(entityId: Int, since: Float): List<Sample> =
+        tracks[entityId]?.samples?.filter { it.time >= since } ?: emptyList()
+
+    /** Zuletzt gezeichnete Lage der linken Hand (Ketten) bzw. der Brust, oder null. */
+    fun hand(entityId: Int): Vec3d? = tracks[entityId]?.hand?.takeIf { it != Vec3d.ZERO }
+    fun chest(entityId: Int): Vec3d? = tracks[entityId]?.chest?.takeIf { it != Vec3d.ZERO }
+
+    /** Wann das Wesen zuletzt gezeichnet wurde (Alter in Ticks), oder null. */
+    fun seen(entityId: Int): Float? = tracks[entityId]?.seen
+
+    fun clear() = tracks.clear()
 }
 
 /**
@@ -128,13 +194,26 @@ class HadesModel(root: ModelPart) : EntityModel<HadesRenderState>(root) {
         Panel(upper, upper.getChild("skirt_${i}_low"), i * MathHelper.TAU / K.SKIRT_COUNT, i)
     }
 
-    /** Je Entity: welche Pose zuletzt lief und wie er zuletzt stand, damit jeder Wechsel von dort aus weich beginnt. */
+    /**
+     * Je Entity: welche Pose zuletzt lief und wie er zuletzt stand, damit jeder Wechsel von dort aus weich beginnt
+     * (die Zeitleiste jeder Pose startet bei [from] = zuletzt **gezeigte** Haltung). Überarbeitung 3: [guard]
+     * ([PoseMemory]) blendet zusätzlich Sprünge weich, die keine Pose wechseln (Konter-Marke, Bident fliegt, Gestalt),
+     * und die Federn ([capeLift], [capeSway], [beard], [crest]) lassen Mantel, Bart und Helmbusch nachschwingen.
+     */
     private class Memory {
         var pose = -1
         var previous = HadesPose.IDLE
         val from = K.IDLE.copyOf()
         val last = K.IDLE.copyOf()
         var seen = 0f
+        val guard = PoseMemory(K.COUNT)
+        val capeLift = Spring(CAPE_FREQ, CAPE_DAMP)
+        val capeSway = Spring(CAPE_FREQ, CAPE_DAMP)
+        val beard = Spring(BEARD_FREQ, BEARD_DAMP)
+        val crest = Spring(CREST_FREQ, CREST_DAMP)
+        var lastYaw = Float.NaN
+        var turn = 0f
+        var lastWalk = 0f
     }
 
     private val memory = HashMap<Int, Memory>()
@@ -320,19 +399,55 @@ class HadesModel(root: ModelPart) : EntityModel<HadesRenderState>(root) {
         super.setAngles(state)
         val mem = memory.getOrPut(state.entityId) { Memory() }
         if (memory.size > 24) memory.entries.removeIf { it.value !== mem && state.age - it.value.seen > 200f }
+        // Lange nicht gezeichnet (oder Zeitsprung): die gemerkte Haltung ist veraltet, nicht von dort überblenden.
+        val stale = mem.pose >= 0 && (state.age - mem.seen > STALE_TICKS || state.age < mem.seen - 0.01f)
+        val dt = if (mem.pose < 0 || stale) 0f else (state.age - mem.seen).coerceIn(0f, 4f)
         mem.seen = state.age
-        if (mem.pose != state.bossPose) {
+        if (mem.pose != state.bossPose || stale) {
             mem.previous = if (mem.pose < 0) state.previousPose else mem.pose
+            if (mem.pose >= 0 && mem.pose != state.bossPose) onPoseChange(state.bossPose, mem)
             mem.pose = state.bossPose
-            mem.last.copyInto(mem.from)
+            if (stale) {
+                // Einmal ohne Überblendung rechnen und von dort beginnen (wie das erste Bild).
+                timeline(state, mem)
+                ch.copyInto(mem.from)
+            } else {
+                mem.last.copyInto(mem.from)
+            }
         }
         timeline(state, mem)
+        // Sprünge ohne Posenwechsel (Konter-Marke, Bident fliegt, neue Gestalt) weich überblenden.
+        val flags = (if (state.antiAir) 1 else 0) or (if (state.bidentOut) 2 else 0) or (state.form shl 2)
+        mem.guard.blend(flags, ch, state.age, GUARD_FADE).copyInto(ch)
         ch.copyInto(mem.last)
         walkAndLook(state)
         applyChannels()
-        secondary(state)
+        secondary(state, mem, dt)
         bident.visible = !bidentHidden(state)
     }
+
+    /** Stöße auf die Federn beim Wechsel in eine Pose mit Aufprall (Bident im Boden, Taumeln, Hinterhalt). */
+    private fun onPoseChange(pose: Int, mem: Memory) {
+        when (pose) {
+            HadesPose.STUCK, HadesPose.EMPTY -> {
+                mem.capeLift.kick(KICK_IMPACT)
+                mem.beard.kick(KICK_IMPACT * 1.2f)
+                mem.crest.kick(KICK_IMPACT)
+            }
+            HadesPose.STAGGER -> {
+                mem.capeLift.kick(-KICK_IMPACT)
+                mem.beard.kick(-KICK_IMPACT)
+                mem.crest.kick(-KICK_IMPACT * 1.4f)
+            }
+            HadesPose.AMBUSH -> {
+                mem.capeSway.kick(KICK_IMPACT)
+                mem.capeLift.kick(KICK_IMPACT * 0.7f)
+            }
+        }
+    }
+
+    /** Hält er den Bident gerade in der Hand (für [HadesAnchors])? */
+    fun bidentInHand(state: HadesRenderState): Boolean = !bidentHidden(state)
 
     private fun bidentHidden(state: HadesRenderState) = state.bidentOut || state.bossPose == HadesPose.EMPTY ||
         (state.bossPose == HadesPose.THROW && state.poseTime >= H.THROW_RELEASE)
@@ -410,26 +525,41 @@ class HadesModel(root: ModelPart) : EntityModel<HadesRenderState>(root) {
         part.roll = ch[rz]
     }
 
-    /** Dieselben Formeln wie `secondary()` in hades_model.py, dazu die Zeit-Terme (Wellen, Nachschwingen). */
-    private fun secondary(state: HadesRenderState) {
+    /**
+     * Dieselben Formeln wie `secondary()` in hades_model.py, dazu die Zeit-Terme (Wellen, Nachschwingen). Überarbeitung 3:
+     * Mantel-Neigung, seitliches Ausschwingen beim Drehen, Bart und Helmbusch laufen über Federn ([Spring]) mit [dt]
+     * Ticks seit dem letzten Bild; Stöße kommen aus [onPoseChange] und vom plötzlichen Anhalten.
+     */
+    private fun secondary(state: HadesRenderState, mem: Memory, dt: Float) {
         val t = state.age
         val walk = state.walk
         val g = ch[K.ROOT_RX] + ch[K.TORSO_RX] + ch[K.CHEST_RX]
         val gc = g.coerceIn(-0.6f, 1f)
         val lift = ch[K.CAPE]
         val wrap = ch[K.CAPE_WRAP]
+        // Drehrate des Körpers (Grad je Tick), leicht geglättet: daraus schwingt der Mantel zur Seite aus.
+        if (!mem.lastYaw.isNaN() && dt > 0f) {
+            val rate = (MathHelper.wrapDegrees(state.bodyYaw - mem.lastYaw) / dt).coerceIn(-TURN_MAX, TURN_MAX)
+            mem.turn += (rate - mem.turn) * (dt * 0.35f).coerceAtMost(1f)
+        }
+        mem.lastYaw = state.bodyYaw
+        // Plötzliches Anhalten: der Mantel schwingt nach vorn weiter.
+        if (dt > 0f && mem.lastWalk - walk > 0.02f) mem.capeLift.kick((mem.lastWalk - walk) * KICK_STOP)
+        mem.lastWalk = walk
+        val drape = mem.capeLift.step(lift * 0.6f - gc * 0.85f, dt)
+        val sway = mem.capeSway.step((-mem.turn * TURN_TO_SWAY).coerceIn(-SWAY_MAX, SWAY_MAX), dt)
         // Mantel: hängt nach, hebt sich, die Welle läuft vom Kragen zum Saum und wird pro Glied stärker.
         for ((strip, chain) in cape.withIndex()) {
             val across = strip - (K.CAPE_STRIPS - 1) / 2f
             for ((link, part) in chain.withIndex()) {
                 val wave = sin(t * 0.13f - link * 0.8f + strip * 0.9f) * (0.015f + link * 0.014f) * (1f + walk)
                 if (link == 0) {
-                    part.pitch = 0.06f + lift * 0.6f - gc * 0.85f - abs(across) * wrap * 0.12f + wave
-                    part.yaw = across * wrap * 0.55f
-                    part.roll = -across * (0.085f - wrap * 0.05f) + sin(t * 0.09f + strip * 1.7f) * 0.012f
+                    part.pitch = 0.06f + drape - abs(across) * wrap * 0.12f + wave
+                    part.yaw = across * wrap * 0.55f + sway * 0.6f
+                    part.roll = -across * (0.085f - wrap * 0.05f) + sin(t * 0.09f + strip * 1.7f) * 0.012f + sway * 0.35f
                 } else {
                     part.pitch = 0.03f - lift * 0.13f + walk * (0.05f - link * 0.015f) + wave
-                    part.roll = sin(t * 0.1f + strip * 1.3f + link) * 0.01f * link
+                    part.roll = sin(t * 0.1f + strip * 1.3f + link) * 0.01f * link + sway * 0.12f * link
                 }
             }
         }
@@ -471,13 +601,17 @@ class HadesModel(root: ModelPart) : EntityModel<HadesRenderState>(root) {
             panel.upper.roll = 0f
             panel.lower.pitch = 4f * MathHelper.RADIANS_PER_DEGREE + max(0f, -follow) * 0.35f + sway * 0.8f
         }
-        // Bart pendelt der Schwerkraft nach.
-        beardA.pitch = -0.38f - (g + ch[K.HEAD_RX]) * 0.7f + sin(t * 0.08f) * 0.035f
-        beardB.pitch += sin(t * 0.08f - 0.7f) * 0.045f
+        // Bart pendelt der Schwerkraft nach (über eine Feder, damit er bei schnellen Neigungen nachschwingt); beim
+        // Sprechen öffnet sich der Kiefer darunter ein wenig.
+        val hang = mem.beard.step(-0.38f - (g + ch[K.HEAD_RX]) * 0.7f, dt)
+        beardA.pitch = hang + sin(t * 0.08f) * 0.035f + state.mouth * MOUTH_OPEN
+        beardB.pitch += sin(t * 0.08f - 0.7f) * 0.045f - state.mouth * MOUTH_OPEN * 0.4f
         beardC.pitch += sin(t * 0.08f - 1.4f) * 0.055f
-        // Helmbusch: das Ende im Nacken schwingt leicht nach.
-        crest[4].pitch += sin(t * 0.09f) * 0.02f + walk * 0.03f
-        crest[5].pitch += sin(t * 0.09f - 0.8f) * 0.035f + walk * 0.05f
+        // Helmbusch: das Ende im Nacken schwingt leicht nach (Feder auf Gang und Drehung).
+        val plume = mem.crest.step(walk * 0.04f + abs(mem.turn) * 0.004f, dt)
+        crest[4].pitch += sin(t * 0.09f) * 0.02f + plume
+        crest[5].pitch += sin(t * 0.09f - 0.8f) * 0.035f + plume * 1.6f
+        crest[5].roll += sway * 0.2f
         // Finger: grip 0 = offen, 1 = Faust.
         grip(fingersR, fingersRTip, thumbR, ch[K.GRIP_R], -1f)
         grip(fingersL, fingersLTip, thumbL, ch[K.GRIP_L], 1f)
@@ -531,6 +665,34 @@ class HadesModel(root: ModelPart) : EntityModel<HadesRenderState>(root) {
         private const val HARD = 1
         private const val IN = 2
 
+        // --- Überarbeitung 3: Animation (reine Darstellung) ---
+
+        /** So lange (Ticks) nicht gezeichnet: gemerkte Haltung gilt als veraltet. */
+        private const val STALE_TICKS = 40f
+
+        /** Überblendung der Sprünge ohne Posenwechsel ([PoseMemory]). */
+        private const val GUARD_FADE = 6f
+
+        /** Federn: Frequenz in rad/Tick, Dämpfung (1 = kritisch). Mantel ≈ 0,9 s, Bart ≈ 0,6 s, Busch ≈ 0,5 s. */
+        private const val CAPE_FREQ = 0.35f
+        private const val CAPE_DAMP = 0.45f
+        private const val BEARD_FREQ = 0.5f
+        private const val BEARD_DAMP = 0.4f
+        private const val CREST_FREQ = 0.6f
+        private const val CREST_DAMP = 0.35f
+
+        /** Stoß (rad/Tick) beim Aufprall der Waffe bzw. beim plötzlichen Anhalten (je Gangstärke). */
+        private const val KICK_IMPACT = 0.09f
+        private const val KICK_STOP = 0.6f
+
+        /** Drehrate (Grad/Tick) → seitliches Ausschwingen des Mantels (rad), gedeckelt. */
+        private const val TURN_MAX = 20f
+        private const val TURN_TO_SWAY = 0.012f
+        private const val SWAY_MAX = 0.22f
+
+        /** Kiefer unter dem Bart bei voller Mundöffnung (rad). */
+        private const val MOUTH_OPEN = 0.12f
+
         /** Der Bident-Knochen aus der Hades-Modellschicht (für den fliegenden Bident, Plan 6.5). Ursprung am Griff. */
         fun bident(layerRoot: ModelPart): ModelPart =
             layerRoot.getChild("root").getChild("torso").getChild("chest").getChild("arm_r").getChild("fore_r").getChild("bident")
@@ -560,9 +722,16 @@ class HadesRenderer(context: EntityRendererFactory.Context) :
         frame.pose = state.bossPose
         model.readAnchors(matrices, cam, frame)
         BossGlow.submit(frame)
+        // Überarbeitung 3: Verlauf der Bident-Spitze für das Sichelband (`hades.bident`), Hand und Brust für die Ketten.
+        val tip = if (model.bidentInHand(state)) frame.tipA.add(frame.tipB).multiply(0.5) else null
+        HadesAnchors.record(state.entityId, state.age, tip, frame.handL, frame.chest)
     }
 
     override fun createRenderState() = HadesRenderState()
+
+    /** Sichtbox: ausgeholte Waffe ragt über die Trefferbox (P20, [GuardianCull.HADES]). */
+    override fun getBoundingBox(entity: HadesEntity): net.minecraft.util.math.Box =
+        GuardianCull.grow(super.getBoundingBox(entity), GuardianCull.HADES, 1.0 + entity.form * HadesEntity.FORM_GROWTH)
     override fun getTexture(state: HadesRenderState): Identifier = texture
 
     override fun updateRenderState(entity: HadesEntity, state: HadesRenderState, tickDelta: Float) {
@@ -578,6 +747,7 @@ class HadesRenderer(context: EntityRendererFactory.Context) :
         state.antiAir = entity.antiAir
         state.walk = entity.walkAmount
         state.walkPhase = entity.walkPhase
+        state.mouth = CinePlayer.mouthOf(entity.id)
         updateLook(entity, state, tickDelta)
     }
 

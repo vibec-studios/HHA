@@ -29,10 +29,13 @@ abstract class VfxEffect(val life: Int) {
     fun advance(world: ClientWorld): Boolean {
         age++
         tick(world)
-        return age < life && !finished()
+        return !expired() && !finished()
     }
 
     protected open fun tick(world: ClientWorld) {}
+
+    /** Lebenszeit abgelaufen? Bestand: echtes Alter; neue Effekte (`FxEffect`) rechnen den Zeitfaktor ein. */
+    protected open fun expired(): Boolean = age >= life
 
     protected open fun finished(): Boolean = false
 
@@ -525,12 +528,56 @@ class TelegraphLineEffect(
             val lift = Vec3d(0.0, 0.004, 0.0)
             d.band(VfxLayers.TELE_SOLID, tip.subtract(side.multiply(hw)).add(lift), tip.add(side.multiply(hw)).add(lift), dir, w * 1.2, front(fl, 0.7f), front(fl, 0.7f))
         }
+        if (!safe) arrows(d, a, time, hw, w, fl)
         val l = side.multiply(hw)
         val lift = Vec3d(0.0, 0.008, 0.0)
         rimLine(d, a.add(l).add(lift), b.add(l).add(lift), w, fl)
         rimLine(d, a.subtract(l).add(lift), b.subtract(l).add(lift), w, fl)
         rimLine(d, a.subtract(l).add(lift), a.add(l).add(lift), w, fl)
         rimLine(d, b.subtract(l).add(lift), b.add(l).add(lift), w, fl)
+    }
+
+    /**
+     * Laufende Pfeile in Angriffsrichtung (Überarbeitung 3, P01; Vorbild Void `LineEffect`): schmale Winkel in der Farbe
+     * der Ansage, über der Füllung und unter dem Rand. Sie blenden an den Linienenden und am Anfang weich ein und sind
+     * im Weiß der letzten Ticks ganz weg. Nur bei Gefahr (Gold = sicher hat keine Angriffsrichtung).
+     */
+    private fun arrows(d: VfxDraw, base: Vec3d, time: Float, hw: Double, w: Double, fl: Float) {
+        val length = delta.length()
+        val fade = (1f - fl) * (time / ARROW_FADE_IN).coerceIn(0f, 1f)
+        if (fade <= 0.01f || length < 1.0) return
+        val spacing = max(ARROW_MIN_SPACING, hw * ARROW_SPACING_SCALE)
+        val depth = min(hw * 0.7, spacing * 0.45)
+        val arm = hw * 0.55
+        val lift = Vec3d(0.0, 0.006, 0.0)
+        val color = lerpColor(pal.main, pal.core, 0.5f)
+        var s = (time * ARROW_SPEED) % spacing
+        while (s < length) {
+            val head = (s - depth) / (spacing * 0.5)
+            val tail = (length - s) / (spacing * 0.5)
+            val k = easeInOut(min(head, tail).toFloat().coerceIn(0f, 1f))
+            if (k > 0.01f) {
+                val tip = base.add(dir.multiply(s)).add(lift)
+                val back = tip.subtract(dir.multiply(depth))
+                val c = withAlpha(color, ARROW_ALPHA * fade * k)
+                for (sign in intArrayOf(-1, 1)) {
+                    val end = back.add(side.multiply(arm * sign))
+                    val along = tip.subtract(end)
+                    val across = along.crossProduct(UP).let { if (it.lengthSquared() < 1e-8) side else it.normalize() }
+                    d.band(VfxLayers.TELE_SOLID, end, tip, across, w * 0.85, c, c)
+                }
+            }
+            s += spacing
+        }
+    }
+
+    private companion object {
+        /** Pfeil-Geschwindigkeit (Blöcke je Tick), Abstand mindestens (Blöcke) bzw. × halbe Breite, Deckkraft. */
+        const val ARROW_SPEED = 0.12f
+        const val ARROW_MIN_SPACING = 2.2
+        const val ARROW_SPACING_SCALE = 2.6
+        const val ARROW_ALPHA = 0.5f
+        const val ARROW_FADE_IN = 6f
     }
 }
 

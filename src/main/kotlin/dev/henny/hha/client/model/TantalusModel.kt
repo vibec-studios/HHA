@@ -36,6 +36,8 @@ class TantalusModel(root: ModelPart) : GuardianModel(root) {
         val action = state.action
         val t = state.actionTime
         val age = state.age
+        val rig = RIGS.of(state.entityId)
+        rig.begin(age, action, t)
 
         // Sekundärteile (Ast, Frucht, Haar, Gewand) folgen derselben Bewegung mit Verzug.
         compose(late, action, t - LAG, age - LAG)
@@ -77,6 +79,23 @@ class TantalusModel(root: ModelPart) : GuardianModel(root) {
         cur[TantalusPoses.CROWN * 6 + 2] += sin(age * 1.7f) * 0.09f * jolt
         cur[TantalusPoses.CROWN * 6] += sin(age * 1.3f + 0.4f) * 0.05f * jolt
 
+        // --- Überarbeitung 3: Haar und Mantel federn nach harten Bewegungen nach, Mund zum Text ---
+        for (hit in hitTimes(action)) {
+            if (!rig.crossed(hit)) continue
+            rig.springs[HAIR_SPRING].kick(HAIR_KICK)
+            rig.springs[MANTLE_SPRING].kick(MANTLE_KICK)
+        }
+        val hair = rig.spring(HAIR_SPRING)
+        val mantle = rig.spring(MANTLE_SPRING)
+        cur[TantalusPoses.HAIR_R2 * 6] += hair
+        cur[TantalusPoses.HAIR_L2 * 6] += hair
+        cur[TantalusPoses.HAIR_R * 6 + 2] += hair * 0.3f
+        cur[TantalusPoses.HAIR_L * 6 + 2] -= hair * 0.3f
+        cur[TantalusPoses.MANTLE * 6] += mantle
+        cur[TantalusPoses.JAW * 6] += dev.henny.hha.client.cine.CinePlayer.mouthOf(state.entityId) * MOUTH_OPEN
+
+        // Aus der zuletzt gezeigten Pose überblenden (nicht aus der vorigen Aktion bei ihrem Alter).
+        rig.blend(cur, action, age, BLEND)
         apply()
 
         // Der Kelch: in PARCHED fliegt er aus der Hand und ist dann weg.
@@ -280,7 +299,33 @@ class TantalusModel(root: ModelPart) : GuardianModel(root) {
         for (k in 3 until 6) out[o + k] += (pose[o + k] - out[o + k]) * w
     }
 
+    /** Zeitpunkte harter Bewegungen je Aktion (Stoß für Haar und Mantel), aus [BossTimings.Tantalus]. */
+    private fun hitTimes(action: Int): FloatArray = when (action) {
+        TantalusAction.THRUST3 -> floatArrayOf(T.THRUST_WINDUP.toFloat(), T.THRUST_HIT_2.toFloat(), T.THRUST_HIT_3.toFloat())
+        TantalusAction.GEYSER -> floatArrayOf(T.GEYSER_RAISE.toFloat())
+        TantalusAction.WAVE -> floatArrayOf(T.WAVE_WINDUP.toFloat())
+        TantalusAction.DRINK -> floatArrayOf(T.DRINK_KNEEL.toFloat())
+        TantalusAction.PARCHED -> floatArrayOf(2f)
+        TantalusAction.RAGE -> floatArrayOf(4f)
+        BossDefense.ANTI_AIR -> floatArrayOf(BossTimings.Guardian.ANTI_AIR_HIT.toFloat())
+        else -> NO_HITS
+    }
+
+    private val RIGS = GuardianRigs { GuardianRig(TantalusPoses.PATHS.size * 6, 2, SPRING_FREQ, SPRING_DAMP) }
+
     private companion object {
+        // --- Überarbeitung 3 (P14) ---
+        /** Überblendung aus der gezeigten Pose bei jedem Aktionswechsel (Ticks). */
+        const val BLEND = 6f
+        const val HAIR_SPRING = 0
+        const val MANTLE_SPRING = 1
+        const val SPRING_FREQ = 0.38f
+        const val SPRING_DAMP = 0.22f
+        const val HAIR_KICK = 0.09f
+        const val MANTLE_KICK = 0.06f
+        const val MOUTH_OPEN = 0.3f
+        val NO_HITS = FloatArray(0)
+
         val T = BossTimings.Tantalus
         val SOFT = BossTimings.Anim.BLEND_SOFT.toFloat()
         val HARD = BossTimings.Anim.BLEND_HARD.toFloat()

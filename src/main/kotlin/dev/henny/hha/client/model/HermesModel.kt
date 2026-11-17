@@ -2,6 +2,9 @@ package dev.henny.hha.client.model
 
 import dev.henny.hha.entity.boss.HermesEntity
 import dev.henny.hha.entity.boss.HermesPose
+import dev.henny.hha.client.anim.PoseMemory
+import dev.henny.hha.client.anim.Spring
+import dev.henny.hha.client.cine.CinePlayer
 import dev.henny.hha.client.vfx.BossGlow
 import dev.henny.hha.logic.boss.BossTimings
 import net.minecraft.client.MinecraftClient
@@ -42,6 +45,42 @@ class HermesRenderState : LivingEntityRenderState() {
     var loot = false
     var speed = 0f
     var afterimages: List<net.minecraft.util.math.Vec3d> = emptyList()
+
+    /** Überarbeitung 3 (P07): Animations-Gedächtnis dieses Wesens (Posen-Überblendung, Federn); vom Renderer gesetzt. */
+    internal var anim: HermesAnim? = null
+
+    /** Schräglage-Ziel aus der Drehrate (Grad, gedeckelt), vom Renderer gemessen. */
+    var turnRate = 0f
+}
+
+/**
+ * Animations-Zustand je Hermes-Wesen (Überarbeitung 3, PLAN 2.1 Punkt 3 / 2.4): zuletzt gezeigte Pose ([memory]),
+ * Posenuhr ab dem ersten gezeigten Bild ([clockStart], REF T14 Punkt 2) und vier weiche Teile mit [Spring]:
+ * Schwungfedern ([wing]), Anlegen der Flügel im Stoß ([fold]), Chlamys ([cape]) und Schräglage ([bank]); dazu das
+ * Hängen der Flügel in der Erschöpfung ([droop]). Nur Darstellung.
+ */
+internal class HermesAnim {
+    val memory = PoseMemory(HermesModel.BLEND_SIZE)
+    val target = FloatArray(HermesModel.BLEND_SIZE)
+    val wing = Spring(HermesModel.WING_FREQ, HermesModel.WING_DAMP)
+    val fold = Spring(HermesModel.FOLD_FREQ, HermesModel.FOLD_DAMP)
+    val cape = Spring(HermesModel.CAPE_FREQ, HermesModel.CAPE_DAMP)
+    val bank = Spring(HermesModel.BANK_FREQ, HermesModel.BANK_DAMP)
+    val droop = Spring(HermesModel.DROOP_FREQ, HermesModel.DROOP_DAMP)
+
+    /** Posenuhr: welche Pose (samt Wechsel-Alter) zuletzt gesehen und ab welcher Zeit (Alter + Zwischenbild) sie läuft. */
+    var clockPose = Int.MIN_VALUE
+    var clockChanged = Int.MIN_VALUE
+    var clockStart = 0f
+
+    /** Letzte Zeit, zu der die Federn liefen, und die Pose, die dabei stand (für Stöße beim Wechsel). */
+    var springTime = Float.NaN
+    var springPose = Int.MIN_VALUE
+
+    /** Drehrate: letzter Körper-Blick und Zeit. */
+    var lastYaw = Float.NaN
+    var lastYawTime = 0f
+    var lastSeen = 0L
 }
 
 /**
@@ -100,29 +139,29 @@ class HermesModel(root: ModelPart) : EntityModel<HermesRenderState>(root) {
     private val auxFrom = FloatArray(AUX)
     private val auxTo = FloatArray(AUX)
 
+    /** Ergebnis der Überblendung (Knochen + Hilfswerte), wiederverwendet je Bild. */
+    private val shownLocal = FloatArray(BLEND_SIZE)
+
     override fun setAngles(state: HermesRenderState) {
         super.setAngles(state)
         val t = state.age
         val e = state.poseTime
-        sample(state.previousPose, 1000f, from)
-        sample(state.bossPose, e, to)
-        aux(state.previousPose, auxFrom)
-        aux(state.bossPose, auxTo)
         val blend = smooth(e / enter(state.bossPose))
+        val shown = blendPose(state, e)
         for (i in 0 until HermesKeys.BONES.size) {
             val part = bones[i]
             val o = i * 6
-            part.pitch = MathHelper.lerp(blend, from[o], to[o])
-            part.yaw = lerpAngle(blend, from[o + 1], to[o + 1])
-            part.roll = lerpAngle(blend, from[o + 2], to[o + 2])
-            part.originX += MathHelper.lerp(blend, from[o + 3], to[o + 3])
-            part.originY += MathHelper.lerp(blend, from[o + 4], to[o + 4])
-            part.originZ += MathHelper.lerp(blend, from[o + 5], to[o + 5])
+            part.pitch = shown[o]
+            part.yaw = shown[o + 1]
+            part.roll = shown[o + 2]
+            part.originX += shown[o + 3]
+            part.originY += shown[o + 4]
+            part.originZ += shown[o + 5]
         }
-        val hover = MathHelper.lerp(blend, auxFrom[A_HOVER], auxTo[A_HOVER])
-        val beatAmp = MathHelper.lerp(blend, auxFrom[A_BEAT], auxTo[A_BEAT])
-        val look = MathHelper.lerp(blend, auxFrom[A_LOOK], auxTo[A_LOOK])
-        val breath = MathHelper.lerp(blend, auxFrom[A_BREATH], auxTo[A_BREATH])
+        val hover = shown[SIZE + A_HOVER]
+        val beatAmp = shown[SIZE + A_BEAT]
+        val look = shown[SIZE + A_LOOK]
+        val breath = shown[SIZE + A_BREATH]
 
         // Schweben und Atmen: Ruhe ist nie starr.
         val bob = sin(t * 0.09f)
@@ -169,8 +208,87 @@ class HermesModel(root: ModelPart) : EntityModel<HermesRenderState>(root) {
         bones[B_CAPE2].pitch += sin(t * 0.17f + 0.9f) * wave * 1.4f
         bones[B_CAPE3].pitch += sin(t * 0.21f + 1.8f) * wave * 1.8f
 
+        secondary(state, t, hover)
         extras(state, t, e, blend)
         visibility(state, blend)
+    }
+
+    /**
+     * Überblendung aus der zuletzt **gezeigten** Pose ([PoseMemory], PLAN 2.1 Punkt 3): Zwei Wechsel kurz hintereinander
+     * springen nicht mehr. Ohne Gedächtnis (z. B. Vorschau ohne Wesen) wie bisher aus der Endhaltung der vorigen Pose.
+     */
+    private fun blendPose(state: HermesRenderState, e: Float): FloatArray {
+        val anim = state.anim
+        sample(state.bossPose, e, to)
+        aux(state.bossPose, auxTo)
+        if (anim != null) {
+            System.arraycopy(to, 0, anim.target, 0, SIZE)
+            System.arraycopy(auxTo, 0, anim.target, SIZE, AUX)
+            // Die Pose läuft am Client seit [e] Ticks: Beginn der Überblendung = jetzt − e (auch für Nachzügler richtig).
+            val now = state.age
+            return anim.memory.blend(state.bossPose, anim.target, now, enter(state.bossPose), restart = false)
+        }
+        val blend = smooth(e / enter(state.bossPose))
+        sample(state.previousPose, 1000f, from)
+        aux(state.previousPose, auxFrom)
+        for (i in 0 until SIZE) {
+            shownLocal[i] = if (i % 6 == 1 || i % 6 == 2) lerpAngle(blend, from[i], to[i]) else MathHelper.lerp(blend, from[i], to[i])
+        }
+        for (i in 0 until AUX) shownLocal[SIZE + i] = MathHelper.lerp(blend, auxFrom[i], auxTo[i])
+        return shownLocal
+    }
+
+    /**
+     * Nachschwingen (PLAN 2.4): Schwungfedern federn beim Abbremsen (SKID) und bei Landungen nach, legen sich im Stoß
+     * an, die Chlamys zieht dem Tempo nach, im Flug neigt er sich in die Kurve (höchstens [BANK_MAX_DEG]) und in der
+     * Erschöpfung hängen die Flügel. Beim Sprechen nickt der Kopf leicht im Takt des Textes (kein Kiefer im Modell).
+     * Alles über [Spring] je Wesen; reine Darstellung.
+     */
+    private fun secondary(state: HermesRenderState, t: Float, hover: Float) {
+        val anim = state.anim ?: return
+        val dt = if (anim.springTime.isNaN()) 0f else (t - anim.springTime).coerceIn(0f, 4f)
+        val first = anim.springTime.isNaN() || t < anim.springTime - 0.01f
+        anim.springTime = t
+        if (first) {
+            anim.wing.reset(); anim.fold.reset(); anim.cape.reset(); anim.bank.reset(); anim.droop.reset()
+            anim.springPose = state.bossPose
+        }
+        val pose = state.bossPose
+        if (pose != anim.springPose) {
+            when (pose) {
+                HermesPose.SKID -> { anim.wing.kick(SKID_WING_KICK); anim.cape.kick(SKID_CAPE_KICK) }
+                HermesPose.DASH -> anim.fold.kick(DASH_FOLD_KICK)
+                HermesPose.STUCK, HermesPose.STUMBLE, HermesPose.KNEEL, HermesPose.STAGGER -> anim.wing.kick(LAND_WING_KICK)
+            }
+            anim.springPose = pose
+        }
+        val dashing = pose == HermesPose.DASH || pose == HermesPose.DASH_WINDUP || pose == HermesPose.DIVE
+        val exhausted = pose == HermesPose.KNEEL && state.stage >= 4 && state.vulnerable && !state.illusion
+        val wing = anim.wing.step(-state.speed * WING_SPEED_SWEEP, dt)
+        val fold = anim.fold.step(if (dashing) FOLD_TARGET else 0f, dt)
+        val cape = anim.cape.step((state.speed * CAPE_SPEED).coerceAtMost(CAPE_MAX), dt)
+        val flying = smooth(state.speed / BANK_SPEED_FULL) * (0.4f + 0.6f * hover.coerceIn(0f, 1f))
+        val bankTarget = (state.turnRate * BANK_GAIN * flying).coerceIn(-BANK_MAX_DEG, BANK_MAX_DEG) * MathHelper.RADIANS_PER_DEGREE
+        val bank = anim.bank.step(bankTarget, dt).coerceIn(-BANK_MAX_DEG * MathHelper.RADIANS_PER_DEGREE, BANK_MAX_DEG * MathHelper.RADIANS_PER_DEGREE)
+        val droop = anim.droop.step(if (exhausted) DROOP_TARGET else 0f, dt)
+
+        // Schwungfedern (Hand) am stärksten, der Unterarm halb; links gespiegelt wie der Flügelschlag.
+        backHandR.roll += wing + fold * FOLD_HAND
+        backForeR.roll += wing * 0.45f + fold
+        backHandL.roll -= wing + fold * FOLD_HAND
+        backForeL.roll -= wing * 0.45f + fold
+        // Erschöpfung: die großen Flügel sinken am Schulteransatz, die Hand hängt nach.
+        backR.roll -= droop
+        backL.roll += droop
+        backHandR.roll -= droop * DROOP_HAND
+        backHandL.roll += droop * DROOP_HAND
+        // Chlamys zieht nach hinten (positives Nicken schwingt den Saum nach hinten), unten stärker.
+        bones[B_CAPE1].pitch += cape * 0.5f
+        bones[B_CAPE2].pitch += cape * 0.8f
+        bones[B_CAPE3].pitch += cape
+        body.roll += bank * BANK_SIGN
+        // Lippen: kein Kiefer im Modell, daher ein leichtes Nicken im Takt des Textes (≤ 3°).
+        if (!state.illusion) head.pitch += CinePlayer.mouthOf(state.entityId) * MOUTH_NOD_DEG * MathHelper.RADIANS_PER_DEGREE
     }
 
     /** Bewegungen, die nur in einer Pose laufen (Zeichnen, Werfen, Zerren, Taumeln). */
@@ -415,6 +533,46 @@ class HermesModel(root: ModelPart) : EntityModel<HermesRenderState>(root) {
         private const val B_LOOT = 21
         private const val SIZE = 22 * 6
 
+        /** Knochen und Hilfswerte zusammen (für [PoseMemory]). */
+        const val BLEND_SIZE = SIZE + 4
+
+        // Nachschwingen (Überarbeitung 3, P07). Frequenz in rad/Tick, Dämpfung 1 = kritisch. Winkel in Bogenmaß.
+        const val WING_FREQ = 0.42f
+        const val WING_DAMP = 0.28f
+        const val FOLD_FREQ = 0.55f
+        const val FOLD_DAMP = 0.55f
+        const val CAPE_FREQ = 0.3f
+        const val CAPE_DAMP = 0.4f
+        const val BANK_FREQ = 0.22f
+        const val BANK_DAMP = 1f
+        const val DROOP_FREQ = 0.16f
+        const val DROOP_DAMP = 0.6f
+
+        /** Stoß auf die Schwungfedern beim Abbremsen (rad/Tick). */
+        const val SKID_WING_KICK = 0.16f
+        const val SKID_CAPE_KICK = -0.1f
+        /** Landungen, Abfangen, Taumeln: kleiner Stoß. */
+        const val LAND_WING_KICK = 0.09f
+        /** Im Stoß legen sich die Flügel an: Ziel und Anschub. */
+        const val FOLD_TARGET = -0.18f
+        const val DASH_FOLD_KICK = -0.12f
+        const val FOLD_HAND = 1.3f
+        /** Bei Tempo ziehen die Schwungfedern etwas nach hinten. */
+        const val WING_SPEED_SWEEP = 0.06f
+        const val CAPE_SPEED = 0.22f
+        const val CAPE_MAX = 0.35f
+        /** Schräglage: Grad je Grad/Tick Drehrate, ab diesem Tempo voll, Deckel (PLAN 2.4 / REF T14: 14°). */
+        const val BANK_GAIN = 0.8f
+        const val BANK_SPEED_FULL = 0.5f
+        const val BANK_MAX_DEG = 14f
+        /** Vorzeichen der Schräglage am Wurzelknochen (ungeprüft im Spiel: nach rechts drehen = rechte Schulter sinkt). */
+        const val BANK_SIGN = -1f
+        /** Erschöpfung: so tief sinken die Flügel (rad), die Hand folgt anteilig. */
+        const val DROOP_TARGET = 0.32f
+        const val DROOP_HAND = 0.6f
+        /** Kopfnicken beim Sprechen, höchstens (Briefing: 3°). */
+        const val MOUTH_NOD_DEG = 3f
+
         private const val A_HOVER = 0
         private const val A_BEAT = 1
         private const val A_LOOK = 2
@@ -495,7 +653,10 @@ class HermesRenderer(context: EntityRendererFactory.Context) :
         super.updateRenderState(entity, state, tickDelta)
         state.bossPose = entity.pose
         state.previousPose = entity.previousPose
-        state.poseTime = (entity.age - entity.poseChangedAge) + tickDelta
+        val anim = animOf(entity)
+        state.anim = anim
+        state.poseTime = poseClock(anim, entity, tickDelta)
+        state.turnRate = turnRate(anim, entity, tickDelta)
         state.illusion = entity.isIllusion
         state.entityId = entity.id
         state.corrupted = entity.corrupted
@@ -549,9 +710,63 @@ class HermesRenderer(context: EntityRendererFactory.Context) :
 
     override fun hasLabel(entity: HermesEntity, squaredDistance: Double): Boolean = false
 
+    /**
+     * Sichtbarkeits-Box (REF T14): Die ausgebreiteten Flügel reichen weit über die Trefferbox hinaus; ohne Zugabe
+     * verschwände er am Bildrand, obwohl die Flügel noch im Bild sind. Nur fürs Zeichnen, die Trefferbox bleibt.
+     */
+    override fun getBoundingBox(entity: HermesEntity): net.minecraft.util.math.Box =
+        super.getBoundingBox(entity).expand(CULL_SIDE, CULL_UP, CULL_SIDE)
+
+    /** Gedächtnis je Wesen; Wesen, die es nicht mehr gibt, werden alle [PRUNE_EVERY] Aufrufe vergessen. */
+    private fun animOf(entity: HermesEntity): HermesAnim {
+        val world = entity.entityWorld
+        if (++calls % PRUNE_EVERY == 0) anims.keys.removeIf { id -> world.getEntityById(id) == null }
+        return anims.getOrPut(entity.id) { HermesAnim() }.also { it.lastSeen = calls.toLong() }
+    }
+
+    /**
+     * Posenuhr (REF T14 Punkt 2): Pose und Wechsel-Alter setzt `HermesEntity.onTrackedDataSet` zusammen, also läuft
+     * nie die neue Pose mit dem Alter der alten. Das Paket kommt aber mitten zwischen zwei Ticks an; `age −
+     * poseChangedAge + tickDelta` begann deshalb bei bis zu einem Tick statt bei 0 (Sprung in die neue Pose). Jetzt
+     * beginnt die Uhr beim ersten Bild, das die neue Pose zeigt, und läuft von dort stetig.
+     */
+    private fun poseClock(anim: HermesAnim, entity: HermesEntity, tickDelta: Float): Float {
+        val now = entity.age + tickDelta
+        if (entity.pose != anim.clockPose || entity.poseChangedAge != anim.clockChanged) {
+            val fresh = anim.clockPose != Int.MIN_VALUE
+            anim.clockPose = entity.pose
+            anim.clockChanged = entity.poseChangedAge
+            // Erstes Bild eines Wesens (Nachzügler, neu in Sicht): die Pose läuft schon seit dem Wechsel.
+            anim.clockStart = if (fresh) now else entity.poseChangedAge.toFloat()
+        }
+        return (now - anim.clockStart).coerceAtLeast(0f)
+    }
+
+    /** Drehrate des Körpers in Grad je Tick (für die Schräglage), aus dem gezeichneten Körperblick gemessen. */
+    private fun turnRate(anim: HermesAnim, entity: HermesEntity, tickDelta: Float): Float {
+        val now = entity.age + tickDelta
+        val yaw = MathHelper.lerpAngleDegrees(tickDelta, entity.lastBodyYaw, entity.bodyYaw)
+        val last = anim.lastYaw
+        val dt = now - anim.lastYawTime
+        anim.lastYaw = yaw
+        anim.lastYawTime = now
+        if (last.isNaN() || dt <= 1e-3f || dt > 4f) return 0f
+        return MathHelper.wrapDegrees(yaw - last) / dt
+    }
+
+    private val anims = HashMap<Int, HermesAnim>()
+    private var calls = 0
+
     private companion object {
         /** Modellhöhe 64 Einheiten → 2,7 Blöcke. */
         const val SCALE = 0.675f
+
+        /** Alle so viele Render-Aufrufe werden entfernte Wesen aus dem Gedächtnis gelöscht. */
+        const val PRUNE_EVERY = 400
+
+        /** Zugabe der Sichtbarkeits-Box: Spannweite der Flügel zur Seite, Flügelspitzen nach oben (Blöcke). */
+        const val CULL_SIDE = 1.8
+        const val CULL_UP = 1.2
     }
 }
 

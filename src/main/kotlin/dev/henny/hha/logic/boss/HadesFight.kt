@@ -15,6 +15,8 @@ import dev.henny.hha.logic.Fx
 import dev.henny.hha.logic.Vfx
 import dev.henny.hha.logic.world.TartarosChain
 import dev.henny.hha.logic.world.TartarosMinibosses
+import dev.henny.hha.stage.StageScripts
+import dev.henny.hha.stage.scripts.HadesStages
 import dev.henny.hha.world.TartarusPlans
 import net.fabricmc.fabric.api.entity.event.v1.ServerEntityWorldChangeEvents
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents
@@ -23,6 +25,7 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents
 import net.minecraft.block.Block
 import net.minecraft.block.BlockState
 import net.minecraft.block.Blocks
+import net.minecraft.entity.Entity
 import net.minecraft.entity.SpawnReason
 import net.minecraft.entity.damage.DamageSource
 import net.minecraft.entity.effect.StatusEffectInstance
@@ -804,6 +807,33 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         wait(length + 4)
     }
 
+    // --- Überarbeitung 3: Bühnen-Skripte (`stage/scripts/HadesStages.kt`) ------------------------------------
+    // Kamera, Rucke, Szenen-Effekte und Musik-Übergaben laufen am Client als Skript; dieser Ablauf bleibt die Quelle
+    // aller Zeilen, Posen, Blöcke und Zustände (auch beim Vorspulen). Die Zeitpunkte rechnen beide aus `HadesStages`.
+
+    private var stageId = ""
+    private var stageAt = 0L
+    private val stageDrift = HashSet<String>()
+
+    /** Startet das Skript [id] bei [players] (Anker Saalmitte, Blick [HadesStages.ANCHOR_YAW]) und merkt sich den Tick. */
+    private fun beginStage(players: List<ServerPlayerEntity>, id: String, actors: List<Entity>) {
+        Cine.stage(players, id, center, HadesStages.ANCHOR_YAW, actors)
+        stageId = id
+        stageAt = world.time
+    }
+
+    /** Prüft, dass der Ablauf die Marke [mark] des laufenden Skripts im selben Tick erreicht (nur Log, einmal je Marke). */
+    private fun beat(mark: String) {
+        if (Cine.muted || stageId.isEmpty()) return
+        val script = StageScripts.get(stageId) ?: return
+        if (!script.hasMark(mark)) return
+        val expected = script.mark(mark)
+        val actual = (world.time - stageAt).toInt()
+        if (expected != actual && stageDrift.add("$stageId/$mark")) {
+            Hha.LOGGER.warn("Hades-Szene {}: Marke '{}' bei Tick {} statt {} (Ablauf und Skript laufen auseinander)", stageId, mark, actual, expected)
+        }
+    }
+
     private fun gather() {
         val list = players()
         for ((i, player) in list.withIndex()) {
@@ -874,15 +904,16 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         world.spawnEntity(messenger)
         hermes = messenger
 
-        // Lange Fahrt durch den Saal auf den Thron zu: Erst hier zeigt sich, wie groß das Haus ist.
-        Cine.camera(everyone, center.add(0.0, 9.0, 24.0), center.add(0.0, 4.0, 2.0), throneSeat.add(0.0, 3.0, 0.0), throneSeat.add(0.0, 2.4, 0.0), 130, 70.0, 46.0)
+        // Lange Fahrt durch den Saal auf den Thron zu: Erst hier zeigt sich, wie groß das Haus ist. Kamera, Ruck, Risse
+        // und der Einsatz der Musik kommen aus dem Bühnen-Skript `hades.intro` (Darsteller: Hades, Hermes).
+        beginStage(everyone, HadesStages.Intro.ID, listOf(entity, messenger))
         wait(14)
         say(Cine.SPEAKER_NARRATOR, "hades.enter", 70)
-        Cine.camera(everyone, throneSeat.add(-3.5, 1.6, 8.0), throneSeat.add(-1.8, 2.2, 5.6), throneSeat.add(0.0, 2.6, 0.0), throneSeat.add(0.0, 2.8, 0.0), 100, 44.0, 38.0)
+        beat("host")
         say(Cine.SPEAKER_HADES, "hades.host", 86)
-        Cine.camera(everyone, messenger.entityPos.add(-2.4, 1.2, 3.2), messenger.entityPos.add(-1.8, 1.4, 2.4), messenger.entityPos.add(0.0, 1.2, 0.0), messenger.entityPos.add(0.0, 1.2, 0.0), 70, 44.0, 38.0)
+        beat("excuse")
         say(Cine.SPEAKER_HERMES, "hades.excuse", 70)
-        Cine.camera(everyone, throneSeat.add(2.2, 1.6, 7.0), throneSeat.add(1.2, 2.0, 5.0), throneSeat.add(0.0, 2.6, 0.0), throneSeat.add(0.0, 2.6, 0.0), 70, 44.0, 38.0)
+        beat("dismiss")
         say(Cine.SPEAKER_HADES, "hades.dismiss", 58)
         Vfx.feathers(world, Vfx.Style.SHADOW, messenger.entityPos.add(0.0, 1.0, 0.0), 24, 1.4f, 60)
         sound(HhaSounds.BLINK, 2f, 0.7f, messenger.entityPos)
@@ -891,17 +922,19 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
 
         // Er steht auf, und der Bident schlägt auf.
         entity.pose = HadesPose.CAST
-        Cine.camera(everyone, center.add(9.0, 2.6, -9.0), center.add(6.0, 1.6, -6.0), throneSeat.add(0.0, 3.0, 0.0), center.add(0.0, 3.0, -8.0), 86, 66.0, 56.0)
+        beat("rise")
         say(Cine.SPEAKER_HADES, "hades.rise", 54)
+        beat("glide")
         glide(center.add(0.0, 0.0, -8.0), 28)
         entity.pose = HadesPose.SLAM
+        beat("slam")
         wait(BossTimings.Hades.SLAM_WINDUP)
+        beat("hit")
+        // Statt Rütteln: Ruck, Risse und Trümmer aus dem Skript.
         Vfx.shockwave(world, Vfx.Style.SOUL, center.add(0.0, 0.0, -6.0), 26f, 26, 5f)
-        Vfx.shake(world, center, 8f, 24, 60f)
         sound(HhaSounds.IMPACT, 4f, 0.6f)
         entity.pose = HadesPose.ROAR
         sound(HhaSounds.ROAR, 3.5f, 0.45f)
-        Cine.camera(everyone, entity.entityPos.add(-2.5, 0.6, 9.0), entity.entityPos.add(-2.0, 1.0, 7.0), entity.entityPos.add(0.0, 3.0, 0.0), entity.entityPos.add(0.0, 3.2, 0.0), 56, 58.0, 50.0)
         Cine.title(everyone, "hha.hades.stage.1", "hha.hades.stage.1.sub", 56)
         sound(HhaSounds.STING, 2.5f, 0.7f)
         wait(34)
@@ -957,9 +990,10 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         Cine.fade(again, 0x000000, 1.0, 0.0, 10)
         sound(HhaSounds.IMPACT, 4f, 0.4f, Vec3d.ofCenter(chestPos))
         Vfx.nova(world, Vfx.Style.SOUL, Vec3d.ofCenter(chestPos), 8f, 14)
-        Cine.camera(again, entity.entityPos.add(3.0, 1.2, 7.0), entity.entityPos.add(1.5, 1.4, 5.0), entity.entityPos.add(0.0, 0.8, 0.0), entity.entityPos.add(0.0, 2.8, 0.0), 120, 56.0, 44.0)
+        beginStage(again, HadesStages.Phase2.ID, listOf(entity))
         wait(10)
         say(Cine.SPEAKER_HADES, "hades.bait", 80)
+        beat("rise")
 
         // Der Boden färbt sich, und er steht auf. Größer als vorher, mit den ersten Schwingen im Rücken.
         entity.pose = HadesPose.ROAR
@@ -968,21 +1002,22 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         repaint()
         Vfx.pillar(world, Vfx.Style.SOUL, entity.entityPos, 4f, 50f, 50)
         Vfx.shockwave(world, Vfx.Style.SOUL, entity.entityPos, 26f, 34, 7f)
-        Vfx.shake(world, center, 10f, 40, 60f)
         sound(HhaSounds.ROAR, 4f, 0.5f)
         sound(HhaSounds.THUNDER, 4f, 0.5f)
         wait(16)
-        Cine.camera(again, entity.entityPos.add(2.0, 2.0, 8.0), entity.entityPos.add(1.0, 2.6, 6.5), entity.entityPos.add(0.0, 3.4, 0.0), entity.entityPos.add(0.0, 3.4, 0.0), 100, 50.0, 42.0)
+        beat("speak")
         say(Cine.SPEAKER_HADES, "hades.gates", 80)
+        beat("gates")
         // Die Pforten reißen schon in der Szene auf: Ab jetzt greift der Saal mit an. Sie selbst sind nur Kulisse.
-        Cine.orbit(again, center, 24.0, 9.0, 90.0, 200.0, 90, 64.0, 58.0, entity, 3.0)
         attacks.openGates()
         wait(50)
+        beat("title")
         Cine.title(again, "hha.hades.stage.2", "hha.hades.stage.2.sub", 60)
         sound(HhaSounds.STING, 3f, 0.7f)
         wait(30)
         Cine.end(players())
-        Cine.music(players(), HhaSounds.THEME_HADES)
+        // Ab Phase II die zweite Fassung (setzt auch das Skript; hier für Überspringen und Nachzügler).
+        Cine.music(players(), HhaSounds.THEME_HADES_2)
         entity.pose = HadesPose.IDLE
         startStage(2)
     }
@@ -1019,54 +1054,56 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         Cine.fade(everyone, 0x000000, 1.0, 0.0, 26)
         Cine.title(everyone, "hha.hades.title.fake", "hha.hades.title.fake2.sub", 70)
         sound(HhaSounds.STING, 2.5f, 1.1f)
-        Cine.camera(everyone, center.add(8.0, 3.0, 4.0), center.add(5.0, 2.0, 1.0), entity.entityPos, entity.entityPos, 100, 56.0, 48.0)
+        beginStage(everyone, HadesStages.Phase3.ID, listOf(entity))
         wait(70)
+        beat("hermes")
 
         val messenger = spawnGhostHermes(center.add(4.0, 0.2, 7.0))
         messenger.corrupted = false
         messenger.stage = 1
         messenger.pose = HermesPose.READ
         faceGhost(messenger, gatherPoint())
-        Cine.camera(everyone, messenger.entityPos.add(2.4, 1.6, -3.0), messenger.entityPos.add(1.6, 1.8, -2.2), messenger.entityPos.add(0.0, 1.5, 0.0), messenger.entityPos.add(0.0, 1.5, 0.0), 80, 44.0, 38.0)
         say(Cine.SPEAKER_HERMES, "hades.sign", 56)
+        beat("stir")
 
-        // Hinter ihm regt sich etwas. Er merkt es als Erster.
-        Vfx.shake(world, center, 4f, 30, 60f)
+        // Hinter ihm regt sich etwas. Er merkt es als Erster (Grollen aus dem Skript).
         sound(HhaSounds.ROAR, 3.5f, 0.45f)
         faceGhost(messenger, entity.entityPos)
         messenger.pose = HermesPose.STAGGER
         wait(20)
+        beat("rise")
         entity.pose = HadesPose.ROAR
         entity.form = 2
         entity.health = entity.maxHealth
         Vfx.pillar(world, Vfx.Style.SOUL, entity.entityPos, 5f, 60f, 60)
         Vfx.shockwave(world, Vfx.Style.SOUL, entity.entityPos, 26f, 34, 8f)
-        Vfx.shake(world, center, 12f, 40, 60f)
         sound(HhaSounds.THUNDER, 4f, 0.45f)
-        Cine.camera(everyone, entity.entityPos.add(2.0, 2.0, 11.0), entity.entityPos.add(1.0, 3.0, 8.5), entity.entityPos.add(0.0, 3.6, 0.0), entity.entityPos.add(0.0, 4.2, 0.0), 80, 54.0, 42.0)
         say(Cine.SPEAKER_HADES, "hades.bait2", 66)
+        beat("wealth")
         say(Cine.SPEAKER_HADES, "hades.wealth", 90)
+        beat("offer")
 
         // Das Angebot: Hermes kniet, wird grün und steht als Geist wieder auf.
         messenger.pose = HermesPose.KNEEL
         Vfx.chain(world, Vfx.Style.SOUL, entity, messenger.entityPos, messenger, 50)
         sound(HhaSounds.CHAIN, 3f, 0.8f, messenger.entityPos)
         wait(30)
+        beat("pact")
         messenger.corrupted = true
         messenger.stage = 3
         Vfx.nova(world, Vfx.Style.SOUL, messenger.entityPos.add(0.0, 1.5, 0.0), 5f, 14)
         sound(HhaSounds.SOUL, 3f, 0.7f, messenger.entityPos)
         messenger.pose = HermesPose.TAUNT
         faceGhost(messenger, gatherPoint())
-        Cine.camera(everyone, messenger.entityPos.add(2.0, 1.6, 3.0), messenger.entityPos.add(1.4, 1.8, 2.2), messenger.entityPos.add(0.0, 1.6, 0.0), messenger.entityPos.add(0.0, 1.6, 0.0), 70, 44.0, 38.0)
         say(Cine.SPEAKER_SHADE, "hades.pact", 72)
-        Cine.orbit(everyone, center, 18.0, 4.0, 60.0, 110.0, 80, 62.0, 56.0, entity, 3.2)
+        beat("orbit")
         say(Cine.SPEAKER_HADES, "hades.together", 60)
+        beat("title")
         Cine.title(everyone, "hha.hades.stage.3", "hha.hades.stage.3.sub", 60)
         sound(HhaSounds.STING, 3f, 0.6f)
         wait(20)
         Cine.end(players())
-        Cine.music(players(), HhaSounds.THEME_HADES)
+        Cine.music(players(), HhaSounds.THEME_HADES_2)
         entity.pose = HadesPose.IDLE
         messenger.pose = HermesPose.IDLE
         startStage(3)
@@ -1118,41 +1155,23 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         messenger.pose = HermesPose.TAUNT
         faceGhost(messenger, gatherPoint())
         messenger.setPosition(center.add(5.0, 0.2, -2.0))
-        Cine.camera(everyone, messenger.entityPos.add(2.0, 1.6, 3.0), messenger.entityPos.add(1.4, 1.8, 2.2), messenger.entityPos.add(0.0, 1.6, 0.0), messenger.entityPos.add(0.0, 1.6, 0.0), 80, 44.0, 38.0)
+        // `hades.yield` (Darsteller: Hades, Hermes); im selben Ablauf folgt `kronos.wake`.
+        beginStage(everyone, HadesStages.Yield.ID, listOf(entity, messenger))
         wait(10)
         say(Cine.SPEAKER_HERMES, "hades.never", 60)
+        beat("flee")
         Vfx.feathers(world, Vfx.Style.HEAVEN, messenger.entityPos.add(0.0, 1.0, 0.0), 30, 1.8f, 60)
         sound(HhaSounds.DASH, 2.5f, 1.2f, messenger.entityPos)
         messenger.discard()
         hermes = null
 
-        Cine.camera(everyone, entity.entityPos.add(2.0, 1.8, 7.5), entity.entityPos.add(1.0, 2.0, 5.6), entity.entityPos.add(0.0, 2.6, 0.0), entity.entityPos.add(0.0, 2.6, 0.0), 120, 46.0, 40.0)
         say(Cine.SPEAKER_HADES, "hades.enough", 74)
 
-        // Er hat den Namen gesagt. Die Tiefe antwortet.
+        // Er hat den Namen gesagt. Die Tiefe antwortet (Grollen, Riss am Himmel, Linse und Rucke aus `kronos.wake`).
         Vfx.styleOverride = null
-        Vfx.shake(world, center, 5f, 90, 80f)
         sound(HhaSounds.THUNDER, 4f, 0.35f)
         sound(HhaSounds.RIFT, 4f, 0.4f)
-        Cine.camera(everyone, center.add(0.0, 2.0, 16.0), center.add(0.0, 3.0, 14.0), center.add(0.0, 10.0, 0.0), oculus, 90, 70.0, 62.0)
-        say(Cine.SPEAKER_KRONOS, "kronos.wake", 70)
-        entity.pose = HadesPose.STAGGER
-        healHall()
-        Vfx.godRays(world, Vfx.Style.AEON, oculus.add(0.0, -48.0, 0.0), 10f, 70f, 140)
-        Vfx.flare(world, Vfx.Style.AEON, oculus, 18f, 30)
-        Vfx.shake(world, center, 14f, 30, 90f)
-        sound(HhaSounds.IMPACT, 4f, 0.3f)
-        sound(HhaSounds.THUNDER, 4f, 0.5f, oculus)
-        breakDome()
-        Vfx.nova(world, Vfx.Style.AEON, oculus, 22f, 20)
-        // Trümmer der Kuppel: nur Bild, kein Schaden (die Szene läuft).
-        for (i in 0 until 10) {
-            val spot = center.add((world.random.nextDouble() - 0.5) * 30.0, 0.0, (world.random.nextDouble() - 0.5) * 30.0)
-            Vfx.rune(world, Vfx.Style.AEON, spot.add(0.0, 0.06, 0.0), 2.4f, 30)
-            Vfx.pillar(world, Vfx.Style.AEON, spot, 1.2f, 40f, 30)
-        }
-
-        // Der Titan sinkt herab, die Arme ausgebreitet, der Uhrenkranz dreht sich hinter ihm.
+        // Der Titan wartet schon über der geschlossenen Kuppel (unsichtbar), damit er Darsteller 1 der Szene sein kann.
         val titanEntity = HhaEntities.KRONOS.create(world, SpawnReason.EVENT)!!
         titanEntity.setPosition(oculus.add(0.0, 14.0, 0.0))
         titanEntity.yaw = 0f
@@ -1161,23 +1180,37 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         titanEntity.health = titanEntity.maxHealth
         kronos = titanEntity
         kronosGuard = BossDefense.Guard(titanEntity)
-        val land = center.add(0.0, 0.0, -2.0)
-        Cine.camera(everyone, center.add(-10.0, 1.5, 18.0), center.add(-6.0, 2.0, 13.0), oculus, land.add(0.0, 4.0, 0.0), 120, 72.0, 54.0, titanEntity, 4.0)
+        beginStage(everyone, HadesStages.Wake.ID, listOf(entity, titanEntity))
+        say(Cine.SPEAKER_KRONOS, "kronos.wake", 70)
+        beat("break")
+        entity.pose = HadesPose.STAGGER
+        healHall()
+        Vfx.godRays(world, Vfx.Style.AEON, oculus.add(0.0, -48.0, 0.0), 10f, 70f, 140)
+        Vfx.flare(world, Vfx.Style.AEON, oculus, 18f, 30)
+        sound(HhaSounds.IMPACT, 4f, 0.3f)
+        sound(HhaSounds.THUNDER, 4f, 0.5f, oculus)
+        breakDome()
+        Vfx.nova(world, Vfx.Style.AEON, oculus, 22f, 20)
+        // Trümmer der Kuppel: echte Blöcke stürzen im Skript (`core.debris_pull`), kein Schaden (die Szene läuft).
+
+        // Der Titan sinkt herab, die Arme ausgebreitet, der Uhrenkranz dreht sich hinter ihm.
+        val land = center.add(0.0, 0.0, HadesStages.Wake.LAND_Z)
         val top = titanEntity.entityPos
         for (i in 1..110) {
             val k = i / 110.0
             val eased = 1.0 - (1.0 - k) * (1.0 - k)
             titanEntity.setPosition(top.lerp(land, eased))
             titanEntity.yaw = (1.0 - eased).toFloat() * 180f
-            if (i % 8 == 0) Vfx.nova(world, Vfx.Style.AEON, titanEntity.entityPos.add(0.0, 3.0, 0.0), 4f, 10)
+            if (i % DESCENT_GLOW_EVERY == 0) Vfx.nova(world, Vfx.Style.AEON, titanEntity.entityPos.add(0.0, 3.0, 0.0), 4f, 10)
             if (i % 20 == 0) sound(HhaSounds.CHIME, 3f, 0.4f + i * 0.004f, titanEntity.entityPos)
             yield(Unit)
         }
         titanEntity.yaw = 0f
         titanEntity.pose = KronosPose.SLAM
+        beat("slam")
         wait(BossTimings.Kronos.SLAM_WINDUP)
+        beat("land")
         Vfx.shockwave(world, Vfx.Style.AEON, land, 30f, 30, 7f)
-        Vfx.shake(world, center, 16f, 36, 80f)
         sound(HhaSounds.IMPACT, 4f, 0.35f)
         sound(HhaSounds.THUNDER, 4f, 0.4f)
         // Hades wird zum Thron geschleudert und bleibt dort auf den Knien.
@@ -1187,20 +1220,21 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         Vfx.nova(world, Vfx.Style.SOUL, entity.entityPos.add(0.0, 1.0, 0.0), 5f, 12)
 
         titanEntity.pose = KronosPose.IDLE
-        Cine.camera(everyone, titanEntity.entityPos.add(-4.0, 3.0, 13.0), titanEntity.entityPos.add(-2.5, 4.5, 10.5), titanEntity.entityPos.add(0.0, 5.0, 0.0), titanEntity.entityPos.add(0.0, 5.4, 0.0), 120, 58.0, 48.0)
         say(Cine.SPEAKER_KRONOS, "kronos.son", 80)
-        Cine.camera(everyone, entity.entityPos.add(-2.0, 1.4, 5.0), entity.entityPos.add(-1.4, 1.8, 4.0), entity.entityPos.add(0.0, 2.0, 0.0), entity.entityPos.add(0.0, 2.0, 0.0), 60, 46.0, 40.0)
+        beat("father")
         say(Cine.SPEAKER_HADES, "hades.father", 40)
+        beat("roar")
         titanEntity.pose = KronosPose.ROAR
-        Cine.camera(everyone, titanEntity.entityPos.add(0.0, 2.0, 14.0), titanEntity.entityPos.add(0.0, 3.0, 11.0), titanEntity.entityPos.add(0.0, 5.5, 0.0), titanEntity.entityPos.add(0.0, 6.0, 0.0), 110, 60.0, 50.0)
         Vfx.shockwave(world, Vfx.Style.AEON, titanEntity.entityPos, 20f, 24, 5f)
         sound(HhaSounds.ROAR, 4f, 0.3f)
         say(Cine.SPEAKER_KRONOS, "kronos.devour", 80)
+        beat("title")
         Cine.title(everyone, "hha.kronos.stage.1", "hha.kronos.stage.1.sub", 70)
         sound(HhaSounds.STING, 3f, 0.5f)
         wait(30)
         Cine.end(players())
-        Cine.music(players(), HhaSounds.THEME_HADES)
+        // Übergabe an sein Thema (das Skript setzt es bei der Landung; hier für Überspringen und Nachzügler).
+        Cine.music(players(), HhaSounds.THEME_KRONOS)
         titanEntity.pose = KronosPose.IDLE
         startStage(4)
     }
@@ -1227,7 +1261,7 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         titanEntity.health = titanEntity.maxHealth
         Vfx.pillar(world, Vfx.Style.AEON, titanEntity.entityPos, 6f, 70f, 60)
         Vfx.shockwave(world, Vfx.Style.AEON, titanEntity.entityPos, 30f, 34, 8f)
-        Vfx.shake(world, center, 14f, 40, 80f)
+        Vfx.shake(world, center, 4f, 16, 80f)
         sound(HhaSounds.THUNDER, 4f, 0.35f)
         say(Cine.SPEAKER_KRONOS, "kronos.shatter", 90)
 
@@ -1248,7 +1282,8 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         sound(HhaSounds.STING, 3f, 0.45f)
         wait(40)
         Cine.end(players())
-        Cine.music(players(), HhaSounds.THEME_HADES)
+        // PLAN 2.10: zweite Phase des Titanen mit der zweiten Fassung seines Themas.
+        Cine.music(players(), HhaSounds.THEME_KRONOS_2)
         titanEntity.pose = KronosPose.IDLE
         startStage(5)
     }
@@ -1269,25 +1304,35 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         titanEntity.pose = KronosPose.BOUND
         sound(HhaSounds.IMPACT, 4f, 0.35f)
         Vfx.shockwave(world, Vfx.Style.AEON, titanEntity.entityPos, 16f, 24, 4f)
-        Cine.camera(everyone, titanEntity.entityPos.add(5.0, 2.0, 11.0), titanEntity.entityPos.add(3.0, 2.5, 9.0), titanEntity.entityPos.add(0.0, 3.0, 0.0), titanEntity.entityPos.add(0.0, 3.0, 0.0), 120, 56.0, 46.0)
+        // `kronos.end` (Darsteller: Hades, Kronos). Ohne Hades gäbe es zwei Zeilen weniger: dann die alte Einstellung.
+        if (ally != null) {
+            beginStage(everyone, HadesStages.End.ID, listOf(ally, titanEntity))
+        } else {
+            Cine.camera(everyone, titanEntity.entityPos.add(5.0, 2.0, 11.0), titanEntity.entityPos.add(3.0, 2.5, 9.0), titanEntity.entityPos.add(0.0, 3.0, 0.0), titanEntity.entityPos.add(0.0, 3.0, 0.0), 120, 56.0, 46.0)
+        }
         wait(20)
         say(Cine.SPEAKER_KRONOS, "kronos.fall", 80)
+        beat("seal")
 
         if (ally != null) {
             ally.setPosition(center.add(-7.0, 0.0, 4.0))
             ally.pose = HadesPose.CAST
             face(titanEntity.entityPos)
-            Cine.camera(everyone, ally.entityPos.add(-3.0, 1.6, 6.0), ally.entityPos.add(-2.0, 2.0, 4.5), ally.entityPos.add(0.0, 2.6, 0.0), titanEntity.entityPos.add(0.0, 3.0, 0.0), 90, 50.0, 46.0)
             say(Cine.SPEAKER_HADES, "hades.seal", 70)
         }
-        // Acht Ketten schießen aus dem Boden und ziehen ihn hinab.
+        beat("bind")
+        // Acht Ketten schießen aus dem Boden und halten ihn; gebunden zerfällt er von den Händen her in Licht und Sand
+        // (`kronos.death`, P13: pos = Füße, entity = Kronos, a = Höhe, life = 200).
         for (i in 0 until 8) {
             val a = i * Math.PI / 4.0
             val anchor = titanEntity.entityPos.add(kotlin.math.cos(a) * 7.0, 0.0, kotlin.math.sin(a) * 7.0)
             Vfx.pillar(world, Vfx.Style.SOUL, anchor, 0.8f, 6f, 20)
         }
         sound(HhaSounds.CHAIN, 4f, 0.6f)
-        Cine.camera(everyone, center.add(0.0, 8.0, 18.0), center.add(0.0, 5.0, 14.0), titanEntity.entityPos.add(0.0, 3.0, 0.0), titanEntity.entityPos.add(0.0, -2.0, 0.0), 110, 60.0, 54.0)
+        BossFx.play(
+            world, "kronos.death", Vfx.Style.AEON, titanEntity.entityPos, a = titanEntity.height, life = HadesStages.End.DEATH_LIFE,
+            entity = titanEntity,
+        )
         val start = titanEntity.entityPos
         for (i in 1..100) {
             if (i % 10 == 1) {
@@ -1296,32 +1341,39 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
                     Vfx.chain(world, Vfx.Style.SOUL, titanEntity, titanEntity.entityPos.add(kotlin.math.cos(a) * 7.0, -6.0, kotlin.math.sin(a) * 7.0), null, 12)
                 }
             }
-            if (i > 30) titanEntity.setPosition(start.add(0.0, -(i - 30) * 0.13, 0.0))
-            if (i % 15 == 0) {
-                Vfx.shake(world, center, 4f, 12, 60f)
-                sound(HhaSounds.CHAIN, 3f, 0.5f + i * 0.004f)
-            }
+            // Die Ketten halten ihn fest: er sinkt nur wenig ein, der Zerfall geschieht über dem Boden.
+            if (i > 30) titanEntity.setPosition(start.add(0.0, -(i - 30) * BOUND_SINK, 0.0))
+            if (i % 15 == 0) sound(HhaSounds.CHAIN, 3f, 0.5f + i * 0.004f)
             yield(Unit)
         }
-        Vfx.nova(world, Vfx.Style.GOLD, start.add(0.0, 1.0, 0.0), 14f, 20)
+        beat("freed")
+        // Kein Lichtball: die Ketten legen sich, der Rest des Zerfalls läuft still weiter.
         Vfx.shockwave(world, Vfx.Style.SOUL, start, 20f, 26, 5f)
         sound(HhaSounds.THUNDER, 4f, 0.6f)
-        titanEntity.discard()
-        kronos = null
+        // Der Körper geht erst, wenn `kronos.death` abgelaufen ist (fester Endzustand: spätestens `finish` räumt ihn weg).
+        addTask(sequence {
+            repeat(HadesStages.End.DEATH_LIFE - HadesStages.End.BIND_TICKS) { yield(Unit) }
+            titanEntity.discard()
+            if (kronos === titanEntity) kronos = null
+        })
         wait(30)
+        beat("gift")
 
         if (ally != null) {
             ally.pose = HadesPose.IDLE
             face(gatherPoint())
-            Cine.camera(everyone, ally.entityPos.add(2.0, 1.8, 7.5), ally.entityPos.add(1.0, 2.0, 5.6), ally.entityPos.add(0.0, 2.6, 0.0), ally.entityPos.add(0.0, 2.6, 0.0), 140, 46.0, 40.0)
             say(Cine.SPEAKER_HADES, "hades.gift", 80)
         }
+        beat("grant")
         // Beute nur über BossRewards (PLAN 6.1: Hadeskappe einmal je Welt, sonst Ersatz); Hades und Kronos sind besiegt.
         BossRewards.grant(TartarosChain.HADES, players(), center)
         world.server?.let { TartarosChain.of(it).hadesDone = true }
+        // Sieg-Stinger des Tartaros (läuft als eigener Kanal weiter, auch über das Ende des Kampfs hinaus).
+        Cine.music(everyone, HhaSounds.VICTORY_TARTAROS)
         Cine.title(everyone, "hha.kronos.title.end", "hha.kronos.title.end.sub", 80)
         sound(HhaSounds.STING, 2.5f, 0.85f)
         wait(80)
+        beat("fade")
         Cine.fade(players(), 0x000000, 0.0, 1.0, 20)
         wait(22)
         val left = players()
@@ -1347,5 +1399,13 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
 
         /** So viel Schaden hält seine Haltung aus, bevor er taumelt. */
         private const val POISE_LIMIT = 190f
+
+        // --- Überarbeitung 3: nur Darstellung ---
+
+        /** Lichtringe um den herabsinkenden Titanen: einer alle so viele Ticks (vorher 8, ruhiger). */
+        private const val DESCENT_GLOW_EVERY = 22
+
+        /** Gebunden sinkt Kronos je Tick so tief ein (vorher 0,13: er verschwand im Boden; jetzt zerfällt er sichtbar). */
+        private const val BOUND_SINK = 0.02
     }
 }

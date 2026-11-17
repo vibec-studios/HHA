@@ -46,6 +46,14 @@ class Hha : ModInitializer {
         dev.henny.hha.logic.world.OlympusGate.init()
         // RPG-Modus: Wege, Weltzustand, Start beim ersten Betreten
         dev.henny.hha.rpg.RpgServer.init()
+        // Überarbeitung 3 (P00): Bühnen-Skripte (Server und Client), RPG-Kern und -Szenen, Prüfbefehle.
+        dev.henny.hha.stage.StageScripts.init()
+        dev.henny.hha.rpg.RpgRules.init()
+        dev.henny.hha.rpg.RpgStory.init()
+        dev.henny.hha.rpg.RpgArrival.init()
+        dev.henny.hha.rpg.RpgRests.init()
+        dev.henny.hha.rpg.RpgScenes.init()
+        dev.henny.hha.config.Overhaul3Commands.init()
         ServerTickEvents.END_SERVER_TICK.register(PassiveEffects::tick)
         LOGGER.info("Hell's & Heaven's Set geladen — stay crispy, fly high.")
     }

@@ -16,7 +16,7 @@ public abstract class KeyboardInputMixin extends Input {
 
     @Inject(method = "tick", at = @At("TAIL"))
     private void hha$freezeMovement(CallbackInfo ci) {
-        if (CinePlayer.getActive()) {
+        if (CinePlayer.isInputLocked()) {
             this.playerInput = PlayerInput.DEFAULT;
             this.movementVector = Vec2f.ZERO;
         }

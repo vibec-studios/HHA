@@ -52,9 +52,36 @@ class HhaClient : ClientModInitializer {
         net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback.EVENT.register { context, _ ->
             dev.henny.hha.client.vfx.ScreenFx.renderOverlay(context)
         }
+        // Überarbeitung 3 (P00): Phase 1 der neuen Effekte und die Statuszeile.
+        net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents.AFTER_ENTITIES.register { context ->
+            dev.henny.hha.client.vfx.VfxManager.renderSolid(context)
+        }
+        net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback.EVENT.register { context, _ ->
+            HudLine.render(context)
+        }
         ClientPlayNetworking.registerGlobalReceiver(dev.henny.hha.net.VfxPayload.ID) { payload, context ->
             val world = context.client().world ?: return@registerGlobalReceiver
             dev.henny.hha.client.vfx.VfxManager.handle(payload, world)
+        }
+
+        // Überarbeitung 3 (P00): Effekte per Text-ID, Musik, Bühne, RPG-Zustand und -HUD.
+        dev.henny.hha.client.vfx.fx.FxClient.init()
+        dev.henny.hha.client.audio.MusicDirector.init()
+        dev.henny.hha.client.cine.stage.StagePlayer.init()
+        dev.henny.hha.client.rpg.game.RpgClientState.init()
+        dev.henny.hha.client.rpg.game.RpgHud.init()
+        ClientPlayNetworking.registerGlobalReceiver(dev.henny.hha.net.FxPayload.ID) { payload, context ->
+            val world = context.client().world ?: return@registerGlobalReceiver
+            dev.henny.hha.client.vfx.fx.FxClient.handle(payload, world)
+        }
+        ClientPlayNetworking.registerGlobalReceiver(dev.henny.hha.net.RpgStatePayload.ID) { payload, _ ->
+            dev.henny.hha.client.rpg.game.RpgClientState.handleState(payload)
+        }
+        ClientPlayNetworking.registerGlobalReceiver(dev.henny.hha.net.RpgPartyPayload.ID) { payload, _ ->
+            dev.henny.hha.client.rpg.game.RpgClientState.handleParty(payload)
+        }
+        ClientPlayNetworking.registerGlobalReceiver(dev.henny.hha.net.RpgEventPayload.ID) { payload, _ ->
+            dev.henny.hha.client.rpg.game.RpgClientState.handleEvent(payload)
         }
 
         CooldownHud.register()
@@ -75,6 +102,15 @@ class HhaClient : ClientModInitializer {
             dev.henny.hha.client.vfx.SkyMood.reset()
             dev.henny.hha.client.vfx.ScreenFx.reset()
             dev.henny.hha.client.cine.CinePlayer.reset()
+            // Überarbeitung 3 (P00)
+            dev.henny.hha.client.vfx.fx.FxClient.reset()
+            dev.henny.hha.client.vfx.CameraFx.reset()
+            dev.henny.hha.client.audio.MusicDirector.reset()
+            dev.henny.hha.client.cine.stage.StagePlayer.reset()
+            HudLine.reset()
+            dev.henny.hha.client.rpg.game.RpgClientState.reset()
+            dev.henny.hha.client.rpg.game.RpgHud.reset()
+            dev.henny.hha.client.rpg.game.RpgDeath.reset()
         }
 
         val category = KeyBinding.Category.create(Hha.id("hells_set"))
@@ -96,6 +132,10 @@ class HhaClient : ClientModInitializer {
             KeyBinding("key.hha.menu", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_K, category)
         )
         dev.henny.hha.client.gui.GuiClient.menuKey = menuKey
+        // Überarbeitung 3 (P00): Tagebuch im RPG-Modus (Wirkung P16).
+        dev.henny.hha.client.rpg.game.RpgHud.journalKey = KeyBindingHelper.registerKeyBinding(
+            KeyBinding("key.hha.journal", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_J, category)
+        )
 
         ClientTickEvents.END_CLIENT_TICK.register { client ->
             CooldownHud.clientTick()
@@ -103,6 +143,12 @@ class HhaClient : ClientModInitializer {
             dev.henny.hha.client.vfx.ScreenFx.tick()
             dev.henny.hha.client.vfx.SkyMood.tick(client.world)
             dev.henny.hha.client.cine.CinePlayer.tick()
+            // Überarbeitung 3 (P00)
+            client.world?.let { dev.henny.hha.client.vfx.fx.FxClient.tick(it) }
+            dev.henny.hha.client.vfx.CameraFx.tick()
+            dev.henny.hha.client.audio.MusicDirector.tick(client)
+            dev.henny.hha.client.cine.stage.StagePlayer.tick()
+            HudLine.tick()
             while (menuKey.wasPressed()) {
                 if (client.currentScreen == null) dev.henny.hha.client.gui.GuiClient.open()
             }

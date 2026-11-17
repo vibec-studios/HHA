@@ -18,7 +18,11 @@
     "client.EnvironmentAttributeInterpolatorMixin",
     "client.ClientWorldAccessor",
     "client.EquipmentRendererMixin",
-    "client.ItemModelManagerMixin"
+    "client.ItemModelManagerMixin",
+    "client.BipedEntityModelMixin",
+    "client.PlayerEntityRendererMixin",
+    "client.ScreenMixin",
+    "client.ToastManagerMixin"
   ],
   "injectors": {
     "defaultRequire": 1

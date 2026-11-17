@@ -40,6 +40,29 @@ MODEL = 'eleven_multilingual_v2'
 PREFIX = 'hha.hermes.line.'
 # Weitere Zeilen-Vorsilben (Olymp-Bosse): Kurzname = voller Schlüssel.
 EXTRA_PREFIXES = ('hha.zeus.line.', 'hha.hekate.line.', 'hha.brontes.line.', 'hha.kratos.line.')
+# Überarbeitung 3 (P19, 17.11.2026): neue gesprochene Zeilen der Bühnen-Szenen (RPG-Geschichte P17, Kampe P15).
+# Nur vorbereitet, nichts erzeugt – im Spiel laufen sie als Text mit Stimm-Lauten. Karten (`*.card*`) sind kein Text
+# zum Sprechen und stehen deshalb nicht hier. Kurzname = voller Schlüssel (wie bei den Olymp-Bossen).
+SCENE_SPEAKERS = {
+    'hha.rpg.scene.arrival.hermes.1': 'hermes',
+    'hha.rpg.scene.arrival.hermes.2': 'hermes',
+    'hha.rpg.scene.arrival.vision': 'narrator',
+    'hha.rpg.scene.arrival.hekate.1': 'hekate',
+    'hha.rpg.scene.arrival.hekate.2': 'hekate',
+    'hha.rpg.scene.isle.b.line': 'narrator',
+    'hha.rpg.scene.isle.c.line': 'narrator',
+    'hha.rpg.scene.isle.d.line': 'narrator',
+    'hha.rpg.scene.isle.e.line': 'narrator',
+    'hha.rpg.scene.isle.f.line': 'narrator',
+    'hha.rpg.scene.tartaros.line': 'narrator',
+    'hha.rpg.scene.tartaros.hermes': 'hermes_ghost',
+    'hha.rpg.scene.palace.line': 'narrator',
+    'hha.rpg.scene.act_end.zeus.1': 'zeus',
+    'hha.rpg.scene.act_end.zeus.2': 'zeus',
+    'hha.rpg.scene.end.line.1': 'narrator',
+    'hha.rpg.scene.end.line.2': 'narrator',
+    'hha.kampe.stage.defeat': 'narrator',
+}
 TARGET_LUFS = -14.0
 
 # Wer spricht, mit welcher Stimme und welcher Nachbearbeitung. Die Voice-IDs stammen aus der Liste von GET /v1/voices.
@@ -98,12 +121,15 @@ CAST = {
 NARRATOR_KEYS = {
     'prologue.pull', 'prologue.altar', 'feather.falls', 'zeus.feather', 'finale.catch', 'finale.stinger', 'hades.enter',
     'hha.zeus.line.end.2',
+    'hha.kratos.line.defeat_bia',   # Überarbeitung 3 (P10): Erzähler in `kratos.defeat`
 }
 
 
 def speaker_of(key):
     if key in NARRATOR_KEYS:
         return 'narrator'
+    if key in SCENE_SPEAKERS:
+        return SCENE_SPEAKERS[key]
     if key.startswith('hha.zeus.line.'):
         return 'zeus'
     if key.startswith('hha.hekate.line.'):
@@ -147,13 +173,13 @@ def load_lines(lang):
     with open(os.path.join(LANG_DIR, LANG_FILES[lang]), encoding='utf8') as f:
         data = json.load(f)
     lines = {k[len(PREFIX):]: v for k, v in data.items() if k.startswith(PREFIX)}
-    lines.update({k: v for k, v in data.items() if k.startswith(EXTRA_PREFIXES)})
+    lines.update({k: v for k, v in data.items() if k.startswith(EXTRA_PREFIXES) or k in SCENE_SPEAKERS})
     return lines
 
 
 def lang_key(key):
     """Voller Sprachschlüssel zum Kurznamen (Hermes-Zeilen ohne Vorsilbe, Olymp-Zeilen mit vollem Schlüssel)."""
-    return key if key.startswith(EXTRA_PREFIXES) else PREFIX + key
+    return key if key.startswith(EXTRA_PREFIXES) or key in SCENE_SPEAKERS else PREFIX + key
 
 
 def fingerprint(text, cast):

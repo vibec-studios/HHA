@@ -143,6 +143,70 @@ Jede Cutscene lässt sich mit **gehaltener Eingabetaste** überspringen (unter *
 ein Hinweis Taste und Fortschritt; spielen mehrere zusammen, müssen alle halten. Das Drehbuch läuft intern trotzdem durch:
 Danach stehen Arena, Boss und Belohnung so, wie sie stehen sollen.
 
+## Effekte, Kamera, Szenen
+
+Seit der Überarbeitung 3 hat jeder Angriff ein eigenes, weiches Bild (glatte Bänder, Hüllen, Risse, echte fliegende
+Bodenblöcke), die Kamera wird bei Treffern kurz **gedreht** statt verschoben, und Auftritte, Phasenwechsel und
+Niederlagen laufen als Bühnen-Szenen mit geführter Kamera. An Ansagen, Schaden, Leben, Fenstern und Angriffsauswahl
+hat sich nichts geändert.
+
+**Budget** (gilt in jedem Kampf und in beiden Modi):
+
+| Größe | Grenze |
+| --- | --- |
+| Flächeneffekt je Treffer | genau einer |
+| Beiwerk je Treffer | höchstens 6 Bodenrisse, 8 Trümmerblöcke, 14 Funken, 1 Lichtschein |
+| Kamera-Ruck | im Kampf höchstens 2,5° und 8 Ticks, keiner während einer laufenden Ansage; in Szenen höchstens 4° |
+| Rütteln | wie bisher (≤ 3 bei Treffern, ≤ 5 saalweit), am Client als Drehung |
+| Bildschirmblitz | höchstens 0,25 |
+| Bildschirm-Pass | höchstens einer gleichzeitig, nur an festen Stellen: Brontes' Blasebalg (Hitzeflimmern) und Keil (Stoßring), Zeus' Blitz für den Getroffenen (Stoßring), Hekates Mondfinsternis, Tantalos ausgedörrt (Hitze), Kronos' Stillstand (Zeitstopp) und Verschlingen (Gravitationslinse), dazu einzelne Szenen |
+| Trümmer gleichzeitig | 24 Blöcke am Client |
+| Effekte gleichzeitig | 64 |
+| Flackern | nichts schneller als 2 Hz, kein Blinken als Warnung |
+| Gold | nur sicher, offen, Ziel |
+
+**Schalter** (am Client, `/hhac toggle <schlüssel>` oder Kontrollzentrum → *Darstellung*):
+
+| Schlüssel | Standard | Wirkung |
+| --- | --- | --- |
+| `screen_fx` | `true` | Bildschirm-Pässe (Verzerrung, Linse, Zeitstopp, Finsternis). Aus = nur Abdunklung/Tönung am Rand mit gleicher Dauer |
+| `cine_handheld` | `true` | leichtes Schwanken der Szenenkamera wie aus der Hand |
+| `vfx_3d` | `true` | alle 3D-Effekte; aus = nur die Ansagen bleiben |
+
+Die Vanilla-Option **Barrierefreiheit → Verzerrungseffekte** wirkt mit: Bei 0 % gibt es keinen Ruck, kein Rütteln, keine
+Handkamera, die Pässe laufen als 2D-Ersatz, der Blitz nur mit 35 % Stärke. Mit der Grafikstufe „Fabulous“ oder mit Iris
+laufen die Pässe ebenfalls als 2D-Ersatz.
+
+**Szenen** lassen sich wie alle Cutscenes mit gehaltener Taste überspringen; danach stehen Boss, Arena, Musik und Phase
+so, wie es das Durchspielen ergeben hätte. Jede Szene einzeln: `/hha stage list`, `/hha stage play <id>` (Anker = du).
+
+**Musik:** Jeder Boss hat ein Thema je Phase mit weicher Überblendung (aus in ~1,5 s, ein in ~0,6 s) und einen
+Sieg-Stinger (`music.victory_olymp`, `music.victory_tartaros`); die Tartaros-Wächter wechseln ab 50 % Leben auf die
+zweite Fassung ihres Themas.
+
+**Prüfbefehle (OP):** `/hha fx list`, `/hha fx play <id> [stil]` (6 Blöcke vor dir), `/hha fx screen
+<ripple|heat|eclipse|time|lens|clear>`, `/hha fx kick [nicken gieren rollen]`, `/hha stage list|play <id>|stop`.
+
+### Für Entwickler: Effekte und Bühne
+
+| Pfad | Inhalt |
+| --- | --- |
+| `logic/boss/BossFx.kt` | Server-Eingang aller neuen Effekte: `play(world, id, style, pos, …)` und Helfer (`arc`, `crack`, `debris`, `skyStrike`, `tear`, `dome`, `projectile`, `kick`, `screen`, `screenClear`, `vignette`, `timeScale` …). Deckel und Budget sitzen hier zentral |
+| `client/vfx/fx/FxRegistry.kt` | `FxRegistry.register(id) { args -> Effekt }` am Client; Text-IDs mit Präfix je Boss (`core.`, `hermes.`, `zeus.` …). Die Liste aller IDs steht in `tmp/overhaul3/API.md` |
+| `client/vfx/fx/FxDraw.kt`, `FxPipelines.kt`, `shaders/core/fx_energy.*`, `fx_solid.*` | Zeichner (Schein, Fläche, Band, Röhre, Wand, Mesh, Block) mit 14 weichen Shader-Modi; ohne gültige Pipeline zeichnen sie vereinfacht über die alten Ebenen |
+| `client/vfx/fx/ScreenPass.kt`, `shaders/core/fx_screen.*`, `client/vfx/CameraFx.kt` | Bildschirm-Pass und Kamera-Ruck |
+| `client/vfx/fx/lib/`, `BlockDebris.kt`, `Tear.kt`, `ProjectileFx.kt` | Bibliothek `core.*` |
+| `client/vfx/fx/boss/<Name>Fx.kt` | Effekte je Boss |
+| `stage/Stage.kt`, `stage/scripts/<Name>Stages.kt` | Bühnen-Skripte als Daten: Kamera-Einstellungen, Spuren (Zeile, Effekt, Klang, Musik, Puppe, Pose, Blende, Karte) |
+| `client/cine/stage/StagePlayer.kt`, `CameraCraft.kt`, `StagePuppets.kt`, `client/pose/HhaPose.kt` | Abspielen am Client: Kamerafahrten, Kollisionsschutz, Handkamera, Puppen, Posen, Kostüm |
+| `logic/boss/SceneKit.kt`, `DuelCinematics.staged(...)` | Server-Ablauf einer Szene mit festem Endzustand |
+| `client/audio/MusicDirector.kt` | Bossthemen, Gebietsmusik, Stinger, Menümusik |
+
+Ohne Spiel prüfen: `python tools/hha_assets/gradle_locked.py dumpStages` schreibt alle Skripte nach
+`tmp/overhaul3/previews/stage/stages.json`, `python tools/hha_assets/stage_preview.py <id>` zeichnet Kamerabahn und
+Spuren als PNG. Die Shader prüfen `tmp/overhaul3/previews/{fx,screen,tunnel}/glcheck.py --render` (WebGL2 im
+Headless-Chrome). Neue Pipelines werden nie global registriert, sondern mit `precompilePipeline(...).isValid` geprüft.
+
 ## Für Entwickler
 
 | Pfad | Inhalt |

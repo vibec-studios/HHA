@@ -661,73 +661,49 @@
   "boss.thunder_call": {
     "subtitle": "subtitles.hha.boss.thunder_call",
     "sounds": [
-      {
-        "name": "hha:boss/thunder",
-        "pitch": 1.15
-      }
+      "hha:boss/thunder_call"
     ]
   },
   "boss.anvil": {
     "subtitle": "subtitles.hha.boss.anvil",
     "sounds": [
-      {
-        "name": "hha:boss/impact",
-        "pitch": 1.3
-      }
+      "hha:boss/anvil"
     ]
   },
   "boss.forge": {
     "subtitle": "subtitles.hha.boss.forge",
     "sounds": [
-      {
-        "name": "hha:boss/charge",
-        "pitch": 0.8
-      }
+      "hha:boss/forge"
     ]
   },
   "boss.command": {
     "subtitle": "subtitles.hha.boss.command",
     "sounds": [
-      {
-        "name": "hha:boss/roar",
-        "pitch": 1.1
-      }
+      "hha:boss/command"
     ]
   },
   "boss.shield": {
     "subtitle": "subtitles.hha.boss.shield",
     "sounds": [
-      {
-        "name": "hha:boss/deflect",
-        "pitch": 0.8
-      }
+      "hha:boss/shield"
     ]
   },
   "boss.torch": {
     "subtitle": "subtitles.hha.boss.torch",
     "sounds": [
-      {
-        "name": "hha:boss/whoosh",
-        "pitch": 0.85
-      }
+      "hha:boss/torch"
     ]
   },
   "boss.howl": {
     "subtitle": "subtitles.hha.boss.howl",
     "sounds": [
-      {
-        "name": "hha:boss/roar",
-        "pitch": 1.45
-      }
+      "hha:boss/howl"
     ]
   },
   "boss.key": {
     "subtitle": "subtitles.hha.boss.key",
     "sounds": [
-      {
-        "name": "hha:boss/chime",
-        "pitch": 0.7
-      }
+      "hha:boss/key"
     ]
   },
   "mob.kurete_clash": {
@@ -760,7 +736,7 @@
   "music.olympus": {
     "sounds": [
       {
-        "name": "hha:music/messenger",
+        "name": "hha:music/olympus",
         "stream": true
       }
     ]
@@ -768,7 +744,7 @@
   "music.hekate": {
     "sounds": [
       {
-        "name": "hha:music/guide",
+        "name": "hha:music/hekate",
         "stream": true
       }
     ]
@@ -776,7 +752,7 @@
   "music.brontes": {
     "sounds": [
       {
-        "name": "hha:music/hades",
+        "name": "hha:music/brontes",
         "stream": true
       }
     ]
@@ -784,7 +760,7 @@
   "music.kratos": {
     "sounds": [
       {
-        "name": "hha:music/thief",
+        "name": "hha:music/kratos",
         "stream": true
       }
     ]
@@ -792,9 +768,231 @@
   "music.zeus": {
     "sounds": [
       {
-        "name": "hha:music/finale",
+        "name": "hha:music/zeus",
         "stream": true
       }
+    ]
+  },
+  "music.tunnel": {
+    "sounds": [
+      {
+        "name": "hha:music/tunnel",
+        "stream": true
+      }
+    ]
+  },
+  "music.tartaros": {
+    "sounds": [
+      {
+        "name": "hha:music/tartaros",
+        "stream": true
+      }
+    ]
+  },
+  "music.hekate_2": {
+    "sounds": [
+      {
+        "name": "hha:music/hekate_2",
+        "stream": true
+      }
+    ]
+  },
+  "music.brontes_2": {
+    "sounds": [
+      {
+        "name": "hha:music/brontes_2",
+        "stream": true
+      }
+    ]
+  },
+  "music.kratos_2": {
+    "sounds": [
+      {
+        "name": "hha:music/kratos_2",
+        "stream": true
+      }
+    ]
+  },
+  "music.zeus_2": {
+    "sounds": [
+      {
+        "name": "hha:music/zeus_2",
+        "stream": true
+      }
+    ]
+  },
+  "music.zeus_3": {
+    "sounds": [
+      {
+        "name": "hha:music/zeus_3",
+        "stream": true
+      }
+    ]
+  },
+  "music.hades_2": {
+    "sounds": [
+      {
+        "name": "hha:music/hades_2",
+        "stream": true
+      }
+    ]
+  },
+  "music.kronos": {
+    "sounds": [
+      {
+        "name": "hha:music/kronos",
+        "stream": true
+      }
+    ]
+  },
+  "music.kronos_2": {
+    "sounds": [
+      {
+        "name": "hha:music/kronos_2",
+        "stream": true
+      }
+    ]
+  },
+  "music.guardian": {
+    "sounds": [
+      {
+        "name": "hha:music/guardian",
+        "stream": true
+      }
+    ]
+  },
+  "music.guardian_2": {
+    "sounds": [
+      {
+        "name": "hha:music/guardian_2",
+        "stream": true
+      }
+    ]
+  },
+  "music.victory_olymp": {
+    "sounds": [
+      {
+        "name": "hha:music/victory_olymp",
+        "stream": true
+      }
+    ]
+  },
+  "music.victory_tartaros": {
+    "sounds": [
+      {
+        "name": "hha:music/victory_tartaros",
+        "stream": true
+      }
+    ]
+  },
+  "music.credits": {
+    "sounds": [
+      {
+        "name": "hha:music/credits",
+        "stream": true
+      }
+    ]
+  },
+  "boss.crack": {
+    "subtitle": "subtitles.hha.boss.crack",
+    "sounds": [
+      "hha:boss/crack"
+    ]
+  },
+  "boss.debris": {
+    "subtitle": "subtitles.hha.boss.debris",
+    "sounds": [
+      "hha:boss/debris"
+    ]
+  },
+  "boss.thud": {
+    "subtitle": "subtitles.hha.boss.thud",
+    "sounds": [
+      "hha:boss/thud"
+    ]
+  },
+  "boss.lens": {
+    "subtitle": "subtitles.hha.boss.lens",
+    "sounds": [
+      "hha:boss/lens"
+    ]
+  },
+  "boss.time_stop": {
+    "subtitle": "subtitles.hha.boss.time_stop",
+    "sounds": [
+      "hha:boss/time_stop"
+    ]
+  },
+  "boss.tear": {
+    "subtitle": "subtitles.hha.boss.tear",
+    "sounds": [
+      "hha:boss/tear"
+    ]
+  },
+  "boss.swirl": {
+    "subtitle": "subtitles.hha.boss.swirl",
+    "sounds": [
+      "hha:boss/swirl"
+    ]
+  },
+  "boss.wave": {
+    "subtitle": "subtitles.hha.boss.wave",
+    "sounds": [
+      "hha:boss/wave"
+    ]
+  },
+  "rpg.tunnel_loop": {
+    "subtitle": "subtitles.hha.rpg.tunnel_loop",
+    "sounds": [
+      "hha:rpg/tunnel_loop"
+    ]
+  },
+  "rpg.depart": {
+    "subtitle": "subtitles.hha.rpg.depart",
+    "sounds": [
+      "hha:rpg/depart"
+    ]
+  },
+  "rpg.arrive": {
+    "subtitle": "subtitles.hha.rpg.arrive",
+    "sounds": [
+      "hha:rpg/arrive"
+    ]
+  },
+  "rpg.chapter": {
+    "subtitle": "subtitles.hha.rpg.chapter",
+    "sounds": [
+      "hha:rpg/chapter"
+    ]
+  },
+  "rpg.objective": {
+    "subtitle": "subtitles.hha.rpg.objective",
+    "sounds": [
+      "hha:rpg/objective"
+    ]
+  },
+  "rpg.journal": {
+    "subtitle": "subtitles.hha.rpg.journal",
+    "sounds": [
+      "hha:rpg/journal"
+    ]
+  },
+  "rpg.rest": {
+    "subtitle": "subtitles.hha.rpg.rest",
+    "sounds": [
+      "hha:rpg/rest"
+    ]
+  },
+  "rpg.fallen": {
+    "subtitle": "subtitles.hha.rpg.fallen",
+    "sounds": [
+      "hha:rpg/fallen"
+    ]
+  },
+  "rpg.dissolve": {
+    "subtitle": "subtitles.hha.rpg.dissolve",
+    "sounds": [
+      "hha:rpg/dissolve"
     ]
   }
 }

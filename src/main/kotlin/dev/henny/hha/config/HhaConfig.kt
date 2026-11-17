@@ -61,6 +61,8 @@ object HhaConfig {
         "relic_drops" to true,
         "relic_crafting" to RELIC_CRAFTING_DEFAULT,
         "boss_anti_air" to true,
+        // Überarbeitung 3 (PLAN 6.6): Hunger im RPG (aus = Sättigung bleibt voll), siehe rpg/RpgRules.kt.
+        "rpg_hunger" to false,
     )
 
     /** Zahlenwerte: Schaden und Trigger-Schwellen. */
@@ -112,6 +114,10 @@ object HhaConfig {
         "boss_tempo_per_player" to 0.05,
         "boss_damage_player_cap" to 1.75,
         "boss_smash_decay" to 120.0,
+        // Überarbeitung 3 (PLAN 6.6): Boss-Stärke nur in RPG-Welten (BossScaling), Frist der gemeinsamen Ankunft.
+        "rpg_boss_health" to 0.8,
+        "rpg_boss_damage" to 0.85,
+        "rpg_wait_ticks" to 400.0,
     )
 
     /** Alle bekannten Toggles (eingebaute + von Addons registrierte). */

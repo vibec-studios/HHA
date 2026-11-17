@@ -45,6 +45,12 @@ Ein fester Pfad aus sechs Inseln führt nach oben, jede mit ihrem Kampf:
 
 Jeder Angriff wird am Boden angesagt, Gold heißt immer sicher oder offen, kein Boss ruft Helfer herbei, und nichts nimmt dir die Kontrolle. Die Bosse wachsen mit der Zahl der Spieler und kontern wiederholte Mace-Sprünge von oben. Jedes Teil der Heaven- und Hell-Sets fällt **einmal je Welt** bei seinem Boss; ein zweiter Sieg gibt Barren. Kureten, Greife und goldene Wächterinnen bewachen die Inseln.
 
+Seit der dritten Überarbeitung hat jeder Angriff ein eigenes, weiches Bild, Treffer drehen die Kamera leicht statt sie zu schütteln, und Auftritte, Phasenwechsel und Niederlagen sind inszenierte Szenen mit geführter Kamera und eigener Musik je Phase. Bildschirm-Effekte lassen sich mit `/hhac toggle screen_fx` abschalten.
+
+## RPG-Modus
+
+**HHA RPG** im Hauptmenü macht das Abenteuer zu einem eigenen Spiel für eine Gruppe. Die Lobby ist ein Lichttunnel, in dem eure Gruppe mit ihren Skins und der Rüstung des gewählten Wegs schwebt; Freunde treten mit einem sechsstelligen Code bei. Nach dem Aufbrechen läuft der Tunnel statt der Ladebildschirme weiter, und alle landen gemeinsam in einer Ankunftsszene. Eine Geschichte in Kapiteln führt von Hermes zu Zeus und hinab durch den Tartaros zu Kronos, mit Zielen, Richtungspfeil, Kapitelkarten, Inselszenen und Abspann. RPG-Welten haben ein eigenes HUD, ein Tagebuch (J), ein Pausenmenü, Rastplätze, die heilen und den Wiedereinstieg setzen, und standardmäßig keinen Hunger. Normale Welten bleiben genau wie bisher.
+
 ## Konfiguration
 
 Praktisch alles lässt sich abschalten oder anpassen: `/hha toggle` und `/hha set` ändern Fähigkeiten, Schadenswerte und Cooldowns live, ohne Neustart.

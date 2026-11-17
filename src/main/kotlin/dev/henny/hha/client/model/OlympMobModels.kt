@@ -1,10 +1,17 @@
 package dev.henny.hha.client.model
 
+import dev.henny.hha.client.anim.Ease
+import dev.henny.hha.client.anim.Motion
+import dev.henny.hha.client.anim.Spring
 import dev.henny.hha.entity.mob.AutomatonAction
 import dev.henny.hha.entity.mob.GriffinAction
 import dev.henny.hha.entity.mob.KureteAction
 import dev.henny.hha.logic.boss.timings.OlympMobTimings
+import net.minecraft.client.MinecraftClient
 import net.minecraft.client.model.ModelPart
+import net.minecraft.entity.LivingEntity
+import net.minecraft.util.Util
+import net.minecraft.util.math.MathHelper
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -201,6 +208,52 @@ abstract class PoseTableModel(root: ModelPart, bones: Array<String>, parents: In
     }
 }
 
+/**
+ * Überarbeitung 3 (P15): geglätteter Zustand je Wesen für Nachschwingen (die Modellinstanz teilen sich alle Wesen
+ * eines Typs). [of] liefert den Zustand und vergisst Wesen, die seit [PRUNE_MS] nicht gezeichnet wurden.
+ */
+internal class SoftRigs<T : SoftRigs.Rig>(private val make: () -> T) {
+    open class Rig {
+        var time = Float.NaN
+        var lastYaw = 0f
+        var stamp = 0L
+
+        /** Zeitschritt seit dem letzten Bild (0 beim ersten Bild oder nach einem Sprung) und Drehrate (Grad/Tick). */
+        var dt = 0f
+        var turn = 0f
+
+        fun advance(age: Float, yaw: Float) {
+            val jumped = time.isNaN() || age < time - 0.01f || age - time > 40f
+            dt = if (jumped) 0f else (age - time).coerceIn(0f, 4f)
+            turn = if (dt > 0f) MathHelper.wrapDegrees(yaw - lastYaw) / dt else 0f
+            if (jumped) reset()
+            time = age
+            lastYaw = yaw
+        }
+
+        open fun reset() {}
+    }
+
+    private val rigs = HashMap<Int, T>()
+    private var lastPrune = 0L
+
+    fun of(state: GuardianRenderState): T {
+        val now = Util.getMeasuringTimeMs()
+        if (now - lastPrune > PRUNE_MS) {
+            rigs.values.removeIf { now - it.stamp > PRUNE_MS }
+            lastPrune = now
+        }
+        val rig = rigs.getOrPut(state.entityId, make)
+        rig.stamp = now
+        rig.advance(state.age, state.bodyYaw)
+        return rig
+    }
+
+    companion object {
+        const val PRUNE_MS = 5000L
+    }
+}
+
 // =====================================================================================================================
 // Kurete
 // =====================================================================================================================
@@ -287,6 +340,21 @@ class KureteModel(root: ModelPart) : PoseTableModel(root, BONES, PARENTS) {
     private fun beat(t: Float, at: Float): Float =
         if (t < at) -step(t, at - 1.5f, at) * 0.6f else pulse(t, at + 0.3f, 0.8f)
 
+    /** Busch: Nicken (Schläge, Stöße) und Kippen (Drehen) als zwei weiche Federn. */
+    private class PlumeRig : SoftRigs.Rig() {
+        val nod = Spring(PLUME_FREQ, PLUME_DAMP)
+        val tilt = Spring(PLUME_FREQ, PLUME_DAMP)
+        var lastAction = -1
+        var lastTime = 0f
+
+        override fun reset() {
+            nod.reset()
+            tilt.reset()
+        }
+    }
+
+    private val rigs = SoftRigs { PlumeRig() }
+
     override fun secondary(state: GuardianRenderState) {
         look(head, state)
         // Der Busch schwingt nach (zwei Komponenten, phasenversetzt).
@@ -294,11 +362,35 @@ class KureteModel(root: ModelPart) : PoseTableModel(root, BONES, PARENTS) {
         val w = walk(state)
         plume.pitch += sin(t * 0.13f - 0.8f) * 0.04f + sin(phase(state) * 2f - 0.6f) * 0.1f * w
         plume.roll += sin(t * 0.09f) * 0.03f
+        // Überarbeitung 3 (P15): Feder. Jeder Speerschlag auf den Schild und jeder Stoß wirft den Busch nach hinten,
+        // beim Drehen kippt er gegen die Drehung.
+        val rig = rigs.of(state)
+        val a = state.actionTime
+        if (rig.dt > 0f && state.action == rig.lastAction) {
+            fun crossed(at: Int) = a >= at && rig.lastTime < at
+            when (state.action) {
+                KureteAction.CLASH -> if (crossed(T.CLASH_HIT_1) || crossed(T.CLASH_HIT_2)) rig.nod.kick(PLUME_CLASH_KICK)
+                KureteAction.THRUST -> if (crossed(T.THRUST_W)) rig.nod.kick(PLUME_STRIKE_KICK)
+                KureteAction.SHIELD_BASH -> if (crossed(T.SHIELD_BASH_W)) rig.nod.kick(PLUME_STRIKE_KICK)
+            }
+        }
+        rig.lastAction = state.action
+        rig.lastTime = a
+        plume.pitch += rig.nod.step(0f, rig.dt)
+        plume.roll += rig.tilt.step(MathHelper.clamp(-rig.turn * PLUME_TURN_GAIN, -PLUME_TILT_MAX, PLUME_TILT_MAX), rig.dt)
     }
 
     private companion object {
         val T = OlympMobTimings
         const val N = Float.NaN
+
+        /** Feder des Helmbuschs (rad/Tick, Dämpfung), Stöße (rad/Tick), Kippen je Grad/Tick Drehrate (rad), Deckel. */
+        const val PLUME_FREQ = 0.45f
+        const val PLUME_DAMP = 0.28f
+        const val PLUME_CLASH_KICK = 0.05f
+        const val PLUME_STRIKE_KICK = 0.08f
+        const val PLUME_TURN_GAIN = 0.012f
+        const val PLUME_TILT_MAX = 0.25f
 
         // KURETE POSES BEGIN (generiert aus tools/hha_assets/kurete_model.py --kotlin)
         val BONES = arrayOf("body", "chest", "head", "plume", "arm_r", "fore_r", "spear", "arm_l", "fore_l", "shield", "leg_r", "shin_r", "leg_l", "shin_l")
@@ -480,13 +572,72 @@ class GriffinModel(root: ModelPart) : PoseTableModel(root, BONES, PARENTS) {
         }
     }
 
+    /** Schwingen, Schwanz und Rumpf federn nach; die Landung kommt aus [Motion.landing]. */
+    private class WingRig : SoftRigs.Rig() {
+        val wings = Spring(WING_FREQ, WING_DAMP)
+        val tail = Spring(TAIL_FREQ, TAIL_DAMP)
+        val body = Spring(BODY_FREQ, BODY_DAMP)
+        val motion = Motion()
+        var landKicked = false
+
+        override fun reset() {
+            wings.reset()
+            tail.reset()
+            body.reset()
+            landKicked = false
+        }
+    }
+
+    private val rigs = SoftRigs { WingRig() }
+
     override fun secondary(state: GuardianRenderState) {
         if (state.action != GriffinAction.LANDED && state.action != GriffinAction.PERCH) look(head, state)
+        // Überarbeitung 3 (P15): Nachschwingen und Landestoß.
+        val rig = rigs.of(state)
+        val e = MinecraftClient.getInstance().world?.getEntityById(state.entityId) as? LivingEntity
+        if (e != null) {
+            rig.motion.update(e, (state.age - e.age).coerceIn(0f, 1f), state.action, state.actionTime.toInt())
+            if (rig.motion.started) rig.landKicked = false
+            // Landung des Sturzflugs: Die Aktion LANDED beginnt beim Aufsetzen; Motion erkennt den Bodenkontakt.
+            if (state.action == GriffinAction.LANDED && !rig.landKicked && rig.motion.landing(e, state.actionTime, 0f, LAND_LATEST) >= 0f) {
+                rig.landKicked = true
+                rig.body.kick(LAND_BODY_KICK)
+                rig.wings.kick(LAND_WING_KICK)
+            }
+        }
+        // Schwingen: hängen beim Steigen nach unten, beim Sinken nach oben nach; Schwanz gegen die Drehung.
+        val wing = rig.wings.step(MathHelper.clamp(rig.motion.vy * WING_VY_GAIN, -WING_MAX, WING_MAX), rig.dt)
+        wingL[2].roll += wing
+        wingR[2].roll -= wing
+        wingL[1].roll += wing * 0.5f
+        wingR[1].roll -= wing * 0.5f
+        val sway = rig.tail.step(MathHelper.clamp(-rig.turn * TAIL_TURN_GAIN, -TAIL_MAX, TAIL_MAX), rig.dt)
+        for (i in tail.indices) tail[i].yaw += sway * (0.5f + 0.35f * i)
+        body.originY += rig.body.step(0f, rig.dt)
     }
 
     private companion object {
         val T = OlympMobTimings
         const val N = Float.NaN
+
+        /** Federn: Schwingen, Schwanz, Rumpf (rad/Tick, Dämpfung). */
+        const val WING_FREQ = 0.35f
+        const val WING_DAMP = 0.35f
+        const val TAIL_FREQ = 0.22f
+        const val TAIL_DAMP = 0.4f
+        const val BODY_FREQ = 0.5f
+        const val BODY_DAMP = 0.32f
+
+        /** Schwingen je Block/Tick Steigen (rad), Deckel; Schwanz je Grad/Tick Drehrate (rad), Deckel. */
+        const val WING_VY_GAIN = -0.6f
+        const val WING_MAX = 0.3f
+        const val TAIL_TURN_GAIN = 0.02f
+        const val TAIL_MAX = 0.35f
+
+        /** Landestoß: Rumpf sackt ein (Modell-Pixel/Tick, + = nach unten), Schwingen schlagen nach; spätestens nach so vielen Ticks. */
+        const val LAND_BODY_KICK = 0.9f
+        const val LAND_WING_KICK = 0.12f
+        const val LAND_LATEST = 4f
 
         /** Blickrichtungen auf der Säule (Gieren in Radiant), ruckweise nacheinander. */
         val LOOK = floatArrayOf(0f, 0.55f, 0.15f, -0.5f, -0.2f, 0.35f)
@@ -651,6 +802,13 @@ class AutomatonModel(root: ModelPart) : PoseTableModel(root, BONES, PARENTS) {
     private val head = bone("head")
     private val valve = bone("valve")
 
+    /**
+     * Überarbeitung 3 (P15): Beim Erwachen glühen die Augen weich auf (Leuchtmaske von 0 auf voll zwischen
+     * [WAKE_GLOW_FROM] und [WAKE_GLOW_TO]) statt mit einem Schlag; als Statue und danach wie bisher.
+     */
+    override fun glowAlpha(state: GuardianRenderState): Float =
+        if (state.awake && state.action == AutomatonAction.WAKE) Ease.inOut((state.actionTime - WAKE_GLOW_FROM) / (WAKE_GLOW_TO - WAKE_GLOW_FROM)) else 1f
+
     override fun ambient(state: GuardianRenderState) {
         if (!state.awake || state.action == AutomatonAction.STATUE) return
         apply(IDLE)
@@ -696,6 +854,10 @@ class AutomatonModel(root: ModelPart) : PoseTableModel(root, BONES, PARENTS) {
     private companion object {
         val T = OlympMobTimings
         const val N = Float.NaN
+
+        /** Augen glühen beim Erwachen auf (Ticks der Aktion WAKE: Kopf ruckt bei 2, ganz wach bei 16). */
+        const val WAKE_GLOW_FROM = 2f
+        const val WAKE_GLOW_TO = 16f
 
         // AUTOMATON POSES BEGIN (generiert aus tools/hha_assets/automaton_model.py --kotlin)
         val BONES = arrayOf("body", "chest", "head", "arm_r", "fore_r", "hammer", "arm_l", "fore_l", "valve")

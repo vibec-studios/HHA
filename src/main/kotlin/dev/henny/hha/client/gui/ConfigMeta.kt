@@ -30,6 +30,8 @@ object ConfigMeta {
         Group("recipes", Ui.MUTED, listOf(
             "relic_crafting", "hell_ingot_recipe", "heaven_ingot_recipe", "template_recipe", "heaven_ingot_free_recipe",
         )),
+        // Überarbeitung 3 (P06, P20): RPG-Welten
+        Group("rpg", Ui.GOLD, listOf("rpg_hunger")),
     )
 
     val NUMBER_GROUPS = listOf(
@@ -51,6 +53,7 @@ object ConfigMeta {
             "boss_tempo_per_player", "hermes_damage", "hades_damage", "hermes_toughness", "hermes_max_hit", "boss_smash_decay",
         )),
         Group("particles", Ui.MUTED, listOf("particle_player", "particle_effects")),
+        Group("rpg", Ui.GOLD, listOf("rpg_boss_health", "rpg_boss_damage", "rpg_wait_ticks")),
     )
 
     private val RANGES: Map<String, Range> = buildMap {
@@ -72,6 +75,8 @@ object ConfigMeta {
         r(0.0, 0.25, 0.01, Unit.FRACTION, "boss_tempo_per_player")
         r(20.0, 600.0, 10.0, Unit.TICKS, "boss_smash_decay")
         r(0.0, 1.0, 0.05, Unit.FRACTION, "particle_player", "particle_effects")
+        r(0.25, 2.0, 0.05, Unit.MULTIPLIER, "rpg_boss_health", "rpg_boss_damage")
+        r(100.0, 1200.0, 20.0, Unit.TICKS, "rpg_wait_ticks")
     }
 
     /** Bereich eines Schlüssels; unbekannte (Addon-)Schlüssel bekommen Einheit und Bereich aus Name und Standardwert. */
@@ -131,7 +136,7 @@ object ConfigMeta {
     }
 
     /** Ersatz, solange die Sprachdateien die neuen Gruppen noch nicht kennen. */
-    private val GROUP_FALLBACK = mapOf("fights" to "Bosse & Welt", "recipes" to "Rezepte", "boss_scaling" to "Bosse")
+    private val GROUP_FALLBACK = mapOf("fights" to "Bosse & Welt", "recipes" to "Rezepte", "boss_scaling" to "Bosse", "rpg" to "RPG")
 
     fun name(key: String): Text = Text.translatableWithFallback("hha.gui.cfg.$key", pretty(key.substringAfter('.')))
 

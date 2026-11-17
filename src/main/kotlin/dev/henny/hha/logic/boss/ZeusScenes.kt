@@ -1,19 +1,25 @@
 package dev.henny.hha.logic.boss
 
 import dev.henny.hha.HhaSounds
+import dev.henny.hha.entity.boss.HermesBoltEntity
 import dev.henny.hha.entity.boss.olymp.ZeusAction
 import dev.henny.hha.entity.boss.olymp.ZeusEntity
+import dev.henny.hha.entity.miniboss.ScriptedBolt
 import dev.henny.hha.logic.Vfx
 import dev.henny.hha.logic.boss.timings.ZeusTimings as Z
+import dev.henny.hha.stage.scripts.ZeusStages
 import net.minecraft.server.network.ServerPlayerEntity
+import net.minecraft.server.world.ServerWorld
 import net.minecraft.util.math.Vec3d
 import kotlin.math.atan2
 
 /**
- * Die Szenen des Zeus-Kampfes (PLAN 5.5): Auftritt, Phasenwechsel II und III, „Anerkennung“. Jede höchstens 8 s,
- * überspringbar wie alle (alle Teilnehmer halten die Taste, dann spult das Drehbuch vor; die Spielzustände stehen
- * danach wie nach der Szene). Text ohne Tonaufnahmen: Zeus spricht über [Cine.SPEAKER_ZEUS] mit Stimm-Lauten wie im
- * „BEENDE ES“ der Hermes-Szene; Nike über den Erzähler. Die Zeilen stehen unter `hha.zeus.line.*`.
+ * Die Szenen des Zeus-Kampfes (PLAN 5.5; Überarbeitung 3: PLAN 2.8): Auftritt, Phasenwechsel II und III, „Anerkennung“.
+ * Kamera und Bild kommen aus den Bühnen-Skripten [ZeusStages] (`zeus.intro`, `zeus.phase2`, `zeus.phase3`,
+ * `zeus.defeat`; Auftritt und Ende bis 12 s, Phasenwechsel 5 s); hier stehen Zeilen, Aktionen, Orte, Musik und echte
+ * Blitze. Überspringbar wie alle (alle Teilnehmer halten die Taste, dann spult das Drehbuch stumm vor; die Spielzustände
+ * stehen danach wie nach der Szene). Text ohne Tonaufnahmen: Zeus spricht über [Cine.SPEAKER_ZEUS] mit Stimm-Lauten wie
+ * im „BEENDE ES“ der Hermes-Szene; Nike über den Erzähler. Die Zeilen stehen unter `hha.zeus.line.*`.
  *
  * Die Szenen laufen im Drehbuch des Bosses ([ZeusEntity]): Solange eine läuft, nimmt er keinen Schaden, die Luftregel,
  * Saal-Gefahren und Pfeiler ruhen, und die Leine greift nicht (der Thron steht außerhalb der Fläche).
@@ -104,69 +110,47 @@ class ZeusScenes(private val zeus: ZeusEntity) {
         Cine.dialog(players, speaker, key, HhaVoiceLengths.ticks(key, ticks))
     }
 
-    private fun front(): Double {
-        val r = Math.toRadians(zeus.yaw.toDouble())
-        return Math.toDegrees(atan2(kotlin.math.cos(r), -kotlin.math.sin(r)))
-    }
-
-    private fun flash(players: List<ServerPlayerEntity>) {
-        for (player in players) Vfx.screenFlash(player, Vfx.Style.THUNDER, Z.SCREEN_FLASH_MAX, 8)
-    }
+    /** Blickrichtung als Gierwinkel (Grad, wie `Entity.yaw`; vorn = (−sin, 0, cos)). */
+    private fun yawOf(dir: Vec3d): Float = Math.toDegrees(atan2(-dir.x, dir.z)).toFloat()
 
     // ---------------------------------------------------------------------------------------------
     // Auftritt
     // ---------------------------------------------------------------------------------------------
 
     /**
-     * Auftritt (7,5 s): Blick vom Siegel zum Thron, auf dem Zeus sitzt; zwei Zeilen; er erhebt sich (`RISE`) und tritt
-     * mit einem Donnerschritt in den Hof; Titelkarte `hha.zeus.title`, dann Musik.
+     * Auftritt `zeus.intro` (11,8 s): Thron von unten, er sitzt; zwei Zeilen; ein Blitz teilt das Bild, er erhebt sich
+     * (`RISE`) und tritt mit einem Donnerschritt in den Hof; Titelkarte `hha.zeus.title`, dann Musik.
      */
     fun entrance(): Sequence<Unit> {
         val stage = zeus.sceneStage() ?: return simpleEntrance()
         return play(sequence {
             val viewers = zeus.sceneViewers()
+            val world = zeus.entityWorld as ServerWorld
             begin(viewers)
-            Cine.fade(viewers, 0x000000, 1.0, 0.0, 14)
             Cine.music(viewers, null)
             zeus.scenePlace(stage.throne, stage.center)
             zeus.sceneAct(ZeusAction.RISE)
-            val away = flat(stage.seal.subtract(stage.throne))
-            val side = Vec3d(-away.z, 0.0, away.x)
-            Cine.camera(
-                viewers,
-                stage.seal.add(away.multiply(5.0)).add(side.multiply(2.5)).add(0.0, 2.4, 0.0),
-                stage.throne.add(away.multiply(9.0)).add(side.multiply(1.5)).add(0.0, 3.2, 0.0),
-                stage.throne.add(0.0, 2.5, 0.0), stage.throne.add(0.0, 3.0, 0.0), Z.INTRO_STEP + 12, 70.0, 58.0, zeus, 3.0,
-            )
-            Vfx.clouds(zeus.entityWorld as net.minecraft.server.world.ServerWorld, Vfx.Style.STORM, stage.center, 50f, 24f, Z.INTRO_END + 20)
-            for (t in 0 until Z.INTRO_END) {
+            val away = flat(stage.center.subtract(stage.throne))
+            Cine.stage(viewers, ZeusStages.INTRO, stage.throne, yawOf(away), listOf(zeus))
+            Vfx.clouds(world, Vfx.Style.STORM, stage.center, 50f, 24f, ZeusStages.INTRO_LENGTH + 20)
+            for (t in 0 until ZeusStages.INTRO_LENGTH) {
                 // Bis er aufsteht, sitzt er: RISE beginnt sitzend, also immer wieder von vorn.
-                if (t < Z.INTRO_RISE && t % 3 == 0) zeus.sceneAct(ZeusAction.RISE)
+                if (t < ZeusStages.INTRO_RISE && t % 3 == 0) zeus.sceneAct(ZeusAction.RISE)
                 when (t) {
-                    14 -> say(viewers, Cine.SPEAKER_ZEUS, "hha.zeus.line.intro.1", 66)
-                    Z.INTRO_RISE -> {
-                        zeus.sceneAct(ZeusAction.RISE)
-                        zeus.sceneSound(HhaSounds.THUNDER, stage.throne, 2.4f, 0.6f)
-                    }
-                    84 -> say(viewers, Cine.SPEAKER_ZEUS, "hha.zeus.line.intro.2", 66)
-                    Z.INTRO_STEP -> zeus.sceneAct(ZeusAction.STEP)
-                    Z.INTRO_STEP + Z.STEP_VANISH -> {
-                        zeus.sceneSkyBolt(stage.throne)
-                        // Schnitt: Blick vom Siegel über den Hof, dort erscheint er.
-                        Cine.camera(
-                            viewers,
-                            stage.seal.subtract(away.multiply(3.0)).add(0.0, 4.5, 0.0),
-                            stage.seal.subtract(away.multiply(1.0)).add(side.multiply(1.5)).add(0.0, 3.6, 0.0),
-                            stage.landing.add(0.0, 2.5, 0.0), stage.landing.add(0.0, 2.5, 0.0), Z.INTRO_END - t, 64.0, 56.0, zeus, 3.0,
-                        )
-                    }
-                    Z.INTRO_STEP + Z.STEP_MOVE -> zeus.scenePlace(stage.landing, stage.seal)
-                    Z.INTRO_STEP + Z.STEP_APPEAR -> {
-                        zeus.sceneSkyBolt(stage.landing)
+                    ZeusStages.INTRO_LINE_1 -> say(viewers, Cine.SPEAKER_ZEUS, "hha.zeus.line.intro.1", 66)
+                    // Der Blitz, der das Bild teilt, ist Bild der Bühne; hier nur der Donner.
+                    ZeusStages.INTRO_SPLIT -> zeus.sceneSound(HhaSounds.THUNDER, stage.throne, 2.6f, 0.6f)
+                    ZeusStages.INTRO_RISE -> zeus.sceneAct(ZeusAction.RISE)
+                    ZeusStages.INTRO_LINE_2 -> say(viewers, Cine.SPEAKER_ZEUS, "hha.zeus.line.intro.2", 66)
+                    ZeusStages.INTRO_STEP -> zeus.sceneAct(ZeusAction.STEP)
+                    ZeusStages.INTRO_STEP + Z.STEP_VANISH -> zeus.sceneStepOut(stage.throne)
+                    ZeusStages.INTRO_STEP + Z.STEP_MOVE -> zeus.scenePlace(stage.landing, stage.seal)
+                    ZeusStages.INTRO_APPEAR -> {
+                        zeus.sceneStepIn(stage.landing)
                         zeus.lightning(stage.landing)
                         zeus.sceneSound(HhaSounds.THUNDER, stage.landing, 3f, 0.8f)
                     }
-                    Z.INTRO_STEP + Z.STEP_APPEAR + 4 -> Cine.title(viewers, "hha.zeus.title", "hha.zeus.title.sub", 50)
+                    ZeusStages.INTRO_TITLE -> Cine.title(viewers, "hha.zeus.title", "hha.zeus.title.sub", 50)
                 }
                 yield(Unit)
             }
@@ -191,35 +175,38 @@ class ZeusScenes(private val zeus: ZeusEntity) {
     // ---------------------------------------------------------------------------------------------
 
     /**
-     * Phasenwechsel II und III (4 s): `PHASE`, ein Blitz fährt in ihn, der Himmel wird dunkler (Gewitter über dem Hof,
-     * in III einmal noch dunkler), ein Bildschirmblitz ≤ 0,25; eine Zeile; zwei verbrauchte Pfeiler werden frisch.
+     * Phasenwechsel `zeus.phase2`/`zeus.phase3` (5 s): `PHASE`, ein Blitz fährt in ihn (Stoß, Ruck und Blitz ≤ 0,22
+     * kommen von der Bühne), der Himmel wird dunkler (Gewitter über dem Hof, in III einmal noch dunkler), das Thema der
+     * neuen Phase setzt ein; eine Zeile; zwei verbrauchte Pfeiler werden frisch (Bogen von ihm zu ihrer Spitze).
      */
     fun phase(newPhase: Int): Sequence<Unit> = play(sequence {
         val viewers = zeus.sceneViewers()
+        val world = zeus.entityWorld as ServerWorld
         val number = newPhase + 1
         begin(viewers)
         zeus.sceneAct(ZeusAction.PHASE)
         val at = zeus.entityPos
         val stage = zeus.sceneStage()
         val center = stage?.center ?: at
-        val facing = front()
-        Cine.orbit(viewers, at, 9.0, 2.4, facing - 40.0, facing + 15.0, Z.PHASE_SCENE, 64.0, 56.0, zeus, 3.4, 7.5, 3.0)
-        for (t in 0 until Z.PHASE_SCENE) {
+        Cine.stage(viewers, if (newPhase >= 2) ZeusStages.PHASE3 else ZeusStages.PHASE2, at, zeus.yaw, listOf(zeus))
+        for (t in 0 until ZeusStages.PHASE_LENGTH) {
             when (t) {
-                Z.PHASE_SCENE_FLASH -> {
+                ZeusStages.PHASE_BOLT -> {
                     zeus.sceneSkyBolt(at)
                     zeus.lightning(at)
-                    flash(viewers)
                     zeus.sceneSound(HhaSounds.THUNDER, at, 3.2f, 0.7f)
-                    val world = zeus.entityWorld as net.minecraft.server.world.ServerWorld
+                    zeus.scenePhaseMusic(viewers, newPhase)
                     if (newPhase == 1) zeus.sceneStorm(viewers, true, 60) else Vfx.skyMood(world, Vfx.Style.STORM, center, 0.9f, 120, 64f)
                 }
-                10 -> say(viewers, Cine.SPEAKER_ZEUS, "hha.zeus.line.phase.$number", 66)
-                24 -> {
-                    val world = zeus.entityWorld as net.minecraft.server.world.ServerWorld
-                    for (tip in zeus.sceneRenewRods()) Vfx.flare(world, Vfx.Style.THUNDER, tip, 1.2f, 10)
+                ZeusStages.PHASE_LINE -> say(viewers, Cine.SPEAKER_ZEUS, "hha.zeus.line.phase.$number", 66)
+                ZeusStages.PHASE_RENEW -> {
+                    val chest = zeus.entityPos.add(0.0, zeus.height * 0.6, 0.0)
+                    for (tip in zeus.sceneRenewRods()) {
+                        Vfx.flare(world, Vfx.Style.THUNDER, tip, 1.2f, 10)
+                        BossFx.arc(world, Vfx.Style.THUNDER, chest, tip, bend = RENEW_BEND, width = RENEW_WIDTH, life = RENEW_LIFE, fromEntity = zeus)
+                    }
                 }
-                40 -> Cine.title(viewers, "hha.zeus.phase.$number", "hha.zeus.phase.$number.sub", 40)
+                ZeusStages.PHASE_TITLE -> Cine.title(viewers, "hha.zeus.phase.$number", "hha.zeus.phase.$number.sub", 40)
             }
             yield(Unit)
         }
@@ -232,25 +219,26 @@ class ZeusScenes(private val zeus: ZeusEntity) {
     // ---------------------------------------------------------------------------------------------
 
     /**
-     * „Anerkennung“ (7,8 s): Er senkt den Blitz (`YIELD`). Nike setzt dem Spieler mit dem meisten Schaden den Kranz auf
-     * (Requisit `HermesBoltEntity.WREATH`, schwebt über dem Kopf und folgt ihm, bis Zeus geht, höchstens
-     * [ZeusTimings.WREATH_TICKS]). Drei Zeilen, dann Beute und Fortschritt; danach geht er.
+     * „Anerkennung“ `zeus.defeat` (12 s): Er senkt den Blitz (`YIELD`), der Sieg-Stinger des Olymp klingt. Nike (Licht
+     * der Bühne, `zeus.nike`) setzt dem Spieler mit dem meisten Schaden den Kranz auf (Requisit `HermesBoltEntity.WREATH`,
+     * schwebt über dem Kopf und folgt ihm, bis Zeus geht, höchstens [Z.WREATH_TICKS]). Er zeigt nach unten (`POINT`).
+     * Drei Zeilen, dann Beute und Fortschritt; danach geht er.
      */
     fun victory(): Sequence<Unit> = play(sequence {
         val viewers = zeus.sceneViewers()
-        val world = zeus.entityWorld as net.minecraft.server.world.ServerWorld
+        val world = zeus.entityWorld as ServerWorld
         val stage = zeus.sceneStage()
         val center = stage?.center ?: zeus.entityPos
         begin(viewers)
-        Cine.music(viewers, null)
+        // Sieg-Stinger: läuft am Client als Stinger über allem, das Bossthema blendet aus (P04).
+        Cine.music(viewers, HhaSounds.VICTORY_OLYMP)
         zeus.sceneAct(ZeusAction.YIELD)
         val victor = zeus.sceneVictor()
         victor?.let { zeus.sceneFace(it.entityPos) }
         if (stage != null) Cine.atmosphere(viewers, Vfx.Style.GOLD, center, 80)
-        val facing = front()
-        Cine.orbit(viewers, zeus.entityPos, 7.0, 1.2, facing - 25.0, facing + 5.0, 60, 60.0, 54.0, zeus, 3.4, 6.0, 1.6)
+        Cine.stage(viewers, ZeusStages.DEFEAT, zeus.entityPos, zeus.yaw, listOfNotNull(zeus, victor))
         // Nikes Kranz: folgt dem Kopf des Siegers Tick für Tick.
-        var wreath: dev.henny.hha.entity.miniboss.ScriptedBolt? = null
+        var wreath: ScriptedBolt? = null
         var wreathAge = 0
         fun follow() {
             val w = wreath ?: return
@@ -262,30 +250,20 @@ class ZeusScenes(private val zeus: ZeusEntity) {
             }
             w.moveTo(v.entityPos.add(0.0, v.height + Z.WREATH_HEIGHT, 0.0))
         }
-        for (t in 0 until Z.VICTORY_SCENE) {
+        for (t in 0 until ZeusStages.DEFEAT_LENGTH) {
             when (t) {
-                6 -> say(viewers, Cine.SPEAKER_ZEUS, "hha.zeus.line.end.1", 56)
-                60 -> if (victor != null) {
-                    Cine.orbit(viewers, victor.entityPos, 3.6, 1.5, 20.0, 70.0, 46, 50.0, 44.0, victor, 1.9)
+                ZeusStages.DEFEAT_LINE_1 -> say(viewers, Cine.SPEAKER_ZEUS, "hha.zeus.line.end.1", 56)
+                ZeusStages.DEFEAT_LINE_2 -> say(viewers, Cine.SPEAKER_NARRATOR, "hha.zeus.line.end.2", 40)
+                ZeusStages.DEFEAT_WREATH -> if (victor != null) {
+                    val head = victor.entityPos.add(0.0, victor.height + Z.WREATH_HEIGHT, 0.0)
+                    wreath = ScriptedBolt.spawn(world, zeus, HermesBoltEntity.WREATH, 1f, head)
+                    // Ohne Requisit (Spawn fehlgeschlagen) wie früher ein goldener Ring.
+                    if (wreath == null) Vfx.rune(world, Vfx.Style.GOLD, head, Z.WREATH_RADIUS, Z.WREATH_TICKS)
+                    Vfx.feathers(world, Vfx.Style.GOLD, head, 10, 0.8f, 50)
+                    zeus.sceneSound(HhaSounds.CHIME, victor.entityPos, 2f, 1.2f)
                 }
-                62 -> {
-                    if (victor != null) {
-                        val head = victor.entityPos.add(0.0, victor.height + Z.WREATH_HEIGHT, 0.0)
-                        wreath = dev.henny.hha.entity.miniboss.ScriptedBolt.spawn(
-                            world, zeus, dev.henny.hha.entity.boss.HermesBoltEntity.WREATH, 1f, head,
-                        )
-                        // Ohne Requisit (Spawn fehlgeschlagen) wie früher ein goldener Ring.
-                        if (wreath == null) Vfx.rune(world, Vfx.Style.GOLD, head, Z.WREATH_RADIUS, Z.WREATH_TICKS)
-                        Vfx.feathers(world, Vfx.Style.GOLD, head, 10, 0.8f, 50)
-                        zeus.sceneSound(HhaSounds.CHIME, victor.entityPos, 2f, 1.2f)
-                    }
-                    say(viewers, Cine.SPEAKER_NARRATOR, "hha.zeus.line.end.2", 40)
-                }
-                106 -> {
-                    val facingNow = front()
-                    Cine.orbit(viewers, zeus.entityPos, 6.5, 1.6, facingNow - 10.0, facingNow + 20.0, 50, 58.0, 52.0, zeus, 2.8)
-                    say(viewers, Cine.SPEAKER_ZEUS, "hha.zeus.line.end.3", 50)
-                }
+                ZeusStages.DEFEAT_POINT -> zeus.sceneAct(ZeusAction.POINT)
+                ZeusStages.DEFEAT_LINE_3 -> say(viewers, Cine.SPEAKER_ZEUS, "hha.zeus.line.end.3", 50)
             }
             follow()
             yield(Unit)
@@ -304,6 +282,11 @@ class ZeusScenes(private val zeus: ZeusEntity) {
     private fun flat(v: Vec3d): Vec3d = Vec3d(v.x, 0.0, v.z).let { if (it.lengthSquared() < 1e-6) Vec3d(0.0, 0.0, 1.0) else it.normalize() }
 
     private companion object {
+        /** Bogen von Zeus zur Spitze eines erneuerten Pfeilers (Phasenwechsel). */
+        const val RENEW_BEND = 0.35f
+        const val RENEW_WIDTH = 0.45f
+        const val RENEW_LIFE = 14
+
         /** Laufende Szenen auf dem Server (für die Überspringen-Taste). */
         private val active = HashSet<ZeusScenes>()
         private var registered = false

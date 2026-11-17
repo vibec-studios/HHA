@@ -106,6 +106,8 @@ class IxionModel(root: ModelPart) : GuardianModel(root) {
         val t = state.age
         val a = state.actionTime
         val act = state.action
+        val rig = RIGS.of(state.entityId)
+        rig.begin(t, act, a)
 
         // ---------------- Zielwerte je Aktion ----------------
         tTilt = 0f; tYaw = 0f; tDy = HOVER; tFold = 0f; tSpread = 0f; tSpeed = IDLE_SPIN + walk(state) * 0.12f
@@ -333,7 +335,33 @@ class IxionModel(root: ModelPart) : GuardianModel(root) {
             shinR.pitch = lerp(shinR.pitch, 0.1f, fall); shinL.pitch = lerp(shinL.pitch, 0.1f, fall)
             armR.roll += -0.05f * breath * fall; armL.roll += 0.05f * breath * fall
         }
+
+        // ---------------- Überarbeitung 3: Körper aus der gezeigten Pose überblenden, Radkranz federt ----------------
+        // Das Rad selbst ist schon weich nachgeführt (Memory); der Körper darauf springt sonst beim Aktionswechsel.
+        for ((i, part) in BODY_PARTS.withIndex()) {
+            pose[i * 3] = part.pitch; pose[i * 3 + 1] = part.yaw; pose[i * 3 + 2] = part.roll
+        }
+        pose[BODY_PARTS.size * 3] = body.originX; pose[BODY_PARTS.size * 3 + 1] = body.originY; pose[BODY_PARTS.size * 3 + 2] = body.originZ
+        rig.blend(pose, act, t, BLEND)
+        for ((i, part) in BODY_PARTS.withIndex()) {
+            part.pitch = pose[i * 3]; part.yaw = pose[i * 3 + 1]; part.roll = pose[i * 3 + 2]
+        }
+        body.originX = pose[BODY_PARTS.size * 3]; body.originY = pose[BODY_PARTS.size * 3 + 1]; body.originZ = pose[BODY_PARTS.size * 3 + 2]
+        // Gestürzt schlingert das Rad wie eine auslaufende Münze aus; beim Kippen und beim Ende des Rollens ein kleiner Stoß.
+        if (rig.changed) when {
+            act == IxionAction.FALLEN -> rig.springs[0].kick(FALL_KICK)
+            act == IxionAction.WOBBLE -> rig.springs[0].kick(WOBBLE_KICK)
+            rig.previous == IxionAction.ROLL -> rig.springs[0].kick(STOP_KICK)
+        }
+        val rim = rig.spring(0)
+        tilt.roll += rim
+        tilt.pitch += rim * 0.4f
+        jaw.pitch += dev.henny.hha.client.cine.CinePlayer.mouthOf(state.entityId) * MOUTH_OPEN
     }
+
+    private val BODY_PARTS by lazy { listOf(body, head, jaw, armR, armL, foreR, foreL, legR, legL, shinR, shinL) }
+    private val pose = FloatArray(11 * 3 + 3)
+    private val RIGS = GuardianRigs { GuardianRig(11 * 3 + 3, 1, RIM_FREQ, RIM_DAMP) }
 
     /** Ruck: in 2 Ticks hoch, dann abklingend (Funkenwurf, Zerren). */
     private fun pulse(x: Float): Float = when {
@@ -359,6 +387,17 @@ class IxionModel(root: ModelPart) : GuardianModel(root) {
 
         const val FOLLOW = 0.45f
         const val SPIN_FOLLOW = 0.25f
+
+        // --- Überarbeitung 3 (P14) ---
+        /** Überblendung des Körpers aus der gezeigten Pose (Ticks). */
+        const val BLEND = 6f
+        /** Radkranz-Feder (rad/Tick, Dämpfung) und ihre Stöße (rad/Tick). */
+        const val RIM_FREQ = 0.42f
+        const val RIM_DAMP = 0.12f
+        const val FALL_KICK = 0.12f
+        const val WOBBLE_KICK = 0.05f
+        const val STOP_KICK = 0.04f
+        const val MOUTH_OPEN = 0.3f
 
         // Gleiche Zahlen wie in ixion_model.py.
         const val HOVER = -4f

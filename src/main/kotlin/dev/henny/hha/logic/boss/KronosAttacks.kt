@@ -9,6 +9,7 @@ import dev.henny.hha.entity.boss.HermesBoltEntity
 import dev.henny.hha.entity.boss.KronosPose
 import dev.henny.hha.logic.Fx
 import dev.henny.hha.logic.Vfx
+import dev.henny.hha.logic.boss.BossFx.Screen
 import net.minecraft.block.Blocks
 import net.minecraft.entity.SpawnReason
 import net.minecraft.entity.attribute.EntityAttributes
@@ -80,7 +81,24 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
     /** Sanduhren der laufenden Rückspulung. */
     private val glasses = ArrayList<CoreEntity>()
 
+    // --- Überarbeitung 3 (P13): nur Darstellung -------------------------------------------------------------------
+
+    /** Läuft gerade die Linse (Verschlingen) bzw. der Zeitstopp (Stillstand)? Dann muss jeder Ausgang sie beenden. */
+    private var lensOn = false
+    private var stopOn = false
+    private var lensCenter = Vec3d.ZERO
+
+    /** Wer einen Bildschirm-Pass bekam: Wer den Kampf verlässt (Tod, Abbruch), bekommt das Ende einzeln. */
+    private val screened = HashSet<UUID>()
+
+    /** Die letzten Orte, an denen er stand (neuester zuerst), für die Nachbilder der Rückspulung. */
+    private val trail = ArrayList<Pair<Vec3d, Float>>()
+
     fun reset() {
+        // Jeder Ausgang (Phase, Sieg, Tod, Abbruch, Neustart) läuft hier durch: laufende Pässe beenden.
+        endLens(collapse = false)
+        endTimeStop(abort = true)
+        screened.clear()
         poiseBroken = false
         lastChain = ' '
         sinceDevour = 0
@@ -96,6 +114,10 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
     }
 
     fun onStageStart(number: Int) {
+        trail.clear()
+        fight.kronos?.hall = BlockPos.ofFloored(center)
+        // Musik (PLAN 2.10): eigenes Thema, Phase II in der zweiten Fassung (überblendet).
+        Cine.music(fight.players(), if (number == 5) HhaSounds.THEME_KRONOS_2 else HhaSounds.THEME_KRONOS)
         handsAt = K.HANDS_FIRST
         haltAt = K.HALT_FIRST
         chainedAt = K.CHAINED_FIRST
@@ -115,7 +137,91 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
 
     /** Jeden Tick der Phase (außerhalb von Szenen): der Platz für Saal-Gefahren. */
     fun tick() {
+        trackTrail()
         if (fight.stage == 5) hazardSlot()
+    }
+
+    /** Merkt sich alle [TRAIL_EVERY] Ticks, wo er steht (nur, wenn er sich deutlich bewegt hat). */
+    private fun trackTrail() {
+        if (fight.stageAge % TRAIL_EVERY != 0) return
+        val entity = fight.kronos ?: return
+        val pos = entity.entityPos
+        if (trail.isNotEmpty() && trail[0].first.squaredDistanceTo(pos) < TRAIL_MIN_STEP * TRAIL_MIN_STEP) return
+        trail.add(0, pos to entity.yaw)
+        while (trail.size > TRAIL_KEEP) trail.removeAt(trail.size - 1)
+    }
+
+    // -------------------------------------------------------------------------------------------------
+    // Bildschirm-Pässe (Überarbeitung 3): an allen Ausgängen beendet
+    // -------------------------------------------------------------------------------------------------
+
+    /** Verschlingen: Linse am Schlund, die sichere Mitte (Boden des Kreises samt Rand) bleibt unverzerrt. */
+    private fun startLens(entity: net.minecraft.entity.Entity, at: Vec3d) {
+        if (stopOn) endTimeStop(abort = true)
+        lensCenter = at
+        lensOn = true
+        BossFx.screen(world, Screen.GRAVITY_LENS, Vfx.Style.AEON, at, LENS_RADIUS, LENS_STRENGTH, K.DEVOUR_BITE + LENS_TAIL,
+            follow = entity, safeRadius = K.DEVOUR_RADIUS + LENS_SAFE_MARGIN, range = SCREEN_RANGE)
+        for (player in world.players) if (player.squaredDistanceTo(at) <= SCREEN_RANGE.toDouble() * SCREEN_RANGE) screened.add(player.uuid)
+    }
+
+    /** Linse aus; [collapse] = regulär am Biss: alles fällt zusammen (Blitz ≤ 0,25, kubisch). */
+    private fun endLens(collapse: Boolean) {
+        if (!lensOn) return
+        lensOn = false
+        BossFx.screenClear(world, lensCenter, Screen.GRAVITY_LENS, CLEAR_RANGE)
+        clearStragglers(Screen.GRAVITY_LENS, lensCenter)
+        if (collapse) for (player in fight.targets()) Vfx.screenFlash(player, Vfx.Style.AEON, COLLAPSE_FLASH, COLLAPSE_FLASH_TICKS)
+    }
+
+    /** Stillstand: Entsättigung, Effekte frieren ein (nur hier wird [BossFx.timeScale] gerufen), Vignette je Spieler. */
+    private fun startTimeStop(entity: net.minecraft.entity.Entity, ticks: Int) {
+        if (lensOn) endLens(collapse = false)
+        stopOn = true
+        BossFx.screen(world, Screen.TIME_STOP, Vfx.Style.AEON, entity.entityPos, STOP_RADIUS, STOP_STRENGTH, ticks, range = SCREEN_RANGE)
+        BossFx.timeScale(world, center, STOP_SCALE, ticks, SCREEN_RANGE)
+        for (player in fight.targets()) BossFx.vignette(player, Vfx.Style.AEON, STOP_VIGNETTE, ticks)
+        for (player in world.players) if (player.squaredDistanceTo(center) <= SCREEN_RANGE.toDouble() * SCREEN_RANGE) screened.add(player.uuid)
+    }
+
+    /**
+     * Zeitstopp vorbei. Regulär läuft er von selbst aus (Pass blendet, `FxClock` kehrt in 6 Ticks weich auf 1 zurück);
+     * bei [abort] wird er sofort beendet und der Zeitfaktor hart auf 1 gesetzt.
+     */
+    private fun endTimeStop(abort: Boolean) {
+        if (!stopOn) return
+        stopOn = false
+        BossFx.screenClear(world, center, Screen.TIME_STOP, CLEAR_RANGE)
+        if (abort) BossFx.timeScale(world, center, 1f, 1, CLEAR_RANGE)
+        clearStragglers(Screen.TIME_STOP, center)
+    }
+
+    /** Wer den Pass bekam und jetzt außerhalb der Reichweite steht (weggeschickt, ausgeschieden): einzeln beenden. */
+    private fun clearStragglers(kind: Screen, from: Vec3d) {
+        for (uuid in screened) {
+            val player = world.server?.playerManager?.getPlayer(uuid) ?: continue
+            if (player.entityWorld === world && player.squaredDistanceTo(from) <= CLEAR_RANGE.toDouble() * CLEAR_RANGE) continue
+            clearFor(player, kind)
+        }
+    }
+
+    private fun clearFor(player: ServerPlayerEntity, kind: Screen) {
+        BossFx.play(world, "core.screen_clear", Vfx.Style.GOLD, player.entityPos, d = kind.ordinal.toFloat(), life = 1, to = player)
+        if (kind == Screen.TIME_STOP) BossFx.play(world, "core.time_scale", Vfx.Style.GOLD, player.entityPos, a = 1f, life = 1, to = player)
+    }
+
+    /** Während eines Passes je Tick: Wer nicht mehr mitkämpft (Tod, Verlassen), bekommt das Ende sofort. */
+    private fun dropLeavers(kind: Screen) {
+        val inside = fight.targets().mapTo(HashSet()) { it.uuid }
+        val iterator = screened.iterator()
+        while (iterator.hasNext()) {
+            val uuid = iterator.next()
+            if (uuid in inside) continue
+            val player = world.server?.playerManager?.getPlayer(uuid)
+            if (player != null && fight.isParticipant(player)) continue
+            if (player != null) clearFor(player, kind)
+            iterator.remove()
+        }
     }
 
     // -------------------------------------------------------------------------------------------------
@@ -247,6 +353,16 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
         return Vec3d(-sin(rad), 0.0, cos(rad))
     }
 
+    /** Er verschwindet (Zeitschritt, Rückspulung, Uhrzeiger): Wirbel schließt sich in Brusthöhe. */
+    private fun vanish(at: Vec3d) {
+        BossFx.swirl(world, Vfx.Style.AEON, at.add(0.0, SWIRL_HEIGHT, 0.0), FACE_UP, SWIRL_RADIUS, SWIRL_LIFE, closing = true)
+    }
+
+    /** Er erscheint: Wirbel öffnet sich. */
+    private fun appear(at: Vec3d) {
+        BossFx.swirl(world, Vfx.Style.AEON, at.add(0.0, SWIRL_HEIGHT, 0.0), FACE_UP, SWIRL_RADIUS, SWIRL_LIFE, closing = false)
+    }
+
     private fun faceNearest() {
         val entity = fight.kronos ?: return
         fight.nearestTarget(entity.entityPos)?.let { fight.faceTitan(it.entityPos) }
@@ -309,7 +425,10 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
             if (!strike(player, 24f)) continue
             shove(player, cone.apex, 1.2, 0.45)
         }
-        Vfx.crescent(world, Vfx.Style.AEON, cone.apex.add(cone.direction.multiply(3.0)).add(0.0, 2.2, 0.0), cone.direction, K.SWEEP_RADIUS, 9f, 10)
+        // Überarbeitung 3: breites Sichelband mit Nachbild statt des alten Halbmonds; Ruck Rollen 2° in Hiebrichtung.
+        BossFx.play(world, "kronos.harpe", Vfx.Style.AEON, cone.apex, cone.direction, a = K.SWEEP_RADIUS, b = K.SWEEP_HALF_ANGLE,
+            c = if (backhand) -1f else 1f, d = 0f, life = HARPE_LIFE, entity = entity, impact = true)
+        BossFx.kick(world, cone.apex, 0f, roll = if (backhand) -SICKLE_ROLL else SICKLE_ROLL, ticks = KICK_TICKS, radius = KICK_RADIUS)
         sound(HhaSounds.DASH, cone.apex, 3.5f, 0.45f)
         wait(K.SWEEP_STRIKE)
     }
@@ -328,9 +447,17 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
             if (!strike(player, 30f)) continue
             shove(player, from, 0.8, 0.6)
         }
-        Vfx.shockwave(world, Vfx.Style.AEON, from.lerp(to, 0.35), 4f, 12, 2.4f)
-        calls.hitShake(from, 4f)
+        // Überarbeitung 3: senkrechtes Sichelband (Flächeneffekt), ein Sprung frisst sich die Linie entlang, ein paar
+        // Steine fliegen; Ruck statt Rütteln.
+        val along = flatDir(from, to) ?: forward()
+        BossFx.play(world, "kronos.harpe", Vfx.Style.AEON, from, along, a = K.CLEAVE_LENGTH, b = 0f, c = 1f, d = 1f,
+            life = HARPE_LIFE, entity = entity, impact = true)
+        BossFx.crack(world, Vfx.Style.AEON, from.add(along.multiply(CLEAVE_CRACK_START)), along,
+            (from.distanceTo(to) - CLEAVE_CRACK_START).toFloat().coerceAtLeast(2f), CRACK_LIFE, CRACK_GROW)
+        BossFx.debris(world, from.lerp(to, 0.3), CLEAVE_DEBRIS_RADIUS, CLEAVE_DEBRIS)
+        BossFx.kick(world, from, CLEAVE_PITCH, ticks = KICK_TICKS, radius = KICK_RADIUS)
         sound(HhaSounds.IMPACT, from, 4f, 0.45f)
+        sound(HhaSounds.CRACK, from, 3f, 0.6f)
         wait(K.CLEAVE_STRIKE)
         entity.pose = KronosPose.STUCK
         markOpen(K.STUCK_WINDOW)
@@ -366,7 +493,8 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
             shove(player, spot, 1.3, 0.7)
         }
         Vfx.shockwave(world, Vfx.Style.AEON, spot, K.SLAM_RADIUS, 16, 3f)
-        calls.hitShake(spot, 4f)
+        BossFx.cracks(world, Vfx.Style.AEON, spot, K.SLAM_RADIUS, 6)
+        BossFx.kick(world, spot, SLAM_PITCH, ticks = KICK_TICKS, radius = KICK_RADIUS)
         sound(HhaSounds.IMPACT, spot, 4f, 0.45f)
         val rings = if (fight.stage == 5) K.SLAM_RINGS_PHASE2 else K.SLAM_RINGS
         for (ring in 0 until rings) fight.addTask(expandingRing(spot, ring * K.SLAM_RING_GAP, ring))
@@ -476,9 +604,10 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
         Vfx.rune(world, Vfx.Style.AEON, spot.add(0.0, 0.06, 0.0), K.STEP_RUNE_RADIUS, K.STEP_WINDUP)
         sound(HhaSounds.BLINK, entity.entityPos, 3f, 0.5f)
         wait(K.STEP_WINDUP)
-        Vfx.flare(world, Vfx.Style.AEON, entity.entityPos.add(0.0, 3.0, 0.0), 5f, 8)
+        // Überarbeitung 3: Er verschwindet in einem sich schließenden Wirbel und tritt aus einem sich öffnenden.
+        vanish(entity.entityPos)
         entity.setPosition(spot)
-        Vfx.flare(world, Vfx.Style.AEON, spot.add(0.0, 3.0, 0.0), 6f, 10)
+        appear(spot)
         sound(HhaSounds.BLINK, spot, 3f, 0.7f)
         val group = calls.boss(pace = Telegraph.Pace.HEAVY)
         yieldAll(sickle(group, backhand = true))
@@ -496,8 +625,9 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
     private fun clockHands(): Sequence<Unit> = sequence {
         val entity = fight.kronos ?: return@sequence
         handsAt = fight.stageAge + K.HANDS_INTERVAL
-        Vfx.flare(world, Vfx.Style.AEON, entity.entityPos.add(0.0, 3.0, 0.0), 5f, 8)
+        vanish(entity.entityPos)
         entity.setPosition(center)
+        appear(center)
         entity.yaw = 0f
         entity.pose = KronosPose.HANDS
         sound(HhaSounds.BLINK, center, 3f, 0.4f)
@@ -512,12 +642,13 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
         wait(group.ticks)
         val lastHit = HashMap<UUID, Int>()
         val turn = Math.PI * 2.0 / K.HANDS_TURN
+        // Überarbeitung 3: ein Effekt zeichnet beide Zeiger über die ganze Runde (gleiche Winkel wie die Prüfung unten).
+        BossFx.play(world, "kronos.clock", Vfx.Style.AEON, center.add(0.0, 0.6, 0.0), a = minuteStart.toFloat(),
+            b = hourStart.toFloat(), c = reach.toFloat(), life = K.HANDS_SWEEP + 1)
         for (tick in 0..K.HANDS_SWEEP) {
             val minute = minuteStart + tick * turn
             val hour = hourStart - tick * turn * K.HANDS_HOUR_SPEED
             for ((angle, length) in listOf(minute to reach, hour to reach * 0.7)) {
-                val tip = center.add(cos(angle) * length, 0.6, sin(angle) * length)
-                if (tick % 2 == 0) Vfx.beam(world, Vfx.Style.AEON, center.add(0.0, 0.6, 0.0), tip, 1.8f, 3)
                 for (player in fight.targets()) {
                     if (!fight.grounded(player)) continue
                     val off = Vec3d(player.x - center.x, 0.0, player.z - center.z)
@@ -561,8 +692,15 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
         }
         fight.hint("hha.kronos.hint.halt", Formatting.BLUE)
         sound(HhaSounds.THUNDER, center, 4f, 1.6f)
+        sound(HhaSounds.TIME_STOP, center, 4f, 1f)
+        // Überarbeitung 3: Die Welt verliert ihre Farbe, laufende Effekte frieren ein (Dauer = die stehende Zeit).
+        startTimeStop(entity, K.HALT_RESUME - K.HALT_RAISE)
         val frozen = freezeBolts()
-        wait(K.HALT_RESUME - K.HALT_RAISE)
+        repeat(K.HALT_RESUME - K.HALT_RAISE) {
+            dropLeavers(Screen.TIME_STOP)
+            yield(Unit)
+        }
+        endTimeStop(abort = false)
         // Sie läuft weiter, und alles holt sich auf einmal nach.
         thaw(frozen)
         sound(HhaSounds.BLINK, center, 3.5f, 1.4f)
@@ -577,6 +715,12 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
                 marks.add(group.ring(fight.clampToHall(under.add(cos(a) * K.HALT_SPREAD, 0.0, sin(a) * K.HALT_SPREAD), 2.0), K.HALT_RADIUS, K.HALT_IMPACT_DELAY))
             }
         }
+        // Überarbeitung 3 (`kronos.hand`): Über jedem Kreis reißt die Luft auf, seine Hand schlägt zum Treffer herab
+        // (der Flächeneffekt jedes Kreises; ersetzt die Säule).
+        for (mark in marks) {
+            BossFx.play(world, "kronos.hand", Vfx.Style.AEON, mark.center, a = K.HALT_RADIUS, b = K.HALT_IMPACT_DELAY.toFloat(),
+                life = K.HALT_IMPACT_DELAY + HAND_AFTER, entity = entity, impact = true)
+        }
         wait(group.ticks)
         val struck = HashSet<UUID>()
         for (mark in marks) {
@@ -585,9 +729,10 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
                 // Stillstand-Kreise schlagen von oben ein (SKY).
                 if (strike(player, 22f, magic = true, reach = BossDefense.Reach.SKY)) Fx.launchPlayer(player, Vec3d(0.0, 0.9, 0.0))
             }
-            Vfx.pillar(world, Vfx.Style.AEON, mark.center, K.HALT_RADIUS * 0.8f, 12f, 12)
         }
+        BossFx.kick(world, center, HAND_PITCH, ticks = KICK_TICKS, radius = HALL_KICK_RADIUS)
         sound(HhaSounds.IMPACT, center, 4f, 0.8f)
+        sound(HhaSounds.THUD, center, 4f, 0.7f)
         wait(K.HALT_WINDOW)
         entity.pose = KronosPose.IDLE
     }
@@ -622,10 +767,17 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
      */
     private fun rewind(): Sequence<Unit> = sequence {
         val entity = fight.kronos ?: return@sequence
-        Vfx.flare(world, Vfx.Style.AEON, entity.entityPos.add(0.0, 3.0, 0.0), 5f, 8)
+        vanish(entity.entityPos)
         entity.setPosition(center.add(0.0, 0.0, -4.0))
         entity.yaw = 0f
         entity.pose = KronosPose.REWIND
+        appear(entity.entityPos)
+        // Überarbeitung 3: Nachbilder an seinen letzten Orten laufen rückwärts.
+        val ghosts = trail.filter { it.first.squaredDistanceTo(entity.entityPos) > GHOST_MIN_DISTANCE * GHOST_MIN_DISTANCE }
+        if (ghosts.isNotEmpty()) {
+            val extra = ghosts.joinToString(";") { (p, yaw) -> String.format(java.util.Locale.ROOT, "%.2f,%.2f,%.2f,%.1f", p.x, p.y, p.z, yaw) }
+            BossFx.play(world, "kronos.ghosts", Vfx.Style.AEON, entity.entityPos, b = entity.form.toFloat(), life = GHOSTS_LIFE, extra = extra)
+        }
         fight.hint("hha.kronos.hint.rewind", Formatting.GOLD)
         sound(HhaSounds.CHIME, center, 4f, 0.35f)
         // Wo alle stehen: Dorthin geht es zurück, wenn er es schafft.
@@ -646,6 +798,8 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
             world.spawnEntity(glass)
             glasses.add(glass)
             Vfx.flare(world, Vfx.Style.GOLD, spot.add(0.0, 1.3, 0.0), 4f, 12)
+            // Überarbeitung 3: Splitter fliegen aus dem Stundenglas auf seiner Brust in die Sanduhr.
+            BossFx.play(world, "kronos.shards", Vfx.Style.AEON, spot.add(0.0, 1.3, 0.0), entity = entity, life = SHARDS_LIFE)
         }
         for (tick in 0 until K.REWIND_TIME) {
             if (glasses.isEmpty()) break
@@ -706,7 +860,13 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
         val ring = calls.ring(mouth, K.DEVOUR_RADIUS, K.DEVOUR_BITE)
         fight.hint("hha.kronos.hint.devour", Formatting.BLUE)
         sound(HhaSounds.ROAR, mouth, 4f, 0.3f)
+        sound(HhaSounds.LENS, mouth, 4f, 1f)
+        // Überarbeitung 3: Gravitationslinse am Schlund (sichere Mitte = der Kreis samt Rand, unverzerrt) und Trümmer-Sog.
+        startLens(entity, mouth)
+        val throat = entity.entityPos.add(forward().multiply(THROAT_FORWARD)).add(0.0, entity.height * THROAT_HEIGHT, 0.0)
+        BossFx.debrisPull(world, mouth, K.DEVOUR_RADIUS, throat, K.DEVOUR_PULL, BossFx.DEBRIS_PULL_MAX)
         repeat(K.DEVOUR_PULL) { tick ->
+            dropLeavers(Screen.GRAVITY_LENS)
             if (tick % K.DEVOUR_TUG == 0) {
                 for (player in fight.targets()) {
                     val pull = flatDir(player.entityPos, mouth) ?: continue
@@ -719,7 +879,12 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
             Fx.burst(world, ParticleTypes.REVERSE_PORTAL, mouth.add(cos(a) * r, 1.0, sin(a) * r), 4, 0.2, 0.02)
             yield(Unit)
         }
-        wait(ring.remaining)
+        repeat(ring.remaining.coerceAtLeast(0)) {
+            dropLeavers(Screen.GRAVITY_LENS)
+            yield(Unit)
+        }
+        // Der Biss: Die Linse fällt in sich zusammen.
+        endLens(collapse = true)
         for (player in ring.hits(fight.targets())) {
             // Verschlingen (SKY): Sein Biss holt auch, wer über ihm hängt.
             if (!strike(player, 34f, reach = BossDefense.Reach.SKY)) continue
@@ -727,7 +892,7 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
             shove(player, mouth, 1.6, 0.8)
         }
         Vfx.nova(world, Vfx.Style.AEON, mouth.add(0.0, 2.0, 0.0), K.DEVOUR_RADIUS, 16)
-        calls.hitShake(mouth, 4f)
+        BossFx.kick(world, mouth, DEVOUR_PITCH, ticks = KICK_TICKS, radius = KICK_RADIUS)
         sound(HhaSounds.IMPACT, mouth, 4f, 0.35f)
         markOpen(K.DEVOUR_WINDOW)
         wait(K.DEVOUR_WINDOW)
@@ -862,6 +1027,10 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
                     val ring = group.ring(spot, K.SAND_RADIUS, K.SAND_WINDUP)
                     val top = spot.add(0.0, 18.0, 0.0)
                     grains.add(Grain(ring, fight.puppet(HermesBoltEntity.SAND, top, 1.3f), top))
+                    // Überarbeitung 3: der Riss, aus dem der Sand fällt (Äon-Glut, liegt hoch über der Ansage).
+                    val a = world.random.nextDouble() * Math.PI
+                    BossFx.tear(world, Vfx.Style.AEON, top.add(0.0, 0.6, 0.0), Vec3d(cos(a), 0.0, sin(a)), SAND_TEAR_LENGTH,
+                        SAND_TEAR_WIDTH, K.SAND_WINDUP + SAND_TEAR_AFTER, SAND_TEAR_OPEN)
                 }
                 sound(HhaSounds.WHOOSH, center, 2.6f, 0.6f)
             }
@@ -910,5 +1079,71 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
         const val ANTI_AIR_DAMAGE = 22f
 
         val DOWN = Vec3d(0.0, -1.0, 0.0)
+
+        // --- Überarbeitung 3 (P13): reine Darstellungs-Konstanten, keine Kampfzahlen -----------------------------
+
+        /** Rucke: Sichel Rollen, Spalthieb/Äonenschlag/Biss/Hände Nicken (°, Deckel 2,5), Dauer, Reichweite. */
+        const val SICKLE_ROLL = 2f
+        const val CLEAVE_PITCH = 2f
+        const val SLAM_PITCH = 2.5f
+        const val DEVOUR_PITCH = 2.5f
+        const val HAND_PITCH = 2.5f
+        const val KICK_TICKS = 6
+        const val KICK_RADIUS = 32f
+        const val HALL_KICK_RADIUS = 60f
+
+        /** Sichelband (`kronos.harpe`). */
+        const val HARPE_LIFE = 16
+
+        /** Spalthieb: Sprung ab so weit vor ihm, Dauer und Wachsen; Trümmer im Radius. */
+        const val CLEAVE_CRACK_START = 2.5
+        const val CRACK_LIFE = 60
+        const val CRACK_GROW = 8
+        const val CLEAVE_DEBRIS_RADIUS = 3f
+        const val CLEAVE_DEBRIS = 6
+
+        /** Wirbel beim Verschwinden/Erscheinen. */
+        const val SWIRL_HEIGHT = 3.0
+        const val SWIRL_RADIUS = 3.2f
+        const val SWIRL_LIFE = 16
+        val FACE_UP = Vec3d(0.0, 1.0, 0.0)
+
+        /** Hand aus dem Riss: so lange nach dem Treffer (Rückzug, Risse). */
+        const val HAND_AFTER = 26
+
+        /** Nachbilder und Splitter der Rückspulung. */
+        const val TRAIL_EVERY = 10
+        const val TRAIL_MIN_STEP = 3.0
+        const val TRAIL_KEEP = 3
+        const val GHOST_MIN_DISTANCE = 3.0
+        const val GHOSTS_LIFE = 48
+        const val SHARDS_LIFE = 34
+
+        /** Linse beim Verschlingen: Einflussradius, Stärke, Rest nach dem Biss, Rand der sicheren Mitte. */
+        const val LENS_RADIUS = 9f
+        const val LENS_STRENGTH = 0.85f
+        const val LENS_TAIL = 4
+        const val LENS_SAFE_MARGIN = 1.5f
+        const val COLLAPSE_FLASH = 0.22f
+        const val COLLAPSE_FLASH_TICKS = 8
+        /** Ziel des Trümmer-Sogs: vor ihm, auf Schlundhöhe. */
+        const val THROAT_FORWARD = 1.5
+        const val THROAT_HEIGHT = 0.8
+
+        /** Zeitstopp: Radius der Wellenringe, Stärke, Zeitfaktor der Effekte, Vignette. */
+        const val STOP_RADIUS = 40f
+        const val STOP_STRENGTH = 0.7f
+        const val STOP_SCALE = 0.05f
+        const val STOP_VIGNETTE = 0.2f
+
+        /** Wer den Pass bekommt bzw. sein Ende (um die Mitte des Passes; der Saal hat Radius 46). */
+        const val SCREEN_RANGE = 80f
+        const val CLEAR_RANGE = 100f
+
+        /** Zeitsand: Riss über jedem Kreis. */
+        const val SAND_TEAR_LENGTH = 4.5f
+        const val SAND_TEAR_WIDTH = 1.1f
+        const val SAND_TEAR_AFTER = 8
+        const val SAND_TEAR_OPEN = 5
     }
 }

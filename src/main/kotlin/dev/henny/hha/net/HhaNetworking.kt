@@ -165,6 +165,15 @@ object HhaNetworking {
         PayloadTypeRegistry.playC2S().register(GuiActionPayload.ID, GuiActionPayload.CODEC)
         PayloadTypeRegistry.playS2C().register(GuiStatePayload.ID, GuiStatePayload.CODEC)
         dev.henny.hha.logic.GuiServer.init()
+        // Überarbeitung 3 (PLAN 6.1): Effekte per Text-ID und das Netz des RPG-Modus.
+        PayloadTypeRegistry.playS2C().register(FxPayload.ID, FxPayload.CODEC)
+        PayloadTypeRegistry.playS2C().register(RpgStatePayload.ID, RpgStatePayload.CODEC)
+        PayloadTypeRegistry.playS2C().register(RpgPartyPayload.ID, RpgPartyPayload.CODEC)
+        PayloadTypeRegistry.playS2C().register(RpgEventPayload.ID, RpgEventPayload.CODEC)
+        PayloadTypeRegistry.playC2S().register(RpgClientPayload.ID, RpgClientPayload.CODEC)
+        ServerPlayNetworking.registerGlobalReceiver(RpgClientPayload.ID) { payload, context ->
+            dev.henny.hha.rpg.RpgArrival.onClient(context.player(), payload)
+        }
 
         ServerPlayConnectionEvents.JOIN.register { _, sender, _ ->
             sender.sendPacket(ConfigSyncPayload(HhaConfig.numbersSnapshot()))

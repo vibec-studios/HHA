@@ -25,6 +25,10 @@ object HhaClientConfig {
         "screen_shake" to true,
         "tartaros_shader" to true,
         "portal_shader" to true,
+        // Überarbeitung 3 (P00): Bildschirm-Pass (P02), RPG-HUD (P16), Handkamera in Szenen (P05).
+        "screen_fx" to true,
+        "rpg_hud" to true,
+        "cine_handheld" to true,
     )
 
     /** Zahlenwerte: Skalierung, Verschiebung, Partikel-Dichte. */

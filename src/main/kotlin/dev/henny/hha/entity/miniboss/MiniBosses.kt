@@ -5,6 +5,10 @@ import dev.henny.hha.entity.boss.HermesBoltEntity
 import dev.henny.hha.logic.Fx
 import dev.henny.hha.logic.Vfx
 import dev.henny.hha.logic.boss.BossDefense
+import dev.henny.hha.logic.boss.BossFx
+import dev.henny.hha.logic.boss.Cine
+import dev.henny.hha.logic.boss.DuelCinematics
+import dev.henny.hha.logic.boss.SceneKit
 import dev.henny.hha.logic.boss.BossRewards
 import dev.henny.hha.logic.boss.BossTimings
 import dev.henny.hha.logic.boss.Telegraph
@@ -16,7 +20,6 @@ import net.minecraft.entity.LivingEntity
 import net.minecraft.entity.attribute.DefaultAttributeContainer
 import net.minecraft.entity.attribute.EntityAttributes
 import net.minecraft.entity.boss.BossBar
-import net.minecraft.entity.boss.ServerBossBar
 import net.minecraft.entity.damage.DamageSource
 import net.minecraft.entity.data.DataTracker
 import net.minecraft.entity.data.TrackedData
@@ -97,10 +100,36 @@ object TantalusAction {
  * Was alle Wächter der Tartaros-Bauwerke gemeinsam haben: eine Lebensleiste für alle in der Nähe, ein Auftritt mit Titel,
  * die Sonderbewegungen fürs Modell ([act]), die Beute und die Meldung an [TartarosMinibosses], dass dieses Bauwerk jetzt
  * befreit ist. Keine Aura, keine eigene Zielwahl: Das macht das Drehbuch in [GuardianEntity].
+ *
+ * Überarbeitung 3 (P14): Die Lebensleiste ist die geteilte HHA-Leiste (`Cine.phaseBar`, ein Abschnitt, Farbe aus
+ * [style] wie `DuelBossEntity.barTheme`) statt der Vanilla-Bossleiste. Wer in [BAR_RANGE] Blöcken lebt, sieht sie und
+ * hört das Kampfthema ([theme]); wer geht, stirbt oder den Kampf verlässt, bekommt sie ausgeblendet und die Musik aus.
+ * [color] bleibt als Parameter (Quellkompatibilität: Bosse, Gegner des Olymp, Kampe), ist aber ohne Wirkung.
  */
-class MiniBossKit(private val mob: HostileEntity, val nameKey: String, color: BossBar.Color, private val style: Vfx.Style) {
+class MiniBossKit(private val mob: HostileEntity, val nameKey: String, @Suppress("UNUSED_PARAMETER") color: BossBar.Color, private val style: Vfx.Style) {
 
-    val bar = ServerBossBar(Text.translatable(nameKey), color, BossBar.Style.NOTCHED_10)
+    /** Wer gerade Leiste und Thema bekommt (UUIDs, gepflegt in [tick]). */
+    private val viewers = LinkedHashSet<UUID>()
+
+    /** Zuletzt gesendeter Lebensanteil (−1 = noch nichts gesendet): Die Leiste geht nur bei Änderung hinaus. */
+    private var sentFraction = -1f
+
+    /** Leiste kurz aus (Leine: er kehrt heim); die nächste Sonderbewegung ([act] ≠ 0) zeigt sie wieder. */
+    private var barPaused = false
+
+    /** Nach Sieg oder Entfernen kommt die Leiste nicht wieder. */
+    private var closed = false
+
+    /**
+     * Kampfthema für alle Zuschauer der Leiste (`Cine.music`), `null` = keins. Ein Wechsel geht sofort an alle
+     * (die Musik blendet am Client über); neue Zuschauer bekommen es beim Hinzukommen.
+     */
+    var theme: SoundEvent? = null
+        set(value) {
+            if (field == value) return
+            field = value
+            if (barVisible && !closed) viewerPlayers().takeIf { it.isNotEmpty() }?.let { Cine.music(it, value) }
+        }
 
     /** Das Bauwerk, zu dem er gehört (siehe [TartarosMinibosses]). */
     var site: Long = 0L
@@ -131,7 +160,7 @@ class MiniBossKit(private val mob: HostileEntity, val nameKey: String, color: Bo
     var barVisible = true
         set(value) {
             field = value
-            if (!value) bar.clearPlayers()
+            if (!value) release(null)
         }
 
     /**
@@ -151,20 +180,74 @@ class MiniBossKit(private val mob: HostileEntity, val nameKey: String, color: Bo
         mob.setPersistent()
     }
 
-    /** Nur die Lebensleiste: wer nahe ist, sieht sie. */
+    /**
+     * Nur die Lebensleiste (und das Thema): wer nahe ist, sieht sie. Zuschauer werden alle [BAR_REFRESH] Ticks
+     * abgeglichen; der Lebensanteil geht jeden Tick hinaus, aber nur, wenn er sich geändert hat.
+     */
     fun tick() {
         val world = world ?: return
         age++
-        if (!barVisible) return
-        bar.percent = (mob.health / mob.maxHealth).coerceIn(0f, 1f)
-        if (age % 10 == 0) {
-            for (player in world.players) {
-                val near = player.squaredDistanceTo(mob) < 48.0 * 48.0 && player.isAlive
-                if (near && player !in bar.players) bar.addPlayer(player)
-                if (!near && player in bar.players) bar.removePlayer(player)
-            }
-        }
+        if (!barVisible || closed) return
+        if (age % BAR_REFRESH == 1) refreshViewers(world)
+        if (barPaused || viewers.isEmpty()) return
+        val fraction = (mob.health / mob.maxHealth).coerceIn(0f, 1f)
+        if (abs(fraction - sentFraction) < BAR_EPSILON) return
+        sentFraction = fraction
+        sendBar(viewerPlayers(), fraction)
     }
+
+    /** Wer in [BAR_RANGE] lebt, kommt dazu (Leiste + Thema); wer fehlt, bekommt beides ausgeblendet. */
+    private fun refreshViewers(world: ServerWorld) {
+        val near = world.players.filter { it.isAlive && !it.isSpectator && it.squaredDistanceTo(mob) < BAR_RANGE * BAR_RANGE }
+        val ids = near.mapTo(HashSet()) { it.uuid }
+        val gone = viewers.filter { it !in ids }.mapNotNull { world.server?.playerManager?.getPlayer(it) }
+        viewers.retainAll(ids)
+        if (gone.isNotEmpty()) {
+            Cine.phaseBar(gone, false)
+            if (theme != null) Cine.music(gone, null)
+        }
+        val fresh = near.filter { viewers.add(it.uuid) }
+        if (fresh.isEmpty()) return
+        if (!barPaused) sendBar(fresh, (mob.health / mob.maxHealth).coerceIn(0f, 1f))
+        theme?.let { Cine.music(fresh, it) }
+    }
+
+    private fun sendBar(players: List<ServerPlayerEntity>, fraction: Float) {
+        if (players.isEmpty()) return
+        Cine.phaseBar(players, true, 1, 1, fraction, BAR_STYLE_THEMES + style.ordinal, nameKey, "$nameKey.sub")
+    }
+
+    private fun viewerPlayers(): List<ServerPlayerEntity> {
+        val server = world?.server ?: return emptyList()
+        return viewers.mapNotNull { server.playerManager.getPlayer(it) }
+    }
+
+    /**
+     * Leiste aus (Leine/Heimweg): Sie verschwindet für alle Zuschauer, das Thema läuft weiter. Die nächste
+     * Sonderbewegung ([act] mit `kind ≠ 0`) zeigt sie wieder.
+     */
+    fun pauseBar() {
+        if (barPaused) return
+        barPaused = true
+        viewerPlayers().takeIf { it.isNotEmpty() }?.let { Cine.phaseBar(it, false) }
+    }
+
+    /**
+     * Ende des Kampfes für alle Zuschauer: Leiste aus, statt des Themas [music] (z. B. der Sieg-Stinger, der als
+     * Stinger läuft und das Thema ausblendet) oder Stille. Danach kommt nichts mehr hinaus.
+     */
+    fun release(music: SoundEvent?) {
+        val players = viewerPlayers()
+        if (players.isNotEmpty()) {
+            Cine.phaseBar(players, false)
+            if (theme != null || music != null) Cine.music(players, music)
+        }
+        viewers.clear()
+        sentFraction = -1f
+    }
+
+    /** Wer zuletzt Leiste und Thema bekam (für Szenen nach dem Tod, wenn der Wächter schon weg ist). */
+    fun audience(): List<ServerPlayerEntity> = viewerPlayers()
 
     /**
      * Auftritt: Titel für alle in der Nähe, ein Ton und ein Lichtpfeiler (Plan 3.4). [subtitle] ersetzt die Unterzeile
@@ -192,6 +275,11 @@ class MiniBossKit(private val mob: HostileEntity, val nameKey: String, color: Bo
             return
         }
         world?.sendEntityStatus(mob, (ACTION_STATUS + kind).toByte())
+        if (kind != 0 && barPaused) {
+            // Er kämpft wieder: die Leiste kommt zurück (beim nächsten Tick mit dem aktuellen Stand).
+            barPaused = false
+            sentFraction = -1f
+        }
     }
 
     /** Vom Client aus `handleStatus`: true, wenn der Status eine Sonderbewegung (oder ihr Ende) war. */
@@ -225,7 +313,9 @@ class MiniBossKit(private val mob: HostileEntity, val nameKey: String, color: Bo
     }
 
     fun onRemoved() {
-        bar.clearPlayers()
+        // Verschwindet er ohne Sieg (alle weg, Leine, Neustart): Leiste aus, Musik aus.
+        release(null)
+        closed = true
     }
 
     /**
@@ -236,7 +326,9 @@ class MiniBossKit(private val mob: HostileEntity, val nameKey: String, color: Bo
      */
     fun defeated() {
         val world = world ?: return
-        bar.clearPlayers()
+        // Sieg: Leiste aus; wer ein Thema hörte, bekommt den Sieg-Stinger des Tartaros (blendet das Thema aus).
+        release(if (theme != null) HhaSounds.VICTORY_TARTAROS else null)
+        closed = true
         val link = (mob as? TartarosGuardian)?.link ?: return
         Vfx.pillar(world, Vfx.Style.GOLD, mob.entityPos, 2f, 26f, 30)
         world.playSound(null, mob.x, mob.y, mob.z, SoundEvents.UI_TOAST_CHALLENGE_COMPLETE, SoundCategory.PLAYERS, 1f, 1f)
@@ -272,6 +364,18 @@ class MiniBossKit(private val mob: HostileEntity, val nameKey: String, color: Bo
 
         /** Nach so vielen Ticks fällt eine Aktion auf dem Client von selbst auf 0 zurück (Zeus' Waage dauert 280). */
         const val ACTION_MAX = 320
+
+        /** Wer näher ist, sieht die Leiste (wie die alte Vanilla-Leiste). */
+        const val BAR_RANGE = 48.0
+
+        /** Zuschauer der Leiste alle so viele Ticks abgleichen. */
+        const val BAR_REFRESH = 10
+
+        /** Kleinere Änderungen des Lebensanteils gehen nicht hinaus. */
+        const val BAR_EPSILON = 0.0005f
+
+        /** Erstes Leisten-Thema mit Stilfarben (`client/cine/PhaseBar.STYLE_THEMES`, `DuelBossEntity.BAR_STYLE_THEMES`). */
+        const val BAR_STYLE_THEMES = 10
     }
 }
 
@@ -312,13 +416,41 @@ abstract class TartarosGuardian(type: EntityType<out TartarosGuardian>, world: W
     protected abstract val baseHealth: Double
 
     /** Auftritt als kurze Szene: Kamera fährt heran, der Erzähler sagt, wer hier wacht. */
-    private val cinematics = dev.henny.hha.logic.boss.DuelCinematics(this) { fighters() }
+    protected val cinematics = dev.henny.hha.logic.boss.DuelCinematics(this) { fighters() }
 
-    override fun framedEntrance(): Sequence<Unit> = cinematics.intro(
-        entrance(),
-        listOf(dev.henny.hha.logic.boss.DuelCinematics.Line(dev.henny.hha.logic.boss.Cine.SPEAKER_NARRATOR, "hha.tartaros.scene.${link.key}", 14, 80)),
-        100,
-    )
+    /**
+     * Bühnen-Skript des Auftritts (Überarbeitung 3, PLAN 2.11): `<glied>.intro` (`warden.intro`, `sisyphus.intro`,
+     * `ixion.intro`, `tantalus.intro`; Kampe: `kampe.intro` von P15). Unbekannt → Auftritt-Kamera des Bestands.
+     */
+    protected open val introScript: String get() = "${link.key}.intro"
+
+    /**
+     * Bühnen-Skript der Niederlage, gespielt am Ort des Todes ([onDefeated]); `null` = keine Szene (wer eine eigene
+     * spielt, überschreibt das mit `null`). Standard: `<glied>.defeat`, wenn registriert (Kampe: `kampe.defeat`), sonst
+     * die gemeinsame [DEFEAT_SCRIPT].
+     */
+    protected open val defeatScript: String?
+        get() = "${link.key}.defeat".takeIf { dev.henny.hha.stage.StageScripts.get(it) != null } ?: DEFEAT_SCRIPT
+
+    /** Was der Wächter im Auftritt selbst tut (innerer Ablauf der Szene); Standard: [entrance]. */
+    protected open fun introInner(): Sequence<Unit> = entrance()
+
+    /** Vor dem Start der Szene, im selben Tick (z. B. Sisyphos an den Fuß des Hangs setzen). */
+    protected open fun beforeIntro() {}
+
+    /** Fester Endzustand des Auftritts: läuft genau einmal am Szenenende, auch übersprungen und ohne Zuschauer. */
+    protected open fun introFinish() {}
+
+    override fun framedEntrance(): Sequence<Unit> = sequence {
+        beforeIntro()
+        yieldAll(
+            cinematics.staged(
+                introScript, introInner(),
+                listOf(DuelCinematics.Line(Cine.SPEAKER_NARRATOR, "hha.tartaros.scene.${link.key}", NARRATOR_AT, 80)),
+                finish = { introFinish() },
+            ),
+        )
+    }
 
     override fun acceptsHit(world: net.minecraft.server.world.ServerWorld, source: net.minecraft.entity.damage.DamageSource): Boolean =
         !cinematics.playing && super.acceptsHit(world, source)
@@ -326,6 +458,32 @@ abstract class TartarosGuardian(type: EntityType<out TartarosGuardian>, world: W
     override fun remove(reason: RemovalReason) {
         if (!entityWorld.isClient) cinematics.abort()
         super.remove(reason)
+    }
+
+    /** Kampfthema nach Lebensanteil: [HhaSounds.THEME_GUARDIAN], ab [THEME_2_AT] die zweite Fassung. */
+    override fun tick() {
+        super.tick()
+        if (entityWorld.isClient || !isAlive) return
+        kit.theme = if (health < maxHealth * THEME_2_AT) HhaSounds.THEME_GUARDIAN_2 else HhaSounds.THEME_GUARDIAN
+    }
+
+    /** Leine (er kehrt heim): Die Leiste blendet aus, bis er wieder angreift. Unterklassen rufen `super.onReset()`. */
+    override fun onReset() {
+        kit.pauseBar()
+    }
+
+    /**
+     * Gefallen: Beute und Glied wie bisher ([MiniBossKit.defeated], dort auch der Sieg-Stinger), danach die
+     * Niederlage-Szene ([defeatScript]) am Ort des Todes. Sie läuft über [GuardianScenes] weiter, auch wenn der Körper
+     * nach der Todesbewegung verschwindet.
+     */
+    override fun onDefeated() {
+        val audience = (kit.audience() + fighters()).distinctBy { it.uuid }
+        super.onDefeated()
+        val id = defeatScript ?: return
+        val world = entityWorld as? ServerWorld ?: return
+        val scene = DuelCinematics(this) { audience.filter { it.isAlive && !it.isRemoved && !it.isDisconnected && it.entityWorld === world } }
+        GuardianScenes.run(world.server ?: return, audience, scene.staged(id, emptySequence(), actors = emptyList()))
     }
 
     /** Wie viele Glieder bei seinem Erscheinen schon gesprengt waren (0–5). */
@@ -429,6 +587,56 @@ abstract class TartarosGuardian(type: EntityType<out TartarosGuardian>, world: W
 
         /** Vanillas Obergrenze für `MAX_HEALTH` (`ClampedEntityAttribute`). */
         const val MAX_ATTRIBUTE_HEALTH = 1024.0
+
+        /** Gemeinsame Niederlage-Szene der Wächter (`GuardianStages`). */
+        const val DEFEAT_SCRIPT = "guardian.defeat"
+
+        /** Ab diesem Lebensanteil läuft die zweite Fassung des Themas. */
+        const val THEME_2_AT = 0.5f
+
+        /** Tick der Erzählerzeile im Auftritt (wie bisher 14; die Skripte lassen ihr Platz). */
+        const val NARRATOR_AT = 14
+    }
+}
+
+/**
+ * Szenen, die den Wächter überleben (Niederlage, PLAN 2.11): Der Körper verschwindet nach der Todesbewegung, die Szene
+ * muss aber bis zu ihrem Ende laufen und `Cine.end` schicken. Läuft am Ende jedes Server-Ticks (Fabric-Ereignis, beim
+ * ersten Gebrauch angemeldet); beim Anhalten des Servers wird alles vergessen.
+ */
+internal object GuardianScenes {
+    private class Run(val server: net.minecraft.server.MinecraftServer, val audience: List<ServerPlayerEntity>, val steps: Iterator<Unit>)
+
+    private val running = ArrayList<Run>()
+    private var hooked = false
+
+    fun run(server: net.minecraft.server.MinecraftServer, audience: List<ServerPlayerEntity>, steps: Sequence<Unit>) {
+        hook()
+        running.add(Run(server, audience, steps.iterator()))
+    }
+
+    private fun hook() {
+        if (hooked) return
+        hooked = true
+        net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.register { server -> tick(server) }
+        net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STOPPING.register { server -> running.removeIf { it.server === server } }
+    }
+
+    private fun tick(server: net.minecraft.server.MinecraftServer) {
+        if (running.isEmpty()) return
+        val it = running.iterator()
+        while (it.hasNext()) {
+            val run = it.next()
+            if (run.server !== server) continue
+            try {
+                if (run.steps.hasNext()) run.steps.next() else it.remove()
+            } catch (e: RuntimeException) {
+                // Nicht stumm: geloggt, Szene beendet, Kamera der Zuschauer frei.
+                dev.henny.hha.Hha.LOGGER.error("Wächter-Szene abgebrochen", e)
+                Cine.reset(run.audience.filter { !it.isDisconnected })
+                it.remove()
+            }
+        }
     }
 }
 
@@ -477,6 +685,7 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
     }
 
     override fun onReset() {
+        super.onReset()
         staggerDue = false
         lanternHits = 0
     }
@@ -513,7 +722,7 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
         val first = telegraph.line(a, b, w.CHOP_WIDTH, w.CHOP_WINDUP, Telegraph.Pace.HEAVY)
         telegraph.sound(HhaSounds.CHARGE, entityPos, 2f, 0.55f)
         wait(first.ticks)
-        axeFalls(first, dir, shake = !double)
+        axeFalls(first, dir, kick = if (double) KICK_DOUBLE_1 else KICK_CHOP)
         var stuck = w.CHOP_STUCK_END - w.CHOP_WINDUP
         var tail = w.CHOP_END - w.CHOP_STUCK_END
         if (double) {
@@ -523,7 +732,7 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
             val (c, d) = axeLine(dir)
             val second = telegraph.line(c, d, w.CHOP_WIDTH, w.DOUBLE_CHOP_GAP, Telegraph.Pace.FOLLOW_UP)
             wait(second.ticks)
-            axeFalls(second, dir, shake = true)
+            axeFalls(second, dir, kick = KICK_DOUBLE_2)
             stuck = w.DOUBLE_CHOP_STUCK_END - w.DOUBLE_CHOP_SECOND
             tail = w.DOUBLE_CHOP_END - w.DOUBLE_CHOP_STUCK_END
         }
@@ -536,7 +745,11 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
         kit.act(0)
     }
 
-    private fun axeFalls(line: Telegraph.Line, dir: Vec3d, shake: Boolean) {
+    /**
+     * Das Beil schlägt ein: der eine Flächeneffekt (Stoßwelle an der Spitze), dazu ein glühender Bodensprung in
+     * Schlagrichtung bis zum Ende der Linie, vier echte Brocken und ein kleiner Ruck nach unten ([kick] Grad).
+     */
+    private fun axeFalls(line: Telegraph.Line, dir: Vec3d, kick: Float) {
         val tip = ground(entityPos.add(dir.multiply(BossTimings.Warden.CHOP_LENGTH * 0.6)))
         val struck = line.hits(fighters())
         for (player in struck) {
@@ -544,8 +757,11 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
             knock(player, dir, 0.5, 0.35)
         }
         Vfx.shockwave(sw, danger, tip, 2.6f, 12, 1.6f)
+        val crackFrom = ground(entityPos.add(dir.multiply(CRACK_FROM)))
+        BossFx.crack(sw, danger, crackFrom, dir, BossTimings.Warden.CHOP_LENGTH - CRACK_FROM.toFloat(), CRACK_LIFE, CRACK_GROW)
+        BossFx.debris(sw, tip, 1.4f, CHOP_DEBRIS)
         telegraph.sound(HhaSounds.IMPACT, tip, 2.2f, 0.7f)
-        if (shake && struck.isNotEmpty()) telegraph.hitShake(tip, 3f)
+        BossFx.kick(sw, tip, kick, roll = kick * 0.3f, ticks = KICK_TICKS, radius = KICK_RADIUS)
     }
 
     /** Kettenwurf: zieht heran (dann Rundschlag) oder hakt an Mauer und Säule fest (Fenster, Rücken frei). */
@@ -583,6 +799,8 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
             kit.act(WardenAction.HOOKED)
             hint("hha.guardian.hint.lantern")
             Vfx.chain(sw, danger, self, end, null, w.HOOKED_WINDOW)
+            // Die Kette spannt sich (helle Kante) und federt beim Lösen nach (Client: `WardenTension` in GuardianFx.kt).
+            BossFx.play(sw, "warden.tension", danger, end, entity = self, a = w.HOOKED_WINDOW.toFloat(), life = w.HOOKED_WINDOW + TENSION_RELEASE)
             telegraph.sound(SoundEvents.BLOCK_ANVIL_LAND, end, 1.2f, 0.6f)
             if (window(w.HOOKED_WINDOW) { staggerDue }) {
                 yieldAll(stagger())
@@ -619,7 +837,8 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
             knock(player, dirTo(player.entityPos), 0.9, 0.4)
         }
         Vfx.crescent(sw, danger, entityPos.add(0.0, 1.4, 0.0), dir, w.ROUND_RADIUS, 4f, 10)
-        if (struck.isNotEmpty()) telegraph.hitShake(entityPos, 3f)
+        // Ruck in Schlagrichtung (seitlich) statt Rütteln.
+        if (struck.isNotEmpty()) BossFx.kick(sw, entityPos, 0.5f, yaw = KICK_ROUND, ticks = KICK_TICKS, radius = KICK_RADIUS)
         if (window(w.ROUND_END - w.ROUND_WINDUP) { staggerDue }) {
             yieldAll(stagger())
             return@sequence
@@ -633,7 +852,8 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
         kit.act(WardenAction.RAGE)
         telegraph.sound(HhaSounds.ROAR, entityPos, 3f, 0.6f)
         Vfx.nova(sw, danger, entityPos.add(0.0, height * 0.6, 0.0), 6f, 14)
-        telegraph.roomShake(entityPos, 5f)
+        BossFx.kick(sw, entityPos, KICK_RAGE, ticks = KICK_TICKS, radius = 40f)
+        BossFx.sparks(sw, danger, chainLinks(), Vec3d(0.0, 1.0, 0.0), BossFx.SPARKS_PER_CALL, 0.35f, 20)
         wait(BossTimings.Warden.RAGE)
         kit.act(0)
     }
@@ -644,16 +864,78 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
         hold(null)
         kit.act(WardenAction.STAGGER)
         telegraph.sound(SoundEvents.BLOCK_GLASS_BREAK, entityPos, 2f, 0.6f)
+        // Die Laterne auf dem Rücken zerspringt: ein Funkenregen nach hinten.
+        BossFx.sparks(sw, danger, lantern(), facing().multiply(-1.0).add(0.0, 0.6, 0.0), 10, 0.3f, 18)
         open(BossTimings.Warden.STAGGER, OPEN_FACTOR)
         wait(BossTimings.Warden.STAGGER)
         close()
         kit.act(0)
     }
 
+    // --- Auftritt: Er brüllt, die Kette sprüht (PLAN 2.11) ----------------------------------------------------
+
+    override fun introInner(): Sequence<Unit> = sequence {
+        repeat(INTRO_ROAR_AT) {
+            fighters().minByOrNull { it.squaredDistanceTo(self) }?.let { lookControl.lookAt(it, 30f, 30f) }
+            yield(Unit)
+        }
+        kit.act(WardenAction.RAGE)
+        telegraph.sound(HhaSounds.ROAR, entityPos, 3f, 0.6f)
+        BossFx.sparks(sw, danger, chainLinks(), Vec3d(0.0, 1.0, 0.0), 10, 0.3f, 18)
+        yieldAll(SceneKit.wait(BossTimings.Warden.RAGE))
+        kit.act(0)
+    }
+
+    override fun introFinish() {
+        kit.act(0)
+    }
+
+    /** Raserei: Alle [RAGE_SPARK_EVERY] Ticks sprühen Funken von den Kettengliedern (Client-Leuchten: WardenModel). */
+    override fun tickBody() {
+        if (enraged && isAlive && age % RAGE_SPARK_EVERY == 0 && !cinematics.playing) {
+            BossFx.sparks(sw, danger, chainLinks(), Vec3d(0.0, -0.4, 0.0), RAGE_SPARKS, 0.22f, 16)
+        }
+    }
+
+    /** Wo die Kette am unteren linken Arm hängt (ungefähr, Weltlage). */
+    private fun chainLinks(): Vec3d {
+        val f = facing()
+        return entityPos.add(f.z * CHAIN_SIDE, height * 0.34, -f.x * CHAIN_SIDE).add(f.multiply(0.3))
+    }
+
+    /** Die Laterne auf dem Rücken (ungefähr). */
+    private fun lantern(): Vec3d = entityPos.add(facing().multiply(-0.9)).add(0.0, height * 0.42, 0.0)
+
     companion object {
         /** PLAN 4.1: 360 → 800. */
         const val HEALTH = 800.0
         private const val ENRAGE = 0.4f
+
+        // --- Darstellung (Überarbeitung 3, P14; keine Kampfzahl) ---
+        /** Ruck beim Richtbeil, beim ersten und beim zweiten Hieb des Doppelschlags (Grad, nach unten). */
+        const val KICK_CHOP = 1.5f
+        const val KICK_DOUBLE_1 = 1f
+        const val KICK_DOUBLE_2 = 1.5f
+        /** Rundschlag: seitlicher Ruck (Grad). */
+        const val KICK_ROUND = 1.2f
+        /** Brüllen der Raserei (Grad). */
+        const val KICK_RAGE = 2f
+        const val KICK_TICKS = 6
+        const val KICK_RADIUS = 24f
+        /** Bodensprung des Richtbeils: ab so weit vor ihm bis zum Ende der Linie, Wachsen und Lebenszeit (Ticks). */
+        const val CRACK_FROM = 1.8
+        const val CRACK_GROW = 6
+        const val CRACK_LIFE = 60
+        const val CHOP_DEBRIS = 4
+        /** Nachfedern der gespannten Kette nach dem Lösen (Ticks, Client). */
+        const val TENSION_RELEASE = 16
+        /** Raserei: Funken an der Kette. */
+        const val RAGE_SPARK_EVERY = 20
+        const val RAGE_SPARKS = 4
+        /** Seitlicher Abstand der Kette von seiner Mitte (Blöcke). */
+        const val CHAIN_SIDE = 1.1
+        /** Auftritt: Tick des Brüllens (passend zu `warden.intro`). */
+        const val INTRO_ROAR_AT = 88
 
         fun attributes(): DefaultAttributeContainer.Builder = guardianAttributes()
     }
@@ -708,6 +990,7 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Tarta
     }
 
     override fun onReset() {
+        super.onReset()
         hasRock = true
         staggering = false
     }
@@ -738,6 +1021,8 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Tarta
         val s = BossTimings.Sisyphus
         val from = entityPos.add(0.0, height + 0.4, 0.0)
         val rock = prop(ScriptedBolt.spawn(sw, self, HermesBoltEntity.BOULDER, 1f, from)) ?: return@sequence
+        // Schwerer Fels mit Staubfahne (Client: ProjectileFx, Look ROCK_DUST); den Einschlag zeichnet der Server.
+        boltAt(from)?.let { BossFx.projectile(sw, danger, it, BossFx.Look.ROCK_DUST) }
         val goal = spot.add(0.0, ROCK_RADIUS, 0.0)
         val ticks = max(1, ring.remaining)
         val lift = 2.5 + flat(from, goal) * 0.18
@@ -753,7 +1038,10 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Tarta
             knock(player, player.entityPos.subtract(spot), 0.4, 0.55)
         }
         Vfx.shockwave(sw, danger, spot, s.THROW_RADIUS, 14, 1.6f)
-        telegraph.hitShake(spot, 3f)
+        // Beiwerk: echte Brocken des Bodens fliegen auf, Risse um den Einschlag; Ruck statt Rütteln.
+        BossFx.debris(sw, spot, s.THROW_RADIUS * 0.9f, BossFx.DEBRIS_PER_CALL, up = 0.6f)
+        BossFx.cracks(sw, danger, spot, s.THROW_RADIUS, THROW_CRACKS)
+        BossFx.kick(sw, spot, KICK_THROW, ticks = 7, radius = 28f)
         telegraph.sound(SoundEvents.ENTITY_GENERIC_EXPLODE.value(), spot, 1.2f, 0.7f)
         rock.rest()
         // Der Fels bleibt 8 s liegen, dann zerfällt er.
@@ -767,6 +1055,8 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Tarta
         kit.act(SisyphusAction.REGROW)
         hold(null)
         hint("hha.guardian.hint.boulder")
+        // Brocken fliegen auf Bögen zum Nacken zurück und werden dort zum neuen Fels (Client: `SisyphusRegrow` in GuardianFx.kt).
+        BossFx.play(sw, "sisyphus.regrow", danger, ground(entityPos), entity = self, a = REGROW_RADIUS, b = REGROW_CHUNKS.toFloat(), life = s.REGROW)
         open(s.REGROW, OPEN_FACTOR)
         wait(s.REGROW)
         close()
@@ -806,7 +1096,9 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Tarta
             knock(player, dirTo(player.entityPos), 0.5, 0.8)
         }
         Vfx.shockwave(sw, danger, ground(entityPos), s.STOMP_RADIUS, 14, 2f)
-        telegraph.hitShake(entityPos, 3f)
+        BossFx.cracks(sw, danger, ground(entityPos), s.STOMP_RADIUS * 0.8f, BossFx.CRACKS_PER_CALL)
+        BossFx.debris(sw, ground(entityPos), s.STOMP_RADIUS * 0.8f, STOMP_DEBRIS)
+        BossFx.kick(sw, entityPos, KICK_STOMP, ticks = 7, radius = 28f)
         telegraph.sound(SoundEvents.ENTITY_GENERIC_EXPLODE.value(), entityPos, 1.2f, 0.7f)
         wait(s.STOMP_END - s.STOMP_WINDUP)
         kit.act(0)
@@ -865,6 +1157,7 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Tarta
         val length = flat(from, to)
         var level = floorAt(from, 8.0)
         val rock = prop(ScriptedBolt.spawn(sw, self, HermesBoltEntity.BOULDER, 1f, Vec3d(from.x, level + ROCK_RADIUS, from.z))) ?: return@sequence
+        boltAt(rock.pos)?.let { BossFx.projectile(sw, danger, it, BossFx.Look.ROCK_DUST) }
         telegraph.sound(HhaSounds.WHOOSH, from, 2f, 0.5f)
         val struck = HashSet<UUID>()
         var travelled = 0.0
@@ -905,6 +1198,9 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Tarta
     /** Vom eigenen Fels getroffen: 30 Schaden, Taumeln. Der Lohn dafür, ihn in die Bahn gelockt zu haben. */
     private fun crushed() {
         Vfx.flare(sw, Vfx.Style.GOLD, entityPos.add(0.0, height * 0.6, 0.0), 2.4f, 8)
+        // Der eigene Fels zerspringt an ihm: Funken und echte Brocken.
+        BossFx.sparks(sw, danger, entityPos.add(0.0, height * 0.55, 0.0), Vec3d(0.0, 1.0, 0.0), 12, 0.45f, 20)
+        BossFx.debris(sw, ground(entityPos), 2.5f, 6)
         telegraph.sound(HhaSounds.IMPACT, entityPos, 2.5f, 0.6f)
         // 30 × H(n) effektiv: in Leistenpunkten durch die Zähigkeit teilen (Kettenbonus über 1024, Review R2 m2).
         hurtSelf(SELF_HIT / toughness())
@@ -926,10 +1222,72 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Tarta
         kit.act(0)
     }
 
+    /** Das eben erzeugte Geschoss bei [at] (der Server führt es als [ScriptedBolt]; für den Effekt brauchen wir das Wesen). */
+    private fun boltAt(at: Vec3d): HermesBoltEntity? =
+        sw.getEntitiesByClass(HermesBoltEntity::class.java, net.minecraft.util.math.Box.of(at, 2.0, 2.0, 2.0)) { it.owner === this }
+            .minByOrNull { it.squaredDistanceTo(at) }
+
+    // --- Auftritt: Er schiebt den Fels den Hang hinauf (PLAN 2.11) ---------------------------------------------
+
+    /** Fuß des Hangs: [INTRO_CLIMB] Blöcke vom Gipfel zum nächsten Spieler hin, auf dem Boden. */
+    private var climbFrom: Vec3d? = null
+
+    override fun beforeIntro() {
+        val top = post ?: summit ?: entityPos
+        val viewer = fighters().minByOrNull { it.squaredDistanceTo(top) } ?: return
+        val toward = flatNorm(viewer.entityPos.subtract(top))
+        val foot = top.add(toward.multiply(INTRO_CLIMB))
+        val start = Vec3d(foot.x, floorAt(Vec3d(foot.x, top.y, foot.z), 14.0), foot.z)
+        // Nur wenn der Hang frei ist: sonst bleibt er oben (die Szene zeigt dann nur den Gipfel).
+        if (!entityWorld.isSpaceEmpty(this, boundingBox.offset(start.subtract(entityPos)))) return
+        climbFrom = start
+        val yaw = (Math.toDegrees(kotlin.math.atan2(top.z - start.z, top.x - start.x)) - 90.0).toFloat()
+        refreshPositionAndAngles(start.x, start.y, start.z, yaw, 0f)
+        setHeadYaw(yaw)
+        setBodyYaw(yaw)
+    }
+
+    override fun introInner(): Sequence<Unit> = sequence {
+        val from = climbFrom
+        val top = post ?: summit
+        if (from == null || top == null) {
+            yieldAll(entrance())
+            return@sequence
+        }
+        yieldAll(SceneKit.wait(INTRO_CLIMB_START))
+        val mid = from.lerp(top, 0.5).let { Vec3d(it.x, floorAt(it.add(0.0, 4.0, 0.0), 12.0), it.z) }
+        yieldAll(SceneKit.prowl(this@SisyphusEntity, listOf(from, mid, top), INTRO_CLIMB_TICKS, 6f))
+        kit.act(SisyphusAction.STOMP)
+        telegraph.sound(SoundEvents.ENTITY_RAVAGER_STEP, entityPos, 2f, 0.5f)
+        yieldAll(SceneKit.wait(18))
+        kit.act(0)
+    }
+
+    /** Endzustand: oben auf dem Gipfel, ohne Sonderbewegung. */
+    override fun introFinish() {
+        val top = post ?: summit
+        if (climbFrom != null && top != null && flat(entityPos, top) > 0.5) refreshPositionAndAngles(top.x, top.y, top.z, yaw, 0f)
+        climbFrom = null
+        kit.act(0)
+    }
+
     companion object {
         /** PLAN 4.1: 340 → 750. */
         const val HEALTH = 750.0
         private const val CURSE_AT = 0.4f
+
+        // --- Darstellung (Überarbeitung 3, P14; keine Kampfzahl) ---
+        const val KICK_THROW = 2f
+        const val KICK_STOMP = 2f
+        const val THROW_CRACKS = 4
+        const val STOMP_DEBRIS = 6
+        /** Nachwachsen: aus diesem Umkreis kommen so viele Brocken. */
+        const val REGROW_RADIUS = 4f
+        const val REGROW_CHUNKS = 7
+        /** Auftritt: Länge des Hangs, Beginn und Dauer des Aufstiegs (Ticks, passend zu `sisyphus.intro`). */
+        const val INTRO_CLIMB = 8.0
+        const val INTRO_CLIMB_START = 12
+        const val INTRO_CLIMB_TICKS = 100
 
         /**
          * Vom eigenen Fels getroffen: 30 Punkte der Lebensleiste. Weil die Leiste eingehenden Schaden durch `H(n)` teilt,
@@ -1047,6 +1405,7 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : TartarosGua
     )
 
     override fun onReset() {
+        super.onReset()
         hover = BossTimings.Ixion.HOVER
         grounded = false
         tipping = false
@@ -1205,6 +1564,9 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : TartarosGua
         setNoGravity(false)
         hint("hha.guardian.hint.fallen")
         telegraph.sound(HhaSounds.IMPACT, entityPos, 2.5f, 0.6f)
+        // Das Rad schlägt auf (Modell: schlingert aus), Glut tropft und liegt am Boden.
+        BossFx.drip(sw, danger, entityPos.add(0.0, WHEEL_HEIGHT, 0.0), FALLEN_DRIP_RADIUS, FALLEN_DRIPS, ix.FALLEN, BossFx.Look.HOT_IRON)
+        BossFx.kick(sw, entityPos, KICK_FALLEN, ticks = 7, radius = 28f)
         open(ix.FALLEN, FALLEN_FACTOR)
         wait(ix.FALLEN)
         close()
@@ -1249,15 +1611,15 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : TartarosGua
         telegraph.sound(SoundEvents.ENTITY_BLAZE_BURN, entityPos, 2f, 0.6f)
         wait(group.ticks)
         // Die Strahlen drehen von oben gesehen im Uhrzeigersinn, wie das Rad im Modell (Anfrage ixion.md).
+        // Überarbeitung 3: ein stetig drehendes Bild statt Strahlen alle 3 Ticks (kein Blinken). Der Client rechnet
+        // denselben Winkel: a = Start (Grad, atan2-Rahmen wie [ray]), b = Anteil der Runde, c/d = innen/außen.
+        BossFx.play(
+            sw, "ixion.spokes", danger, hub, a = start.toFloat(), b = ix.SPOKES_TURN.toFloat(), c = ix.SPOKES_INNER, d = ix.SPOKES_LENGTH,
+            life = ix.SPOKES_SWEEP, entity = self, extra = "${ix.SPOKES_LINES}:${ix.SPOKES_WIDTH}",
+        )
         val lastHit = HashMap<UUID, Long>()
         for (t in 0 until ix.SPOKES_SWEEP) {
             val turn = start + ix.SPOKES_TURN * 360.0 * t / ix.SPOKES_SWEEP
-            if (t % 3 == 0) {
-                for (i in 0 until ix.SPOKES_LINES) {
-                    val (a, b) = ray(turn + i * step)
-                    Vfx.beam(sw, danger, a.add(0.0, 0.5, 0.0), b.add(0.0, 0.5, 0.0), 0.8f, 4)
-                }
-            }
             for (player in fighters()) {
                 if (abs(player.y - hub.y) > 2.6) continue
                 if (sw.time - (lastHit[player.uuid] ?: Long.MIN_VALUE / 2) < ix.FIRE_TICK) continue
@@ -1314,6 +1676,8 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : TartarosGua
         wait(ix.SPARK_FLIGHT - 1)
         val mouth = entityPos.add(0.0, height * 0.78, 0.0).add(facing().multiply(0.9))
         val ball = prop(ScriptedBolt.spawn(sw, self, HermesBoltEntity.FIRE, 0.9f, mouth)) ?: return@sequence
+        sw.getEntitiesByClass(HermesBoltEntity::class.java, net.minecraft.util.math.Box.of(mouth, 2.0, 2.0, 2.0)) { it.owner === this@IxionEntity }
+            .minByOrNull { it.squaredDistanceTo(mouth) }?.let { BossFx.projectile(sw, danger, it, BossFx.Look.HOT_IRON) }
         telegraph.sound(SoundEvents.ENTITY_BLAZE_SHOOT, mouth, 1.8f, 0.7f)
         val ticks = max(1, ring.remaining)
         val goal = spot.add(0.0, 0.3, 0.0)
@@ -1326,13 +1690,41 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : TartarosGua
             player.setOnFireFor(2f)
         }
         Vfx.shockwave(sw, danger, spot, ix.SPARK_RADIUS, 10, 1.2f)
+        BossFx.sparks(sw, danger, spot.add(0.0, 0.2, 0.0), Vec3d(0.0, 1.0, 0.0), SPARK_IMPACT_SPARKS, 0.35f, 16)
         ball.discard()
+    }
+
+    // --- Auftritt: Das Rad dreht an (PLAN 2.11) ------------------------------------------------------------
+
+    override fun introInner(): Sequence<Unit> = sequence {
+        yieldAll(SceneKit.wait(INTRO_SPIN_AT))
+        // Haltung wie vor dem Rollen: Rad quer, es dreht hoch (Modell), die Glut am Rad wird heller (GuardianFx).
+        kit.act(IxionAction.ROLL_WINDUP)
+        telegraph.sound(SoundEvents.ITEM_FIRECHARGE_USE, entityPos, 2f, 0.6f)
+        yieldAll(SceneKit.wait(INTRO_SPIN_HOLD))
+        kit.act(0)
+        yieldAll(SceneKit.wait(20))
+    }
+
+    override fun introFinish() {
+        kit.act(0)
     }
 
     companion object {
         /** PLAN 4.1: 300 → 660. */
         const val HEALTH = 660.0
         private const val FALLEN_FACTOR = 2f
+
+        // --- Darstellung (Überarbeitung 3, P14; keine Kampfzahl) ---
+        /** Mitte des Rads über seinen Füßen (Blöcke, Modell: Durchmesser 3,2). */
+        const val WHEEL_HEIGHT = 1.7
+        const val FALLEN_DRIP_RADIUS = 2.4f
+        const val FALLEN_DRIPS = 12
+        const val KICK_FALLEN = 1.5f
+        const val SPARK_IMPACT_SPARKS = 6
+        /** Auftritt: ab hier dreht das Rad an, so lange hält er die Haltung (Ticks, passend zu `ixion.intro`). */
+        const val INTRO_SPIN_AT = 40
+        const val INTRO_SPIN_HOLD = 56
 
         /** Schwebetempo (Blöcke je Tick bei Faktor 1). */
         private const val GLIDE = 0.24
@@ -1389,7 +1781,24 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Tarta
     }
 
     override fun onReset() {
+        super.onReset()
         drinking = false
+        clearHaze()
+    }
+
+    override fun onDefeated() {
+        clearHaze()
+        super.onDefeated()
+    }
+
+    /** Hitzeflimmern nach dem ausgeschlagenen Kelch läuft gerade (Ende an jedem Kampfausgang, Prüfung R1-m1). */
+    private var hazeActive = false
+
+    private fun clearHaze() {
+        if (!hazeActive) return
+        hazeActive = false
+        val sw = entityWorld as? ServerWorld ?: return
+        BossFx.screenClear(sw, entityPos, BossFx.Screen.HEAT_HAZE, range = 96f)
     }
 
     override fun onDamaged(source: DamageSource, lost: Float, factor: Float) {
@@ -1454,7 +1863,9 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Tarta
             if (!hit(player, 10f, BossDefense.Reach.SKY, spot.y)) continue
             Fx.launchPlayer(player, Vec3d(player.velocity.x, 1.25, player.velocity.z))
         }
-        Vfx.pillar(sw, danger, spot, BossTimings.Tantalus.GEYSER_RADIUS * 0.7f, 8f, 16)
+        // Der eine Flächeneffekt: Wassersäule fährt hoch und zerspringt (Stil SOUL = Wasser), Tropfen bilden Lachen.
+        BossFx.pillarShatter(sw, danger, spot, BossTimings.Tantalus.GEYSER_RADIUS * 0.6f, GEYSER_HEIGHT, GEYSER_RISE, GEYSER_HOLD)
+        BossFx.drip(sw, danger, spot.add(0.0, GEYSER_HEIGHT * 0.6, 0.0), BossTimings.Tantalus.GEYSER_RADIUS, GEYSER_DRIPS, GEYSER_PUDDLE, BossFx.Look.SOUL)
         Fx.spawn(sw, ParticleTypes.SPLASH, spot.x, spot.y + 1.0, spot.z, 24, 0.8, 1.6, 0.8, 0.3)
         telegraph.sound(SoundEvents.ENTITY_PLAYER_SPLASH_HIGH_SPEED, spot, 1.8f, 0.6f)
     }
@@ -1468,7 +1879,9 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Tarta
         val ring = telegraph.ring(center, t.WAVE_RADIUS, t.WAVE_WINDUP)
         telegraph.sound(SoundEvents.AMBIENT_UNDERWATER_ENTER, entityPos, 2f, 0.5f)
         wait(ring.ticks)
-        Vfx.shockwave(sw, danger, center, t.WAVE_RADIUS, t.WAVE_TRAVEL + 6, 1.2f)
+        // Der eine Flächeneffekt: eine niedrige Wasserwand läuft als Ring nach außen, genau so schnell wie die
+        // Trefferfront unten (Radius × Schritt / WAVE_TRAVEL). Lücken hat diese Welle nicht (man springt darüber).
+        BossFx.play(sw, "tantalus.flood", danger, center, a = t.WAVE_RADIUS, b = FLOOD_HEIGHT, c = t.WAVE_TRAVEL.toFloat(), life = t.WAVE_TRAVEL + FLOOD_FADE, impact = true)
         telegraph.sound(HhaSounds.FLOOD, center, 2.2f, 0.8f)
         val passed = HashSet<UUID>()
         var anyHit = false
@@ -1487,7 +1900,7 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Tarta
             }
             yield(Unit)
         }
-        if (anyHit) telegraph.hitShake(center, 3f)
+        if (anyHit) BossFx.kick(sw, center, KICK_WAVE, ticks = 6, radius = 28f)
         wait(t.WAVE_END - t.WAVE_WINDUP - t.WAVE_TRAVEL)
         hold(null)
         kit.act(0)
@@ -1500,6 +1913,8 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Tarta
         kit.act(TantalusAction.DRINK)
         hint("hha.guardian.hint.drink")
         telegraph.sound(SoundEvents.ENTITY_GENERIC_DRINK.value(), entityPos, 1.6f, 0.7f)
+        // Die Flut zieht sich zu ihm hin (er trinkt); wird er unterbrochen, blendet der Client sie aus (Aktion PARCHED).
+        BossFx.play(sw, "tantalus.ebb", danger, ground(entityPos), a = EBB_RADIUS, b = 0f, life = t.DRINK, entity = self)
         drinking = true
         spilled = 0f
         var knocked = false
@@ -1518,8 +1933,13 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Tarta
             kit.act(TantalusAction.PARCHED)
             telegraph.sound(SoundEvents.ITEM_BUCKET_EMPTY, entityPos, 2f, 0.6f)
             Fx.spawn(sw, ParticleTypes.SPLASH, x, y + 0.3, z, 24, 1.6, 0.2, 1.6, 0.2)
+            // Das Wasser weicht zurück, die Luft über dem trockenen Becken flimmert schwach (einziger Bildschirm-Pass).
+            BossFx.play(sw, "tantalus.ebb", danger, ground(entityPos), a = EBB_RADIUS, b = 1f, life = EBB_RECEDE, entity = self)
+            BossFx.screen(sw, BossFx.Screen.HEAT_HAZE, danger, entityPos.add(0.0, 1.5, 0.0), HAZE_RADIUS, HAZE_STRENGTH, t.PARCHED, follow = self)
+            hazeActive = true
             open(t.PARCHED, OPEN_FACTOR)
             wait(t.PARCHED)
+            hazeActive = false
             close()
             kit.act(0)
         } else {
@@ -1530,9 +1950,49 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Tarta
         }
     }
 
+    // --- Auftritt: Er greift nach dem Wasser, es weicht (PLAN 2.11) -------------------------------------------
+
+    override fun introInner(): Sequence<Unit> = sequence {
+        yieldAll(SceneKit.wait(INTRO_REACH_AT))
+        kit.act(TantalusAction.DRINK)
+        // Eine Lache um ihn (b = 2: steht still, weicht ab INTRO_RECEDE_AT zurück).
+        BossFx.play(
+            sw, "tantalus.ebb", danger, ground(entityPos), a = EBB_RADIUS, b = 2f, c = (INTRO_RECEDE_AT - INTRO_REACH_AT).toFloat(),
+            life = INTRO_RECEDE_AT - INTRO_REACH_AT + EBB_RECEDE, entity = self,
+        )
+        yieldAll(SceneKit.wait(INTRO_RAGE_AT - INTRO_REACH_AT))
+        kit.act(TantalusAction.RAGE)
+        telegraph.sound(HhaSounds.ROAR, entityPos, 2.5f, 0.9f)
+        yieldAll(SceneKit.wait(BossTimings.Tantalus.RAGE + 6))
+        kit.act(0)
+    }
+
+    override fun introFinish() {
+        kit.act(0)
+    }
+
     companion object {
         /** PLAN 4.1: 320 → 700. */
         const val HEALTH = 700.0
+
+        // --- Darstellung (Überarbeitung 3, P14; keine Kampfzahl) ---
+        const val FLOOD_HEIGHT = 1.1f
+        const val FLOOD_FADE = 12
+        const val KICK_WAVE = 1.5f
+        const val GEYSER_HEIGHT = 6f
+        const val GEYSER_RISE = 4
+        const val GEYSER_HOLD = 6
+        const val GEYSER_DRIPS = 10
+        const val GEYSER_PUDDLE = 70
+        /** Flut beim Trinken (Radius) und wie schnell sie zurückweicht (Ticks). */
+        const val EBB_RADIUS = 6f
+        const val EBB_RECEDE = 30
+        const val HAZE_RADIUS = 10f
+        const val HAZE_STRENGTH = 0.25f
+        /** Auftritt (Ticks, passend zu `tantalus.intro`): greift nach dem Wasser, es weicht, er brüllt. */
+        const val INTRO_REACH_AT = 20
+        const val INTRO_RECEDE_AT = 50
+        const val INTRO_RAGE_AT = 86
 
         /** Bei diesen Lebensanteilen trinkt er. */
         private val THIRST = floatArrayOf(0.66f, 0.33f)

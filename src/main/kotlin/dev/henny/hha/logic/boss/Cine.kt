@@ -33,6 +33,21 @@ object Cine {
     /** Alles am Client zurücksetzen (Kamera, Text, Stimme, Abblende, Titel, Musik, Leiste), z. B. nach dem Ausscheiden. */
     const val OP_RESET = 14
 
+    /**
+     * Überarbeitung 3 (PLAN 6.1/6.5): spielt ein Bühnen-Skript (`stage/StageScripts`) am Client. Zahlen: Anker x, y, z,
+     * Blick (yaw), Start-Tick, n, n Entity-IDs der Darsteller; Texte: Skript-ID.
+     */
+    const val OP_STAGE = 15
+
+    /** Bricht das laufende Bühnen-Skript ab (Kamera frei, Puppen weg). */
+    const val OP_STAGE_STOP = 16
+
+    /** Kapitelkarte. Zahlen: ticks, Farbe (0xRRGGBB); Texte: Kicker-, Titel-, Untertitel-Schlüssel. */
+    const val OP_CHAPTER = 17
+
+    /** Statuszeile über der Schnellleiste. Zahlen: ticks, Farbe; Texte: Schlüssel, Argumente … */
+    const val OP_HUD_LINE = 18
+
     /** Sprecher für die Textbox und die Stimmlage der Dialog-Laute. */
     const val SPEAKER_NARRATOR = 0
     const val SPEAKER_HERMES = 1
@@ -209,15 +224,29 @@ object Cine {
         ),
     )
 
-    fun dialog(players: Iterable<ServerPlayerEntity>, speaker: Int, lineKey: String, ticks: Int) =
-        send(players, OP_DIALOG, listOf(speaker.toDouble(), ticks.toDouble()), listOf(lineKey))
+    /**
+     * Dialogzeile. Überarbeitung 3: optional [nameKey] (Sprachschlüssel des Namens, ersetzt den Namen des Sprechers) und
+     * [color] (Namensfarbe 0xRRGGBB); ohne beide geht dasselbe Paket wie bisher hinaus (texts[1], numbers[2] fehlen).
+     */
+    @JvmOverloads
+    fun dialog(players: Iterable<ServerPlayerEntity>, speaker: Int, lineKey: String, ticks: Int, nameKey: String = "", color: Int = 0) =
+        if (nameKey.isEmpty() && color == 0) {
+            send(players, OP_DIALOG, listOf(speaker.toDouble(), ticks.toDouble()), listOf(lineKey))
+        } else {
+            send(players, OP_DIALOG, listOf(speaker.toDouble(), ticks.toDouble(), color.toDouble()), listOf(lineKey, nameKey))
+        }
 
     /** Blende: Farbe (0xRRGGBB) von Deckkraft [from] nach [to]. */
     fun fade(players: Iterable<ServerPlayerEntity>, color: Int, from: Double, to: Double, ticks: Int) =
         send(players, OP_FADE, listOf(color.toDouble(), from, to, ticks.toDouble()))
 
-    fun title(players: Iterable<ServerPlayerEntity>, titleKey: String, subtitleKey: String, ticks: Int) =
-        send(players, OP_TITLE, listOf(ticks.toDouble()), listOf(titleKey, subtitleKey))
+    /**
+     * Titelkarte. Überarbeitung 3: optional [color] (0xRRGGBB für Titel und Lichtlinie, z. B. Gold, Seelenblau, Rot);
+     * ohne Farbe geht dasselbe Paket wie bisher hinaus (numbers[1] fehlt).
+     */
+    @JvmOverloads
+    fun title(players: Iterable<ServerPlayerEntity>, titleKey: String, subtitleKey: String, ticks: Int, color: Int = 0) =
+        send(players, OP_TITLE, if (color == 0) listOf(ticks.toDouble()) else listOf(ticks.toDouble(), color.toDouble()), listOf(titleKey, subtitleKey))
 
     fun atmosphere(players: Iterable<ServerPlayerEntity>, style: Vfx.Style?, center: Vec3d, ticks: Int) = send(
         players, OP_ATMOSPHERE,
@@ -234,6 +263,38 @@ object Cine {
     fun wings(players: Iterable<ServerPlayerEntity>, on: Boolean) =
         send(players, OP_WINGS, listOf(if (on) 1.0 else 0.0))
 
+    // ---------------------------------------------------------------------------------------------
+    // Überarbeitung 3: Bühne, Kapitelkarte, Statuszeile (Wirkung am Client: P05/P02)
+    // ---------------------------------------------------------------------------------------------
+
+    /**
+     * Startet das Bühnen-Skript [id] (`stage/StageScripts`) bei [players]: Kamerapunkte relativ zu [anchor] mit Blick
+     * [yaw] (Grad, wie `Entity.yaw`), Darsteller [actors] (Index 0, 1, …), ab Tick [startTick]. Die Szene selbst
+     * beginnt und endet weiter mit [start]/[end]; die Länge kennt der Server über `StageScripts.length(id)`.
+     */
+    fun stage(
+        players: Iterable<ServerPlayerEntity>, id: String, anchor: Vec3d, yaw: Float, actors: List<Entity> = emptyList(),
+        startTick: Int = 0,
+    ) = send(
+        players, OP_STAGE,
+        listOf(anchor.x, anchor.y, anchor.z, yaw.toDouble(), startTick.toDouble(), actors.size.toDouble()) +
+            actors.map { it.id.toDouble() },
+        listOf(id),
+    )
+
+    /** Bricht das laufende Bühnen-Skript bei [players] ab (geht auch beim Vorspulen hinaus). */
+    fun stageStop(players: Iterable<ServerPlayerEntity>) = send(players, OP_STAGE_STOP, force = true)
+
+    /** Kapitelkarte (Kicker, Titel in der Pixel-Schrift, Lichtlinie, Untertitel) in [color] (0xRRGGBB). */
+    fun chapter(
+        players: Iterable<ServerPlayerEntity>, kickerKey: String, titleKey: String, subKey: String, ticks: Int = 100,
+        color: Int = 0xFFD75E,
+    ) = send(players, OP_CHAPTER, listOf(ticks.toDouble(), color.toDouble()), listOf(kickerKey, titleKey, subKey))
+
+    /** Statuszeile über der Schnellleiste: [key] mit [args] (`@key:<id>` wird am Client zum Tastennamen). */
+    fun hudLine(players: Iterable<ServerPlayerEntity>, key: String, args: List<String> = emptyList(), ticks: Int = 60, color: Int = 0) =
+        send(players, OP_HUD_LINE, listOf(ticks.toDouble(), color.toDouble()), listOf(key) + args)
+
     private fun send(players: Iterable<ServerPlayerEntity>, op: Int, numbers: List<Double> = emptyList(), texts: List<String> = emptyList(), force: Boolean = false) {
         if (muted && !force && op in SILENT_WHEN_MUTED) return
         val payload = CinePayload(op, numbers, texts)
@@ -243,7 +304,7 @@ object Cine {
         }
     }
 
-    private val SILENT_WHEN_MUTED = setOf(OP_CAMERA, OP_ORBIT, OP_DIALOG, OP_FADE, OP_TITLE)
+    private val SILENT_WHEN_MUTED = setOf(OP_CAMERA, OP_ORBIT, OP_DIALOG, OP_FADE, OP_TITLE, OP_STAGE, OP_CHAPTER, OP_HUD_LINE)
 }
 
 /**

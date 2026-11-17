@@ -9,12 +9,15 @@ import dev.henny.hha.entity.miniboss.MiniBossKit
 import dev.henny.hha.entity.miniboss.ScriptedBolt
 import dev.henny.hha.logic.Vfx
 import dev.henny.hha.logic.boss.BossDefense
+import dev.henny.hha.logic.boss.BossFx
 import dev.henny.hha.logic.boss.BossScaling
 import dev.henny.hha.logic.boss.BossTimings
 import dev.henny.hha.logic.boss.Cine
 import dev.henny.hha.logic.boss.Telegraph
 import dev.henny.hha.logic.boss.timings.KratosTimings
+import dev.henny.hha.stage.scripts.KratosStages
 import dev.henny.hha.world.olymp.OlympusLayout
+import net.minecraft.entity.Entity
 import net.minecraft.entity.EntityType
 import net.minecraft.entity.SpawnReason
 import net.minecraft.entity.attribute.DefaultAttributeContainer
@@ -56,6 +59,8 @@ object KratosAction {
     const val DOUBLE_SMASH = 8
     const val SHIELD_UP = 9
     const val YIELD = 10
+    /** Nur Auftritt (Überarbeitung 3): Schild heben und vor sich auf den Boden schlagen (`KratosStages.INTRO`). */
+    const val SLAM = 11
 }
 
 /** Aktionen der Bia für `kit.act` (PLAN 10.2). */
@@ -104,6 +109,12 @@ class KratosEntity(type: EntityType<out KratosEntity>, world: World) : DuelBossE
     /** Leiste in der Gefahrfarbe (`PhaseBar`: ab 10 die Palette von `Vfx.Style.entries[theme − 10]`). */
     override val barTheme: Int get() = STYLE_THEMES + Vfx.Style.CRIMSON.ordinal
 
+    /**
+     * Überarbeitung 3 (PLAN 2.1): Auftritt, Phasenwechsel und Niederlage sind Bühnen-Szenen ([KratosStages]); den
+     * allgemeinen Kamera-Rahmen der Basis braucht es nicht.
+     */
+    override val cinematic: Boolean get() = false
+
     /** Phase II: Der Schild ist weg (Modell blendet ihn aus, kein Frontschutz mehr). */
     var shieldless: Boolean
         get() = dataTracker.get(SHIELDLESS)
@@ -144,6 +155,14 @@ class KratosEntity(type: EntityType<out KratosEntity>, world: World) : DuelBossE
 
     private val spoken = HashSet<String>()
     private val hintedWith = HashSet<String>()
+
+    // --- Nur Darstellung (Szenen, Überarbeitung 3) ---
+
+    /** Wohin er im Auftritt schreitet (fester Endzustand der Szene, auch beim Überspringen). */
+    private var introGoal: Vec3d? = null
+
+    /** Bia springt im Phasenwechsel vom Sockel und zurück ([biaShowLeap]). */
+    private var biaShowing = false
 
     init {
         kit.stats(KratosTimings.HEALTH, KratosTimings.ARMOR, KratosTimings.ATTACK, KratosTimings.SPEED)
@@ -257,6 +276,7 @@ class KratosEntity(type: EntityType<out KratosEntity>, world: World) : DuelBossE
             b.face(flatNorm(center().subtract(home)))
             b.scripted(false)
             b.kit.act(BiaAction.RETURN)
+            biaLanded(home, onPlinth = true)
             wait(KratosTimings.BIA_RETURN_END)
             b.kit.act(BiaAction.STATUE)
         }
@@ -280,35 +300,72 @@ class KratosEntity(type: EntityType<out KratosEntity>, world: World) : DuelBossE
     // ---------------------------------------------------------------------------------------------
 
     /**
+     * Auftritt als Bühnen-Szene `kratos.intro` (PLAN 2.7): Bia ist Darsteller 1 und muss dafür schon stehen. Der
+     * feste Endzustand ([entranceDone]) gilt auch beim Überspringen.
+     */
+    override fun framedEntrance(): Sequence<Unit> {
+        ensureBia()
+        return cinematics.staged(KratosStages.INTRO, entrance(), actors = cast(), finish = ::entranceDone)
+    }
+
+    /** Darsteller der Szenen: 0 = Kratos, 1 = Bia (falls sie steht). */
+    private fun cast(): List<Entity> = listOfNotNull(this, bia?.takeIf { !it.isRemoved })
+
+    /**
      * Auftritt: Bia steht schon als Statue auf ihrem Sockel; Kratos schreitet (an der Station) die Treppe herab bis zu
-     * seinem Platz. Titelkarte und Musik wie bei allen Bossen des Olymp.
+     * seinem Platz, hebt den Schild und schlägt ihn vor sich auf (Aktion `SLAM`), spricht; dann Titelkarte. Jeder
+     * Schritt hier ist ein Tick der Szene, die Zeitmarken stehen in [KratosStages]. Der Kampf (Sturm, erster Angriff)
+     * beginnt erst nach der Szene ([entranceDone]).
      */
     override fun entrance(): Sequence<Unit> = sequence {
         calm = true
         ensureBia()
         val players = viewers()
-        Cine.title(players, "hha.kratos.title", "hha.kratos.title.sub", KratosTimings.ENTRANCE_TITLE)
         Cine.music(players, music)
         val goal = post ?: entityPos
+        introGoal = goal
         stairsStart()?.let {
             entering = true
             refreshPositionAndAngles(it.x, it.y, it.z, yawOf(flatNorm(goal.subtract(it))), 0f)
         }
+        var t = 0
         var walked = 0
-        while (walked < KratosTimings.ENTRANCE_WALK && flat(entityPos, goal) > 1.2) {
+        while (walked < KratosTimings.ENTRANCE_WALK && t < KratosStages.INTRO_WALK && flat(entityPos, goal) > 1.2) {
             // Wer schon unten am Siegel steht, dem tritt er nicht auf die Füße.
             if ((nearest()?.let(::flatDistance) ?: 99.0) < ENTRANCE_KEEP) break
             walkTo(goal, 0.9)
             walked++
+            t++
             yield(Unit)
         }
         stopMoving()
         entering = false
-        say("entrance")
-        repeat(KratosTimings.ENTRANCE_TITLE - walked.coerceAtMost(KratosTimings.ENTRANCE_WALK) - 10) {
-            nearest()?.let { lookControl.lookAt(it, 30f, 30f) }
+        while (t < KratosStages.INTRO_LENGTH) {
+            when (t) {
+                KratosStages.INTRO_SLAM_ACT -> kit.act(KratosAction.SLAM)
+                KratosStages.INTRO_SLAM_ACT + KratosStages.SLAM_END -> kit.act(0)
+                KratosStages.INTRO_LINE -> say("entrance")
+                KratosStages.INTRO_TITLE -> Cine.title(players, "hha.kratos.title", "hha.kratos.title.sub", KratosTimings.ENTRANCE_TITLE)
+            }
+            if (kit.action == 0) nearest()?.let { lookControl.lookAt(it, 30f, 30f) }
+            t++
             yield(Unit)
         }
+    }
+
+    /**
+     * Fester Endzustand des Auftritts (auch übersprungen, auch ohne Zuschauer): Er steht an seinem Platz, Bia als
+     * Statue auf dem Sockel, Musik läuft; jetzt erst beginnt die Uhr bis zum ersten Sturm (wie vorher nach dem Auftritt).
+     */
+    private fun entranceDone() {
+        entering = false
+        stopMoving()
+        introGoal?.let { goal ->
+            if (flat(entityPos, goal) > 1.2) refreshPositionAndAngles(goal.x, goal.y, goal.z, yawOf(flatNorm(center().subtract(goal))), 0f)
+        }
+        if (kit.action == KratosAction.SLAM) kit.act(0)
+        ensureBia()
+        Cine.music(viewers(), music)
         calm = false
         nextStorm = age + KratosTimings.STORM_FIRST
     }
@@ -410,9 +467,25 @@ class KratosEntity(type: EntityType<out KratosEntity>, world: World) : DuelBossE
         if (age - lastShieldSound >= KratosTimings.SHIELD_SOUND_COOLDOWN) {
             lastShieldSound = age
             telegraph.sound(HhaSounds.SHIELD, entityPos.add(0.0, height * 0.5, 0.0), 1.6f, 1.0f)
+            // Kurze Fresnel-Schale am Schildarm (höchstens einmal je Abprall-Ton, also je 10 Ticks).
+            BossFx.dome(sw, danger, shieldArm(), SHIELD_DOME_RADIUS, SHIELD_DOME_LIFE)
         }
         if (source.attacker is PlayerEntity) hint("hha.kratos.hint.shield")
         return KratosTimings.SHIELD_FACTOR
+    }
+
+    /** Mitte des Schilds vor dem linken Arm (nur Bild): vorn, etwas links, auf halber Höhe. */
+    private fun shieldArm(): Vec3d {
+        val f = facing()
+        val left = Vec3d(f.z, 0.0, -f.x)
+        return entityPos.add(f.multiply(SHIELD_FRONT)).add(left.multiply(SHIELD_SIDE)).add(0.0, height * SHIELD_UP, 0.0)
+    }
+
+    /** Rechte Hand beim Befehlen (nur Bild): Er streckt sie vor oder hält sie vor die Brust. */
+    private fun commandHand(): Vec3d {
+        val f = facing()
+        val right = Vec3d(-f.z, 0.0, f.x)
+        return entityPos.add(f.multiply(HAND_FRONT)).add(right.multiply(HAND_SIDE)).add(0.0, height * HAND_UP, 0.0)
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -438,14 +511,31 @@ class KratosEntity(type: EntityType<out KratosEntity>, world: World) : DuelBossE
         wait(cone.ticks)
         val struck = cone.hits(fighters()).filter { strike(it, KratosTimings.BASH_DAMAGE) }
         for (player in struck) knock(player, dir, KratosTimings.BASH_KNOCKBACK, 0.45)
-        Vfx.crescent(sw, danger, entityPos.add(0.0, 1.4, 0.0), dir, KratosTimings.BASH_RADIUS, 4f, 8)
+        // Druckwelle als kurzer Kegel-Schleier in Stoßrichtung (der eine Flächeneffekt, ersetzt die Sichel).
+        BossFx.play(
+            sw, "kratos.bash", danger, entityPos.add(0.0, BASH_FX_HEIGHT, 0.0), dir,
+            a = KratosTimings.BASH_RADIUS, b = KratosTimings.BASH_HALF_ANGLE, life = BASH_FX_LIFE, impact = true,
+        )
         telegraph.sound(HhaSounds.IMPACT, entityPos, 2.2f, 0.8f)
-        if (struck.isNotEmpty()) telegraph.hitShake(entityPos, 2.5f)
+        if (struck.isNotEmpty()) bashKick(dir)
         // Der Schild hängt: von vorn zählt jetzt jeder Treffer voll.
         shieldDownUntil = sw.time + KratosTimings.BASH_F
         wait(recover)
         hold(null)
         kit.act(0)
+    }
+
+    /**
+     * Ruck des Schildstoßes (statt Rütteln): Gieren in Stoßrichtung, je Zuschauer aus seiner Sicht (rechts vom Blick =
+     * nach rechts), dazu ein Hauch Nicken. Nur in der Nähe; [BossFx.kick] verwirft ihn während einer laufenden Ansage.
+     */
+    private fun bashKick(dir: Vec3d) {
+        for (player in viewers()) {
+            if (player.squaredDistanceTo(entityPos) > KICK_RANGE * KICK_RANGE) continue
+            val r = Math.toRadians(player.yaw.toDouble())
+            val side = dir.x * -cos(r) + dir.z * -kotlin.math.sin(r)
+            BossFx.kick(player, BASH_KICK_PITCH, if (side >= 0.0) BASH_KICK_YAW else -BASH_KICK_YAW, ticks = KICK_TICKS)
+        }
     }
 
     /** Hammerfall: zwei schwere Schritte, Kreis Radius 3,5 am Ziel, W 28, S 24; der Hammer steckt (F 26). */
@@ -483,7 +573,7 @@ class KratosEntity(type: EntityType<out KratosEntity>, world: World) : DuelBossE
         hold(dirTo(second))
         val again = group.ring(second, KratosTimings.SMASH_RADIUS, KratosTimings.DOUBLE_GAP, pace = Telegraph.Pace.FOLLOW_UP)
         wait(again.ticks)
-        hammer(again)
+        hammer(again, second = true)
         done(group)
         wait(KratosTimings.SMASH_F)
         hold(null)
@@ -521,12 +611,19 @@ class KratosEntity(type: EntityType<out KratosEntity>, world: World) : DuelBossE
         stopMoving()
     }
 
-    private fun hammer(ring: Telegraph.Ring) {
+    /**
+     * Der Hammer schlägt auf. Bild: `kratos.smash` (der eine Flächeneffekt: Marmor reißt auf, fünf echte Blöcke, Staub,
+     * statt der Stoßwelle), Ruck 1,5° (zweiter Schlag [second] 2,5°) für alle in der Nähe statt Rütteln.
+     */
+    private fun hammer(ring: Telegraph.Ring, second: Boolean = false) {
         val struck = ring.hits(fighters()).filter { strike(it, KratosTimings.SMASH_DAMAGE, BossDefense.Reach.BODY, ring.center.y) }
         for (player in struck) knock(player, player.entityPos.subtract(ring.center), 0.5, 0.4)
-        Vfx.shockwave(sw, danger, ring.center, KratosTimings.SMASH_RADIUS + 0.5f, 14, 1.5f)
+        BossFx.play(
+            sw, "kratos.smash", danger, ring.center, dirTo(ring.center),
+            a = KratosTimings.SMASH_RADIUS, b = if (second) 1f else 0f, life = SMASH_FX_LIFE, impact = true,
+        )
         telegraph.sound(HhaSounds.IMPACT, ring.center, 2.6f, 0.7f)
-        if (struck.isNotEmpty()) telegraph.hitShake(ring.center, 3f)
+        BossFx.kick(sw, ring.center, if (second) SMASH_KICK_SECOND else SMASH_KICK_FIRST, ticks = KICK_TICKS, radius = KICK_RANGE.toFloat())
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -595,6 +692,14 @@ class KratosEntity(type: EntityType<out KratosEntity>, world: World) : DuelBossE
             player.networkHandler.sendPacket(TitleS2CPacket(title))
         }
         telegraph.sound(HhaSounds.COMMAND, entityPos, 3f, 1f)
+        // Wem der Befehl gilt: ein Lichtbogen von seiner Hand zu Bia (ein Strang, 12 Ticks); am Client pulsieren
+        // dabei Bias Augen auf (`kratos.command` = `core.arc` + Augen-Puls).
+        bia?.takeIf { !it.isRemoved }?.let { b ->
+            BossFx.play(
+                sw, "kratos.command", danger, commandHand(), b.entityPos.add(0.0, b.height * 0.55, 0.0),
+                a = COMMAND_ARC_BEND, b = COMMAND_ARC_WIDTH, c = 1f, life = COMMAND_ARC_LIFE, entity2 = b,
+            )
+        }
     }
 
     /** „WEICHT!“: Kreis Radius 7 um ihn, W 34, S 22 (Stampfen); wer getroffen wird, fliegt nach außen. F 14. */
@@ -609,8 +714,10 @@ class KratosEntity(type: EntityType<out KratosEntity>, world: World) : DuelBossE
         val struck = ring.hits(fighters()).filter { strike(it, KratosTimings.BACK_DAMAGE) }
         for (player in struck) knock(player, dirTo(player.entityPos), KratosTimings.BACK_KNOCKBACK, 0.4)
         Vfx.shockwave(sw, danger, ring.center, KratosTimings.BACK_RADIUS, 16, 1.2f)
+        // Beiwerk des Stampfens: kurze Risse unter seinem Fuß; Ruck statt Rütteln.
+        BossFx.cracks(sw, danger, ring.center, STOMP_CRACK_RADIUS, STOMP_CRACKS)
         telegraph.sound(HhaSounds.IMPACT, entityPos, 2.8f, 0.6f)
-        if (struck.isNotEmpty()) telegraph.hitShake(entityPos, 3f)
+        if (struck.isNotEmpty()) BossFx.kick(sw, entityPos, STOMP_KICK, ticks = KICK_TICKS, radius = KICK_RANGE.toFloat())
         done(group)
         wait(recover)
         hold(null)
@@ -638,7 +745,7 @@ class KratosEntity(type: EntityType<out KratosEntity>, world: World) : DuelBossE
         wait(ring.ticks - lead)
         val struck = ring.hits(fighters()).filter { strike(it, KratosTimings.COME_DAMAGE) }
         telegraph.sound(HhaSounds.IMPACT, entityPos, 2.6f, 0.5f)
-        if (struck.isNotEmpty()) telegraph.hitShake(entityPos, 2.5f)
+        if (struck.isNotEmpty()) BossFx.kick(sw, entityPos, COME_KICK, ticks = KICK_TICKS, radius = KICK_RANGE.toFloat())
         kit.act(KratosAction.BASH)
         yieldAll(shieldBash(group, facing(), recover))
         done(group)
@@ -673,9 +780,17 @@ class KratosEntity(type: EntityType<out KratosEntity>, world: World) : DuelBossE
             b.face(path.dir)
             yield(Unit)
         }
+        // Landung am Rand (kleiner als die Landung unten im Phasenwechsel: die Ansage liegt schon auf dem Platz).
+        biaLanded(path.at(-path.half), onPlinth = false, small = true)
         wait(group.ticks)
         group.hold(KratosTimings.KNEEL_RUN + 2)
         telegraph.sound(HhaSounds.WHOOSH, b.entityPos, 2.6f, 0.7f)
+        // Bias Klinge als breites Band auf Brusthöhe quer über den Platz, mit Nachzieh-Schweif; folgt ihr.
+        BossFx.play(
+            sw, "bia.blade", danger, Vec3d(c.x, floorY(), c.z), path.dir,
+            a = r.toFloat(), b = KratosTimings.KNEEL_BLADE_HEIGHT.toFloat(), c = KratosTimings.KNEEL_RUN.toFloat(),
+            life = KratosTimings.KNEEL_RUN + BLADE_FX_TAIL, entity = b,
+        )
         val passed = HashSet<UUID>()
         for (k in 1..KratosTimings.KNEEL_RUN) {
             if (over) break
@@ -810,7 +925,11 @@ class KratosEntity(type: EntityType<out KratosEntity>, world: World) : DuelBossE
             // Der Lauf.
             b.kit.act(BiaAction.RUSH)
             b.scripted(true)
-            Vfx.trail(sw, danger, b, 0.6f, KratosTimings.STORM_RUN + 8)
+            // Staubspur statt Lichtschweif: Staubwolken auf ihrer Linie (nie breiter als die Linie, nach dem Lauf weg).
+            BossFx.play(
+                sw, "bia.rush", danger, start, end, a = KratosTimings.STORM_WIDTH, b = KratosTimings.STORM_RUN.toFloat(),
+                life = KratosTimings.STORM_RUN + RUSH_FX_TAIL, entity = b,
+            )
             telegraph.sound(HhaSounds.DASH, start, 2.4f, 0.9f)
             val length = flat(start, end)
             val side = Vec3d(-dir.z, 0.0, dir.x)
@@ -879,8 +998,10 @@ class KratosEntity(type: EntityType<out KratosEntity>, world: World) : DuelBossE
         hint("hha.kratos.hint.clash")
         say("clash")
         Vfx.shockwave(sw, danger, ground(at), 2.5f, 12, 1.0f)
+        // Beiwerk: Funken, wo Klinge auf Bronze trifft; Ruck Rollen statt Rütteln.
+        BossFx.sparks(sw, danger, at.add(dir.multiply(CLASH_SPARK_AHEAD)).add(0.0, CLASH_SPARK_UP, 0.0), dir.multiply(-1.0).add(0.0, 0.6, 0.0), CLASH_SPARKS, CLASH_SPARK_SPEED)
         telegraph.sound(HhaSounds.IMPACT, at, 2.8f, 0.7f)
-        telegraph.hitShake(at, 3f)
+        BossFx.kick(sw, at, CLASH_KICK_PITCH, roll = CLASH_KICK_ROLL, ticks = KICK_TICKS, radius = KICK_RANGE.toFloat())
         interrupt(staggered())
         wait(KratosTimings.BIA_STAGGER_END)
         yieldAll(biaReturn(b))
@@ -926,8 +1047,15 @@ class KratosEntity(type: EntityType<out KratosEntity>, world: World) : DuelBossE
         kit.act(0)
     }
 
-    /** Phase II „Gewalt ohne Maß“: Er reißt den Schild vom Arm und schleudert ihn weg; dann beginnt er mit Befehlen. */
-    override fun onPhase(newPhase: Int): Sequence<Unit>? = if (newPhase != 1) null else sequence {
+    /**
+     * Phase II „Gewalt ohne Maß“ als Bühnen-Szene `kratos.phase2`: Er reißt den Schild vom Arm und schleudert ihn weg
+     * (Scherben), Bia springt vom Sockel herab und wieder hinauf. Der feste Endzustand ([phaseTwoDone]) gilt auch beim
+     * Überspringen; erst danach geht der Kampf weiter (zuerst ein Befehlspaar).
+     */
+    override fun onPhase(newPhase: Int): Sequence<Unit>? =
+        if (newPhase != 1) null else cinematics.staged(KratosStages.PHASE2, phaseTwo(), actors = cast(), finish = ::phaseTwoDone)
+
+    private fun phaseTwo(): Sequence<Unit> = sequence {
         calm = true
         stopMoving()
         hold(facing())
@@ -935,16 +1063,101 @@ class KratosEntity(type: EntityType<out KratosEntity>, world: World) : DuelBossE
         say("phase2")
         telegraph.sound(HhaSounds.COMMAND, entityPos, 2.6f, 0.7f)
         wait(KratosTimings.DROP_SHIELD_GONE)
+        // Der Schild fliegt: Die Fresnel-Schale am Arm springt in Scherben.
+        BossFx.dome(sw, danger, shieldArm(), SHIELD_DOME_RADIUS, SHIELD_SHATTER_LIFE, shatter = true)
         shieldless = true
         shieldDownUntil = 0L
         dropShield()
         telegraph.sound(HhaSounds.SHIELD, entityPos, 2.6f, 0.5f)
+        Cine.music(viewers(), HhaSounds.THEME_KRATOS_2)
         wait(KratosTimings.DROP_SHIELD_END - KratosTimings.DROP_SHIELD_GONE)
         hold(null)
         kit.act(0)
+        wait(KratosStages.PHASE2_BIA_START - KratosTimings.DROP_SHIELD_END)
+        val b = bia?.takeIf { !it.isRemoved && !biaBusy }
+        if (b != null) yieldAll(biaShowLeap(b))
+    }
+
+    /**
+     * Nur Szene: Bia springt vom Sockel auf den Platz (Landung `bia.land`), steht kurz und springt rückwärts wieder
+     * hinauf. Sie schaut dabei immer zum Platz. Danach ist sie wieder Statue; nichts davon greift an.
+     */
+    private fun biaShowLeap(b: BiaEntity): Sequence<Unit> = sequence {
+        biaBusy = true
+        biaShowing = true
+        val home = biaHome()
+        val toward = flatNorm(center().subtract(home))
+        val foot = point(plinthBase(), toward, KratosStages.PHASE2_BIA_DROP)
+        b.face(toward)
+        b.kit.act(BiaAction.LEAP)
+        wait(KratosStages.PHASE2_BIA_CROUCH)
+        b.scripted(true)
+        for (t in 1..KratosStages.PHASE2_BIA_DROP_FLIGHT) {
+            b.place(arc(home, foot, t.toDouble() / KratosStages.PHASE2_BIA_DROP_FLIGHT, KratosStages.PHASE2_BIA_DROP_LIFT))
+            b.face(toward)
+            yield(Unit)
+        }
+        b.place(foot)
+        b.scripted(false)
+        b.kit.act(BiaAction.RETURN)
+        biaLanded(foot, onPlinth = false)
+        wait(KratosStages.PHASE2_BIA_STAND)
+        b.kit.act(BiaAction.LEAP)
+        wait(KratosStages.PHASE2_BIA_BACK_CROUCH)
+        b.scripted(true)
+        for (t in 1..KratosTimings.BIA_FLIGHT) {
+            b.place(arc(foot, home, t.toDouble() / KratosTimings.BIA_FLIGHT, KratosTimings.BIA_FLIGHT_LIFT))
+            b.face(toward)
+            yield(Unit)
+        }
+        b.place(home)
+        b.face(toward)
+        b.scripted(false)
+        b.kit.act(BiaAction.RETURN)
+        biaLanded(home, onPlinth = true)
+        wait(KratosTimings.BIA_RETURN_END)
+        b.kit.act(BiaAction.STATUE)
+        biaShowing = false
+        biaBusy = false
+    }
+
+    /**
+     * Fester Endzustand des Phasenwechsels: kein Schild (der liegt links neben ihm), Bia als Statue auf dem Sockel,
+     * Musik der Phase II, und das Befehlspaar ist als Nächstes dran.
+     */
+    private fun phaseTwoDone() {
+        shieldless = true
+        shieldDownUntil = 0L
+        if (shieldProp?.isRemoved != false) dropShield()
+        if (biaShowing) {
+            biaShowing = false
+            biaBusy = false
+            resetBia()
+        }
+        hold(null)
+        if (kit.action == KratosAction.DROP_SHIELD) kit.act(0)
+        Cine.music(viewers(), HhaSounds.THEME_KRATOS_2)
         calm = false
         // Die neue Phase zeigt sich sofort: zuerst ein Befehlspaar.
         attacksSinceCommand = KratosTimings.COMMAND_EVERY
+    }
+
+    /**
+     * Bild einer Landung Bias (`bia.land`, der eine Flächeneffekt): Kuppel, Ring, Risse, echte Blöcke. Auf dem Sockel
+     * kleiner ([onPlinth]); [small] = am Platzrand während einer laufenden Ansage (ohne Kuppel, wenige Risse).
+     */
+    private fun biaLanded(at: Vec3d, onPlinth: Boolean, small: Boolean = false) {
+        val radius = when {
+            onPlinth -> LAND_RADIUS_PLINTH
+            small -> LAND_RADIUS_SMALL
+            else -> LAND_RADIUS
+        }
+        val blocks = if (onPlinth || small) LAND_BLOCKS_SMALL else LAND_BLOCKS
+        val cracks = if (onPlinth || small) LAND_CRACKS_SMALL else LAND_CRACKS
+        BossFx.play(
+            sw, "bia.land", danger, at, a = radius, b = blocks.toFloat(), c = cracks.toFloat(),
+            d = if (small) 1f else 0f, life = LAND_FX_LIFE, impact = true,
+        )
     }
 
     /**
@@ -969,8 +1182,15 @@ class KratosEntity(type: EntityType<out KratosEntity>, world: World) : DuelBossE
         if (sw.spawnEntity(bolt)) shieldProp = bolt
     }
 
-    /** Sieg: beide geben nach (Kratos `YIELD`, Bia kehrt als Statue auf ihren Sockel zurück); Beute über die Basis. */
-    override fun victory(): Sequence<Unit> = sequence {
+    /**
+     * Sieg als Bühnen-Szene `kratos.defeat`: beide geben nach (Kratos `YIELD`: Faust an die Brust, dann aufs Knie; Bia
+     * erstarrt als Statue auf ihrem Sockel); Beute über die Basis, danach der Sieg-Stinger des Olymp. Er bleibt so lange
+     * stehen, bis die Szene sicher zu Ende ist ([DEFEAT_LINGER]), erst dann verschwindet er.
+     */
+    override fun victory(): Sequence<Unit> =
+        cinematics.staged(KratosStages.DEFEAT, defeat(), actors = cast(), finish = ::defeatDone)
+
+    private fun defeat(): Sequence<Unit> = sequence {
         over = true
         calm = true
         stopMoving()
@@ -980,8 +1200,15 @@ class KratosEntity(type: EntityType<out KratosEntity>, world: World) : DuelBossE
         bia?.takeIf { !it.isRemoved && !biaBusy }?.kit?.act(BiaAction.STATUE)
         say("yield")
         finishVictory()
-        wait(VICTORY_LINGER)
+        Cine.music(viewers(), HhaSounds.VICTORY_OLYMP)
+        wait(DEFEAT_LINGER)
         discard()
+    }
+
+    /** Fester Endzustand der Niederlage: Er kniet (`YIELD`), Bia steht als Statue auf dem Sockel (sofern sie frei ist). */
+    private fun defeatDone() {
+        if (kit.action != KratosAction.YIELD) kit.act(KratosAction.YIELD)
+        if (bia?.isRemoved == false && !biaBusy) resetBia()
     }
 
     override fun remove(reason: RemovalReason) {
@@ -1023,6 +1250,71 @@ class KratosEntity(type: EntityType<out KratosEntity>, world: World) : DuelBossE
 
         /** `PhaseBar`: Themen ab 10 sind die Gefahrenpaletten. */
         private const val STYLE_THEMES = 10
+
+        // --- Nur Darstellung (Überarbeitung 3, PLAN 2.7): Effekte, Rucke, Szenen. Keine Kampfzahl. ---
+
+        /** Kamera-Ruck: Dauer, Reichweite um den Treffer. */
+        private const val KICK_TICKS = 6
+        private const val KICK_RANGE = 24.0
+        /** Schildstoß: Gieren in Stoßrichtung, dazu wenig Nicken (Grad). */
+        private const val BASH_KICK_YAW = 2f
+        private const val BASH_KICK_PITCH = 0.4f
+        /** Hammerfall: Nicken, erster Schlag und zweiter Schlag des Doppelschlags (Grad). */
+        private const val SMASH_KICK_FIRST = 1.5f
+        private const val SMASH_KICK_SECOND = 2.5f
+        /** „WEICHT!“ (Stampfen) und „HERAN!“ (Ruck): Nicken bei einem Treffer (Grad). */
+        private const val STOMP_KICK = 1.5f
+        private const val COME_KICK = 1.2f
+        /** Zusammenstoß: Rollen 2°, wenig Nicken. */
+        private const val CLASH_KICK_ROLL = 2f
+        private const val CLASH_KICK_PITCH = 0.5f
+
+        /** `kratos.bash`: Höhe des Schleiers über dem Boden und Lebenszeit. */
+        private const val BASH_FX_HEIGHT = 1.3
+        private const val BASH_FX_LIFE = 12
+        /** `kratos.smash`: Lebenszeit (Risse und Staub). */
+        private const val SMASH_FX_LIFE = 60
+        /** Stampfen: kurze Risse unter seinem Fuß. */
+        private const val STOMP_CRACKS = 4
+        private const val STOMP_CRACK_RADIUS = 2.6f
+        /** Zusammenstoß: Funken an der Stelle, wo Klinge auf Bronze trifft. */
+        private const val CLASH_SPARKS = 14
+        private const val CLASH_SPARK_SPEED = 0.5f
+        private const val CLASH_SPARK_AHEAD = 0.8
+        private const val CLASH_SPARK_UP = 1.7
+
+        /** Schild (Phase I): Fresnel-Schale beim Abprall, Scherben beim Wegwerfen. Lage vor dem linken Arm. */
+        private const val SHIELD_DOME_RADIUS = 1.6f
+        private const val SHIELD_DOME_LIFE = 8
+        private const val SHIELD_SHATTER_LIFE = 18
+        private const val SHIELD_FRONT = 0.9
+        private const val SHIELD_SIDE = 0.55
+        private const val SHIELD_UP = 0.45
+
+        /** Befehl: Bogen von der rechten Hand zu Bia (ein Strang, 12 Ticks). */
+        private const val COMMAND_ARC_LIFE = 12
+        private const val COMMAND_ARC_BEND = 0.22f
+        private const val COMMAND_ARC_WIDTH = 0.42f
+        private const val HAND_FRONT = 1.1
+        private const val HAND_SIDE = 0.8
+        private const val HAND_UP = 0.62
+
+        /** `bia.blade` und `bia.rush` laufen so viele Ticks über den Lauf hinaus aus. */
+        private const val BLADE_FX_TAIL = 8
+        private const val RUSH_FX_TAIL = 14
+
+        /** `bia.land`: Radius auf dem Platz, auf dem Sockel, am Rand während „KNIET!“; Blöcke, Risse, Lebenszeit. */
+        private const val LAND_RADIUS = 2.4f
+        private const val LAND_RADIUS_PLINTH = 1.4f
+        private const val LAND_RADIUS_SMALL = 1.6f
+        private const val LAND_BLOCKS = 6
+        private const val LAND_BLOCKS_SMALL = 3
+        private const val LAND_CRACKS = 6
+        private const val LAND_CRACKS_SMALL = 3
+        private const val LAND_FX_LIFE = 60
+
+        /** Nach dem Sieg bleibt er stehen, bis die Szene `kratos.defeat` sicher vorbei ist (sonst bricht sie ab). */
+        private val DEFEAT_LINGER = maxOf(DuelBossEntity.VICTORY_LINGER, KratosStages.DEFEAT_LENGTH + 20)
 
         /** Schild: vorn heißt weniger als 60° zur Blickrichtung. */
         private val SHIELD_COS = cos(Math.toRadians(KratosTimings.SHIELD_HALF_ANGLE))

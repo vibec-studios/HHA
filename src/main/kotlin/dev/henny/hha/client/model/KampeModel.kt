@@ -1,5 +1,8 @@
 package dev.henny.hha.client.model
 
+import dev.henny.hha.client.anim.PoseMemory
+import dev.henny.hha.client.anim.Spring
+import dev.henny.hha.client.cine.CinePlayer
 import dev.henny.hha.client.vfx.BossGlow
 import dev.henny.hha.entity.miniboss.KampeEntity
 import dev.henny.hha.entity.miniboss.KampePose
@@ -16,10 +19,12 @@ import net.minecraft.client.render.entity.model.EntityModel
 import net.minecraft.client.render.entity.state.LivingEntityRenderState
 import net.minecraft.client.util.math.MatrixStack
 import net.minecraft.util.Identifier
+import net.minecraft.util.Util
 import net.minecraft.util.math.MathHelper
 import net.minecraft.util.math.Vec3d
 import org.joml.Vector3f
 import kotlin.math.PI
+import kotlin.math.exp
 import kotlin.math.min
 import kotlin.math.sin
 
@@ -53,7 +58,6 @@ class KampeModel(root: ModelPart) : EntityModel<KampeRenderState>(root) {
     private val stingBone = KampeKeys.BONES.indexOfFirst { it.endsWith("/sting") }
     private val base = FloatArray(count * 6)
     private val current = FloatArray(count * 6)
-    private val previous = FloatArray(count * 6)
 
     /** Reihenfolge beim Zusammensacken im Tod: 0 zuerst. */
     private val collapseOrder = IntArray(count)
@@ -109,16 +113,107 @@ class KampeModel(root: ModelPart) : EntityModel<KampeRenderState>(root) {
     override fun setAngles(state: KampeRenderState) {
         super.setAngles(state)
         capture(base)
+        val rig = rigOf(state.entityId)
         val t = state.poseTime
         evaluate(state.bossPose, t, current)
-        if (state.previousPose != state.bossPose && t < BossTimings.Anim.BLEND_SOFT) {
-            // Weich aus der Endhaltung der vorigen Pose heraus (z. B. vom Hochwinden in den Sturzstoß).
-            evaluate(state.previousPose, settle(state.previousPose), previous)
-            val w = step(t, 0f, BossTimings.Anim.BLEND_SOFT.toFloat())
-            for (i in current.indices) current[i] = MathHelper.lerp(w, previous[i], current[i])
-        }
-        apply(current)
+        // Überarbeitung 3 (PLAN 2.1 Punkt 3): weich aus der zuletzt *gezeigten* Haltung, nicht aus der Endhaltung der
+        // vorigen Pose. Dieselbe Pose neu gestartet (drei Sturzstöße) = die Posenzeit springt zurück.
+        val restart = state.bossPose == rig.pose && t < rig.poseTime - RESTART_SLACK
+        rig.pose = state.bossPose
+        rig.poseTime = t
+        apply(rig.memory.blend(state.bossPose, current, state.age, BossTimings.Anim.BLEND_SOFT.toFloat(), restart))
         secondary(state)
+        follow(state, rig)
+        // Mund zum Text (Bühne/Dialog); ohne Zeile 0.
+        jaw.pitch += CinePlayer.mouthOf(state.entityId) * JAW_SPEAK
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // Nachziehen (Überarbeitung 3, REF T13/T14): Schwanz als Kette von Tiefpässen, Feder beim Feger, Schwingen
+    // ---------------------------------------------------------------------------------------------------------------
+
+    /** Geglätteter Zustand je Wesen (die Modellinstanz teilen sich alle Kampen). */
+    private class Rig(size: Int, segments: Int) {
+        val memory = PoseMemory(size)
+        var pose = Int.MIN_VALUE
+        var poseTime = 0f
+
+        /** Gieren jedes Schwanzglieds in Weltgrad (folgt dem vorigen Glied nach), NaN = noch nicht gesetzt. */
+        val lag = FloatArray(segments) { Float.NaN }
+        var time = Float.NaN
+        var lastYaw = Float.NaN
+
+        /** Ausschwingen des Schwanzes nach dem Feger (Grad an der Spitze). */
+        val swing = Spring(SWING_FREQ, SWING_DAMP)
+
+        /** Schwingen ziehen beim Drehen nach (Grad). */
+        val wings = Spring(WING_FREQ, WING_DAMP)
+        var stamp = 0L
+    }
+
+    private val rigs = HashMap<Int, Rig>()
+    private var lastPrune = 0L
+
+    private fun rigOf(id: Int): Rig {
+        val now = Util.getMeasuringTimeMs()
+        if (now - lastPrune > PRUNE_MS) {
+            // Wesen, die seit [PRUNE_MS] nicht mehr gezeichnet wurden, vergessen.
+            rigs.values.removeIf { now - it.stamp > PRUNE_MS }
+            lastPrune = now
+        }
+        return rigs.getOrPut(id) { Rig(count * 6, tail.size) }.also { it.stamp = now }
+    }
+
+    /**
+     * Schwanzglieder tail_3 … tail_9 ziehen dem Körper nach: Glied i läuft mit Zeitkonstante [TAIL_LAG_TICKS] auf das
+     * Gieren von Glied i − 1 zu (Glied −1 = Körper). Dazu federt [Rig.swing] nach dem Feger aus. Die gesamte
+     * Abweichung jedes Glieds von der Lage, die der Server rechnet (Körper + Schlüsselpose), bleibt unter
+     * [MAX_TAIL_DEVIATION]°, damit die angesagten Kegel zum Bild passen. Gieren +a an einem Teil entspricht
+     * `bodyYaw + a` (der Renderer dreht um 180 − bodyYaw und spiegelt Y), also wird die Differenz in Grad aufaddiert.
+     */
+    private fun follow(state: KampeRenderState, rig: Rig) {
+        val now = state.age
+        val yaw = state.bodyYaw
+        val jumped = rig.time.isNaN() || now < rig.time - 0.01f || now - rig.time > 40f
+        val dt = if (jumped) 0f else (now - rig.time).coerceIn(0f, 4f)
+        rig.time = now
+        if (jumped || rig.lag[0].isNaN()) {
+            rig.lag.fill(yaw)
+            rig.lastYaw = yaw
+            rig.swing.reset()
+            rig.wings.reset()
+        }
+        // Kette von Tiefpässen.
+        val k = 1f - exp(-dt / TAIL_LAG_TICKS)
+        var prev = yaw
+        for (i in rig.lag.indices) {
+            val next = rig.lag[i] + MathHelper.wrapDegrees(prev - rig.lag[i]) * k
+            rig.lag[i] = yaw + MathHelper.clamp(MathHelper.wrapDegrees(next - yaw), -MAX_TAIL_DEVIATION, MAX_TAIL_DEVIATION)
+            prev = rig.lag[i]
+        }
+        // Feder: Stoß genau beim Feger (SWEEP_WINDUP + SWEEP_STRIKE), in Schlagrichtung (die Schlüssel gehen von + nach −).
+        val timings = BossTimings.Kampe
+        val hit = (timings.SWEEP_WINDUP + timings.SWEEP_STRIKE).toFloat()
+        if (dt > 0f && state.bossPose == KampePose.TAIL_SWEEP && state.poseTime >= hit && state.poseTime - dt < hit) {
+            rig.swing.kick(-SWEEP_KICK)
+        }
+        val s = rig.swing.step(0f, dt)
+        var cumulative = 0f
+        var before = yaw
+        for ((i, part) in tail.withIndex()) {
+            var add = MathHelper.wrapDegrees(rig.lag[i] - before) + s * SWING_SHARE[i]
+            before = rig.lag[i]
+            val total = MathHelper.clamp(cumulative + add, -MAX_TAIL_DEVIATION, MAX_TAIL_DEVIATION)
+            add = total - cumulative
+            cumulative = total
+            part.yaw += add * DEG
+        }
+        // Schwingen: ziehen gegen die Drehrate nach (weich, kein Flattern).
+        val turn = if (dt > 0f) MathHelper.wrapDegrees(yaw - rig.lastYaw) / dt else 0f
+        rig.lastYaw = yaw
+        val w = rig.wings.step(MathHelper.clamp(-turn * WING_GAIN, -WING_MAX, WING_MAX), dt)
+        wingR.yaw += w * DEG
+        wingL.yaw += w * DEG
     }
 
     // ---------------------------------------------------------------------------------------------------------------
@@ -171,23 +266,6 @@ class KampeModel(root: ModelPart) : EntityModel<KampeRenderState>(root) {
     private fun rest(out: FloatArray, w: Float) {
         if (w <= 0f) return
         for (i in out.indices) out[i] = MathHelper.lerp(w, out[i], base[i])
-    }
-
-    /** Zeitpunkt, an dem eine Pose „angekommen" ist; von dort blendet die nächste Pose weich heraus. */
-    private fun settle(pose: Int): Float {
-        val k = BossTimings.Kampe
-        return when (pose) {
-            KampePose.TAIL_SWEEP -> k.SWEEP_END.toFloat()
-            KampePose.SPIT -> k.SPIT_END.toFloat()
-            KampePose.STING -> k.STING_END.toFloat()
-            KampePose.COIL_UP -> k.COIL.toFloat()
-            KampePose.DIVE -> k.DIVE_WINDUP + 6f
-            KampePose.DAZED -> k.DAZED.toFloat()
-            KampePose.ROAR -> k.ROAR.toFloat()
-            KampePose.DEATH -> k.DEATH.toFloat()
-            KampePose.ANTI_AIR -> BossTimings.Guardian.ANTI_AIR_END.toFloat()
-            else -> 0f
-        }
     }
 
     private fun evaluate(pose: Int, t: Float, out: FloatArray) {
@@ -403,6 +481,35 @@ class KampeModel(root: ModelPart) : EntityModel<KampeRenderState>(root) {
         const val DEG = 0.017453292f
         const val HAIR = 6
 
+        /** Posenzeit, um die sie zurückspringen muss, damit „dieselbe Pose neu" erkannt wird (Ticks). */
+        const val RESTART_SLACK = 0.5f
+
+        /** Höchste Abweichung jedes Schwanzglieds von der Server-Lage (Grad; Briefing P15, REF T14: 14°). */
+        const val MAX_TAIL_DEVIATION = 14f
+
+        /** Zeitkonstante, mit der ein Glied dem vorigen nachzieht (Ticks). */
+        const val TAIL_LAG_TICKS = 2.2f
+
+        /** Feder des Ausschwingens: Kreisfrequenz (rad/Tick), Dämpfung (< 1 schwingt nach), Stoß (Grad/Tick). */
+        const val SWING_FREQ = 0.32f
+        const val SWING_DAMP = 0.3f
+        const val SWEEP_KICK = 3.6f
+
+        /** Anteil jedes Glieds (tail_3 … tail_9) am Ausschwingen; Summe 1 = voller Ausschlag an der Spitze. */
+        val SWING_SHARE = floatArrayOf(0.05f, 0.1f, 0.15f, 0.17f, 0.18f, 0.18f, 0.17f)
+
+        /** Schwingen: Feder, Grad je Grad/Tick Drehrate, Deckel (Grad). */
+        const val WING_FREQ = 0.25f
+        const val WING_DAMP = 0.55f
+        const val WING_GAIN = 0.8f
+        const val WING_MAX = 9f
+
+        /** Kiefer bei voller Mundöffnung (Radiant). */
+        const val JAW_SPEAK = 0.32f
+
+        /** Wesen ohne Bild seit so vielen Millisekunden werden vergessen. */
+        const val PRUNE_MS = 5000L
+
         /** tail_5 ist das dritte Glied der Liste (tail_3 = 0). */
         const val MID_SEGMENT = 2
 
@@ -414,6 +521,42 @@ class KampeModel(root: ModelPart) : EntityModel<KampeRenderState>(root) {
         /** Hoch bis [peak], halten bis [release], weich zurück bis [end] (wie bei den anderen Wächtern). */
         fun hold(t: Float, peak: Float, release: Float, end: Float): Float = step(t, 0f, peak) * (1f - step(t, release, end))
     }
+}
+
+/**
+ * Überarbeitung 3 (P15): Die Anker der Kampe je Bild in Weltkoordinaten, für ihre Effekte (`client/vfx/fx/boss/KampeFx`):
+ * Das Gift kommt aus dem **Maul**, das das Modell gerade zeigt (Vorbild Void `StarBreathEffect`), der Sternenring sitzt
+ * über dem Kopf. Geschrieben im Leucht-Teil des Renderers, gelesen im Effekt (beides am Render-Thread). Einträge, die
+ * länger als [STALE_MS] nicht erneuert wurden, gelten als fehlend (z. B. außer Sicht); der Effekt nimmt dann seinen Rückfall.
+ */
+object KampeAnchors {
+    class Frame(val mouth: Vec3d, val head: Vec3d, val stingTip: Vec3d, val stamp: Long)
+
+    /** So alt darf ein Anker höchstens sein (Millisekunden). */
+    const val STALE_MS = 250L
+
+    private val frames = HashMap<Int, Frame>()
+
+    fun put(entityId: Int, frame: BossGlow.KampeFrame) {
+        val now = Util.getMeasuringTimeMs()
+        val head = frame.eyeR.add(frame.eyeL).multiply(0.5)
+        frames[entityId] = Frame(frame.mouth, head, frame.stingTip, now)
+        if (frames.size > 8) frames.values.removeIf { now - it.stamp > STALE_MS * 8 }
+    }
+
+    private fun fresh(entityId: Int): Frame? =
+        frames[entityId]?.takeIf { Util.getMeasuringTimeMs() - it.stamp <= STALE_MS }
+
+    /** Maul der Kampe [entityId] im letzten Bild, sonst `null`. */
+    fun mouth(entityId: Int): Vec3d? = fresh(entityId)?.mouth
+
+    /** Mitte zwischen den Augen im letzten Bild, sonst `null`. */
+    fun head(entityId: Int): Vec3d? = fresh(entityId)?.head
+
+    /** Spitze des Stachels im letzten Bild, sonst `null`. */
+    fun stingTip(entityId: Int): Vec3d? = fresh(entityId)?.stingTip
+
+    fun clear() = frames.clear()
 }
 
 class KampeRenderer(context: EntityRendererFactory.Context) :
@@ -432,11 +575,16 @@ class KampeRenderer(context: EntityRendererFactory.Context) :
                 frame.poseTime = state.poseTime
                 model.readAnchors(matrices, cam, frame)
                 BossGlow.submit(frame)
+                KampeAnchors.put(state.entityId, frame)
             }
         })
     }
 
     override fun createRenderState() = KampeRenderState()
+
+    /** Sichtbox: Schweif und Flügel im Sturzflug reichen weit über die Trefferbox (P20, [GuardianCull.KAMPE]). */
+    override fun getBoundingBox(entity: KampeEntity): net.minecraft.util.math.Box =
+        GuardianCull.grow(super.getBoundingBox(entity), GuardianCull.KAMPE)
 
     override fun getTexture(state: KampeRenderState): Identifier = texture
 

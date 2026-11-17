@@ -150,3 +150,28 @@ Für Bosse, Reliquien und Tore; alle über `/hha toggle` bzw. `/hha set` (OP). B
 Die neuen Schlüssel stehen noch nicht in den Listen des Kontrollzentrums (`client/gui/ConfigMeta.kt`); bis dahin gehen sie
 über `/hha`. Die Beschriftungen `hha.gui.cfg.relic_drops`, `hha.gui.cfg.relic_crafting` und `hha.gui.client.portal_shader`
 liegen in den Sprachdateien bereit.
+
+## Neue Schalter (Überarbeitung 3)
+
+Client (`config/hha/client.json`, `/hhac toggle <schlüssel>`, im Kontrollzentrum unter *Darstellung*):
+
+| Schlüssel | Standard | Wirkung |
+| --- | --- | --- |
+| `screen_fx` | `true` | Bildschirm-Pässe der Bosse (Stoßring, Hitzeflimmern, Mondfinsternis, Zeitstopp, Gravitationslinse). Aus = 2D-Abdunklung/Tönung mit gleicher Dauer |
+| `cine_handheld` | `true` | leichtes Schwanken der Szenenkamera wie aus der Hand |
+| `rpg_hud` | `true` | eigenes HUD und Pausenmenü in RPG-Welten; aus = Vanilla (wirkt sofort) |
+
+Die Vanilla-Option *Barrierefreiheit → Verzerrungseffekte* dämpft Ruck, Rütteln, Handkamera und Pässe mit; bei 0 % laufen
+die Pässe als 2D-Ersatz. Mehr in [Bosse allgemein](bosse-allgemein.md#effekte-kamera-szenen).
+
+Server (`/hha toggle` bzw. `/hha set`, im Kontrollzentrum in der Gruppe **RPG**); sie wirken nur in RPG-Welten:
+
+| Schlüssel | Art | Standard | Kurz |
+| --- | --- | --- | --- |
+| `rpg_hunger` | Schalter | `false` | Hunger in RPG-Welten |
+| `rpg_boss_health` | Zahl (0,25–2,0) | `0.8` | Leben der Bosse |
+| `rpg_boss_damage` | Zahl (0,25–2,0) | `0.85` | Schaden der Bosse |
+| `rpg_wait_ticks` | Zahl (100–1200 Ticks) | `400` | Frist der gemeinsamen Ankunft |
+
+Neue Taste: **Tagebuch** (`key.hha.journal`, Standard J, Kategorie H&H Armors) – nur in RPG-Welten. Details:
+[RPG-Modus](rpg.md).

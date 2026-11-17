@@ -321,6 +321,125 @@ def swell(seconds=2.0):
     return _cached(('swell', seconds), make)
 
 
+def flute(freq, seconds):
+    """Flöte: fast reiner Grundton, wenig Obertöne, hörbarer Atem und weiches Vibrato."""
+    def make():
+        n = samples(seconds + 0.15)
+        env = adsr(n, 0.07, 0.1, 0.85, 0.14)
+        weights = (1.0, 0.22, 0.1, 0.045, 0.02)
+
+        def build(phase, _v):
+            return additive(phase, lambda k: weights[k - 1] if k <= len(weights) else 0.0, freq)
+        tone = _voices(freq, n, 4.0, 2, build, (5.2, 0.0045)) * env[:, None] * 0.62
+        breath = stereo(bandpass(np.random.default_rng(61).uniform(-1.0, 1.0, n), min(freq * 2.2, 7000), 1400) * env * 0.045)
+        return tone + breath
+    return _cached(('flute', round(freq, 2), round(seconds, 3)), make)
+
+
+def anvil(freq=780.0, seconds=1.8, seed=71):
+    """Amboss: unharmonische Stabmoden in schwebenden Paaren und ein harter Anschlag."""
+    def make():
+        n = samples(seconds)
+        t = np.arange(n) / RATE
+        out = np.zeros(n)
+        for ratio, gain, decay in ((1.0, 1.0, 2.6), (2.76, 0.6, 4.0), (5.40, 0.34, 6.5), (8.93, 0.16, 10.0)):
+            f = freq * ratio
+            if f * 1.004 >= LIMIT_HZ:
+                continue
+            out += gain * np.exp(-t * decay) * (np.sin(2.0 * np.pi * f * t) + 0.7 * np.sin(2.0 * np.pi * f * 1.004 * t + 1.0))
+        click = highpass(noise(seconds, seed), 2500) * np.exp(-t * 260.0) * 1.6
+        thump = np.sin(2.0 * np.pi * phase_of(140.0 * (1.0 + np.exp(-t * 40.0)))) * np.exp(-t * 18.0) * 0.8
+        return stereo((out * 0.32 + click + thump) * np.minimum(1.0, t / 0.0008) * 0.55)
+    return _cached(('anvil', freq, seconds, seed), make)
+
+
+def snare(seconds=0.32, seed=73):
+    """Kleine Trommel für den Marsch: Fell, Teppich und ein kurzer Ton."""
+    def make():
+        t = timeline(seconds)
+        wires = bandpass(noise(seconds, seed), 4200, 2600) * np.exp(-t * 17.0)
+        head = np.sin(2.0 * np.pi * phase_of(185.0 * (1.0 + 0.4 * np.exp(-t * 60.0)))) * np.exp(-t * 26.0)
+        return stereo(distort(wires * 0.9 + head * 0.7, 1.4) * np.minimum(1.0, t / 0.001) * 0.62)
+    return _cached(('snare', seconds, seed), make)
+
+
+def woodblock(freq=1250.0, seconds=0.16):
+    """Holzblock: das Ticken des Uhrwerks."""
+    def make():
+        t = timeline(seconds)
+        x = np.sin(2.0 * np.pi * freq * t) * np.exp(-t * 48.0) + 0.45 * np.sin(2.0 * np.pi * freq * 2.71 * t) * np.exp(-t * 80.0)
+        x += bandpass(noise(seconds, 77), freq * 1.6, 900) * np.exp(-t * 150.0) * 0.6
+        return stereo(x * np.minimum(1.0, t / 0.0005) * 0.6)
+    return _cached(('woodblock', freq, seconds), make)
+
+
+def timpani(pitch=73.0, seconds=2.2, seed=79):
+    """Pauke: gestimmter Kessel mit langem Nachklang, weicher als die Taiko."""
+    def make():
+        n = samples(seconds)
+        t = np.arange(n) / RATE
+        f = pitch * (1.0 + 0.08 * np.exp(-t * 18.0))
+        body = sum(g * np.sin(2.0 * np.pi * phase_of(f * r)) * np.exp(-t * d) for r, g, d in ((1.0, 1.0, 1.9), (1.5, 0.45, 3.0), (1.98, 0.3, 4.0), (2.44, 0.15, 6.0)))
+        mallet = lowpass(noise(seconds, seed), 1500) * np.exp(-t * 70.0) * 0.5
+        return stereo(distort(body + mallet, 1.2) * np.minimum(1.0, t / 0.001) * 0.75)
+    return _cached(('timpani', round(pitch, 2), seconds, seed), make)
+
+
+def drone(freq, seconds, cutoff=600.0, voices=4, seed=83):
+    """Dunkle Fläche: Sägezahn-Ensemble hinter einem Tiefpass, sehr langsam ein- und ausblendend."""
+    def make():
+        n = samples(seconds)
+        env = adsr(n, min(2.5, seconds * 0.3), 0.0, 1.0, min(2.5, seconds * 0.3))
+
+        def build(phase, _v):
+            return additive(phase, lambda k: 1.0 / k, freq)
+        x = _voices(freq, n, 9.0, voices, build, (0.18, 0.004), seed)
+        x = np.stack([lowpass(x[:, 0], cutoff), lowpass(x[:, 1], cutoff)], axis=1)
+        return x * env[:, None] * 0.4
+    return _cached(('drone', round(freq, 2), round(seconds, 3), cutoff, voices, seed), make)
+
+
+def wind(seconds, low=200.0, high=1400.0, seed=89):
+    """Ferner Wind: ein Rauschband, das langsam auf und ab wandert (links und rechts verschieden)."""
+    def make():
+        chans = []
+        for c in range(2):
+            phase0 = c * 1.7 + seed
+
+            def gain(f, k, phase0=phase0):
+                centre = low + (high - low) * (0.5 + 0.5 * math.sin(2.0 * math.pi * k * 2.0 + phase0))
+                return np.exp(-(((f - centre) / (0.35 * high)) ** 2))
+            x = sweep(noise(seconds, seed + c), gain)
+            k = np.linspace(0.0, 1.0, len(x))
+            chans.append(x * (0.6 + 0.4 * np.sin(2.0 * np.pi * k * 3.0 + phase0)))
+        out = np.stack(chans, axis=1)
+        return out / max(float(np.max(np.abs(out))), 1e-6) * 0.5
+    return _cached(('wind', round(seconds, 3), low, high, seed), make)
+
+
+def chains(seconds=1.6, seed=97, density=26):
+    """Ferne Ketten: kleine unharmonische Metallklänge, gedämpft, wie aus einem anderen Saal."""
+    def make():
+        out = np.zeros(samples(seconds))
+        gen = np.random.default_rng(seed)
+        for _ in range(density):
+            length = samples(gen.uniform(0.05, 0.14))
+            start = int(gen.uniform(0.0, 0.88) ** 1.3 * len(out))
+            m = np.arange(length) / RATE
+            f = gen.uniform(900, 2600)
+            piece = sum(np.sin(2.0 * np.pi * f * r * m) * g for r, g in ((1.0, 1.0), (1.51, 0.55), (2.37, 0.35))) * np.exp(-m * gen.uniform(30, 70))
+            end = min(start + length, len(out))
+            out[start:end] += piece[:end - start] * gen.uniform(0.2, 0.7)
+        out = lowpass(out, 2600)
+        return stereo(out * 0.5, float(gen.uniform(-0.6, 0.6)))
+    return _cached(('chains', seconds, seed, density), make)
+
+
+def reverse(sound):
+    """Rückwärts gespielt (für das rückwärts geschichtete Uhrwerk)."""
+    return sound[::-1].copy()
+
+
 # --- Mischpult -------------------------------------------------------------------------------------------------
 
 
@@ -343,10 +462,16 @@ def impulse(seconds=2.9, seed=41):
 
 
 class Mix:
-    """Kreisförmiger Puffer: was über das Ende hinausragt, läuft am Anfang weiter. So schließt jede Schleife nahtlos."""
+    """Kreisförmiger Puffer: was über das Ende hinausragt, läuft am Anfang weiter. So schließt jede Schleife nahtlos.
 
-    def __init__(self, seconds):
+    Mit loop=False (Stinger, Abspann) wird abgeschnitten statt gefaltet, der Hall läuft linear und am Ende blendet
+    das Stück in `tail` Sekunden aus.
+    """
+
+    def __init__(self, seconds, loop=True, tail=0.6):
         self.n = samples(seconds)
+        self.loop = loop
+        self.tail = tail
         self.dry = np.zeros((self.n, 2))
         self.wet = np.zeros((self.n, 2))
 
@@ -367,13 +492,16 @@ class Mix:
                 buffer[at:at + len(piece)] += piece * amount
                 remaining = remaining[room:]
                 at = 0
+                if not self.loop:
+                    break
 
     def render(self, wet_gain=1.0, peak=0.89, target_rms=0.125):
         # Kreisfaltung: auch der Nachhall läuft über die Schleifengrenze hinweg.
         room = impulse()
-        spectrum_l = np.fft.rfft(self.wet[:, 0]) * np.fft.rfft(room[:, 0], self.n)
-        spectrum_r = np.fft.rfft(self.wet[:, 1]) * np.fft.rfft(room[:, 1], self.n)
-        wet = np.stack([np.fft.irfft(spectrum_l, self.n), np.fft.irfft(spectrum_r, self.n)], axis=1)
+        size = self.n if self.loop else self.n + len(room)
+        spectrum_l = np.fft.rfft(self.wet[:, 0], size) * np.fft.rfft(room[:, 0], size)
+        spectrum_r = np.fft.rfft(self.wet[:, 1], size) * np.fft.rfft(room[:, 1], size)
+        wet = np.stack([np.fft.irfft(spectrum_l, size)[:self.n], np.fft.irfft(spectrum_r, size)[:self.n]], axis=1)
         out = self.dry + wet * wet_gain
         out -= np.mean(out, axis=0)
         # Tiefen zurücknehmen und Präsenz anheben, sonst deckt der Bass die Melodie auf kleinen Boxen und Kopfhörern zu.
@@ -385,6 +513,10 @@ class Mix:
         # Sanft begrenzen, damit Taiko und Blech gemeinsam nicht clippen.
         out = np.tanh(out / np.max(np.abs(out)) * 1.5) / np.tanh(1.5)
         # Auf gleiche Lautheit bringen: laut genug für einen Kampf, aber die Klangeffekte müssen durchkommen.
+        if not self.loop:
+            fade = min(samples(self.tail), self.n)
+            out[-fade:] *= (np.linspace(1.0, 0.0, fade) ** 1.6)[:, None]
+            out[:samples(0.004)] *= np.linspace(0.0, 1.0, samples(0.004))[:, None]
         rms = float(np.sqrt(np.mean(out * out)))
         return out * min(peak, target_rms / rms)
 
@@ -404,4 +536,46 @@ def encode(path, data, quality=4, peak=None):
         w.setframerate(RATE)
         w.writeframes(pcm.tobytes())
     subprocess.run([shutil.which('ffmpeg'), '-hide_banner', '-loglevel', 'error', '-y', '-i', tmp, '-c:a', 'libvorbis', '-q:a', str(quality), path], check=True)
+    os.remove(tmp)
+
+
+def encode_budget(path, data, max_bytes, qualities=(3, 2, 1, 0, -1)):
+    """Kodiert wie `encode` und senkt die Vorbis-Qualität, bis die Datei höchstens max_bytes groß ist.
+
+    Liefert (Qualität, Bytes). Passt auch die niedrigste Stufe nicht, bleibt sie stehen (der Aufrufer meldet es).
+    """
+    for q in qualities:
+        encode(path, data, quality=q)
+        size = os.path.getsize(path)
+        if size <= max_bytes:
+            return q, size
+    return qualities[-1], os.path.getsize(path)
+
+
+def check(data):
+    """Kennzahlen zum Prüfen: Länge (s), Spitze, RMS, Anteil geclippter Samples, Sprung an der Schleifennaht."""
+    peak = float(np.max(np.abs(data)))
+    rms = float(np.sqrt(np.mean(data * data)))
+    clipped = float(np.mean(np.abs(data) >= 0.999))
+    # Naht: Sprung vom letzten zum ersten Sample im Verhältnis zum größten Sprung zwischen Nachbarn im ganzen Stück
+    # (< 1: die Naht ist nicht größer als jeder Einsatz im Stück, etwa ein Trommelschlag auf der Eins).
+    steps = np.abs(np.diff(data, axis=0))
+    seam = float(np.max(np.abs(data[0] - data[-1]))) / (float(np.max(steps)) + 1e-9)
+    return {'seconds': len(data) / RATE, 'peak': peak, 'rms': rms, 'clipped': clipped, 'seam': seam}
+
+
+def spectrogram_png(path, data, width=1200, height=360):
+    """Spektrogramm als PNG über ffmpeg (showspectrumpic), zum Ansehen ohne Abspielen."""
+    pcm = (np.clip(data, -1.0, 1.0) * 32767.0).astype(np.int16)
+    channels = 1 if data.ndim == 1 else 2
+    handle, tmp = tempfile.mkstemp(suffix='.wav')
+    os.close(handle)
+    with wave.open(tmp, 'wb') as w:
+        w.setnchannels(channels)
+        w.setsampwidth(2)
+        w.setframerate(RATE)
+        w.writeframes(pcm.tobytes())
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    subprocess.run([shutil.which('ffmpeg'), '-hide_banner', '-loglevel', 'error', '-y', '-i', tmp, '-lavfi',
+                    f'showspectrumpic=s={width}x{height}:mode=combined:scale=log:legend=1', path], check=True)
     os.remove(tmp)

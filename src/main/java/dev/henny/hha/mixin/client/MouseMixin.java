@@ -13,7 +13,7 @@ public abstract class MouseMixin {
 
     @Inject(method = "updateMouse", at = @At("HEAD"), cancellable = true)
     private void hha$freezeLook(double timeDelta, CallbackInfo ci) {
-        if (CinePlayer.getActive()) {
+        if (CinePlayer.isInputLocked()) {
             ci.cancel();
         }
     }

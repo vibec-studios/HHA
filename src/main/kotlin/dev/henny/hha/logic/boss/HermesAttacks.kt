@@ -9,12 +9,14 @@ import dev.henny.hha.entity.boss.HermesPose
 import dev.henny.hha.entity.boss.SerpentEntity
 import dev.henny.hha.logic.Fx
 import dev.henny.hha.logic.Vfx
+import net.minecraft.entity.Entity
 import net.minecraft.entity.SpawnReason
 import net.minecraft.entity.damage.DamageSource
 import net.minecraft.entity.effect.StatusEffectCategory
 import net.minecraft.entity.effect.StatusEffectInstance
 import net.minecraft.particle.ParticleTypes
 import net.minecraft.server.network.ServerPlayerEntity
+import net.minecraft.server.world.ServerWorld
 import net.minecraft.sound.SoundEvents
 import net.minecraft.util.math.Vec3d
 import java.util.UUID
@@ -23,6 +25,83 @@ import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
+
+/**
+ * Bilder der Hermes-Angriffe (Überarbeitung 3, P07, PLAN 2.4): Text-IDs `hermes.*`, am Client in
+ * `client/vfx/fx/boss/HermesFx.kt` gezeichnet. Nur Darstellung: keine Zeit, kein Schaden, keine Fläche hängt daran.
+ * Alles geht über [BossFx.play] (stumm beim Vorspulen, Gefahrenpalette im Kampf).
+ */
+internal object HermesLook {
+    const val STREAK = "hermes.streak"
+    const val LANE = "hermes.lane"
+    const val STAR = "hermes.star"
+
+    /** Höhe der Lichtbahn über den Füßen des Läufers (Körpermitte von Hermes, Modell 2,7 Blöcke). */
+    const val BODY_LIFT = 1.3f
+
+    /** Halbe Breite der Stoß-Lichtbahn. */
+    const val STREAK_WIDTH = 0.45f
+
+    /** Nachlauf der Lichtbahn nach dem Ende des Fluges (Schweif holt auf, Funken). Spiegelt `StreakFx`. */
+    const val STREAK_TAIL = 20
+
+    /** Kielwasser der Schlangen: halbe Breite, Höhe über der Bahn (Kopfhöhe), Ausblenden. */
+    const val LANE_WIDTH = 0.28f
+    const val LANE_LIFT = 0.45f
+    const val LANE_FADE = 8
+
+    /** Lichtstern am Ziel des Blinzelns. */
+    const val STAR_SIZE = 1.5f
+    const val STAR_LIFE = 12
+
+    /** Kleines, schließendes Portal am Start des Blinzelns bzw. beim Auflösen eines Trugbilds. */
+    const val PORTAL_RADIUS = 1.1f
+    const val PORTAL_LIFE = 16
+    const val DISSOLVE_RADIUS = 1.4f
+    const val DISSOLVE_LIFE = 18
+
+    /**
+     * `hermes.streak`: gerade Lichtbahn von [from] nach [to]; der Kopf sitzt am Läufer [runner]. [ticks] = Flugzeit
+     * (Rückfall am Client, solange das Wesen fehlt). pos = from, dir = to, a = Breite, b = ticks, c = Höhe.
+     */
+    fun streak(world: ServerWorld, style: Vfx.Style, runner: Entity, from: Vec3d, to: Vec3d, ticks: Int, width: Float = STREAK_WIDTH) =
+        BossFx.play(
+            world, STREAK, style, from, to, a = width, b = ticks.coerceAtLeast(1).toFloat(), c = BODY_LIFT,
+            life = ticks.coerceAtLeast(1) + STREAK_TAIL, entity = runner,
+        )
+
+    /** Flugzeit einer geraden Bahn mit [speed] Blöcken je Tick (wie `dashTask`: Schritte bis zur Länge). */
+    fun ticksFor(from: Vec3d, to: Vec3d, speed: Double): Int =
+        kotlin.math.ceil(Vec3d(to.x - from.x, 0.0, to.z - from.z).length() / speed).toInt().coerceAtLeast(1)
+
+    /**
+     * `hermes.lane`: Kielwasser einer Schlange **auf denselben Stützpunkten** [lane], auf denen der Server den Kopf
+     * bewegt ([out] Ticks hinaus, [back] zurück). pos = erster Punkt, a = Breite, b = Höhe, c = out, d = back,
+     * extra = Punkte.
+     */
+    fun lane(world: ServerWorld, style: Vfx.Style, lane: List<Vec3d>, out: Int, back: Int) =
+        BossFx.play(
+            world, LANE, style, lane.first(), a = LANE_WIDTH, b = LANE_LIFT, c = out.toFloat(), d = back.toFloat(),
+            life = out + back + LANE_FADE,
+            extra = lane.joinToString(";") { String.format(java.util.Locale.ROOT, "%.2f,%.2f,%.2f", it.x, it.y, it.z) },
+        )
+
+    /** `hermes.star`: kurzer Lichtstern bei [at]. */
+    fun star(world: ServerWorld, style: Vfx.Style, at: Vec3d, size: Float = STAR_SIZE, life: Int = STAR_LIFE) =
+        BossFx.play(world, STAR, style, at, a = size, life = life)
+
+    /** Kleines Portal, das sich schließt (Blinzeln: Start), stehend, mit Blick in [facing]. */
+    fun portal(world: ServerWorld, style: Vfx.Style, at: Vec3d, facing: Vec3d) =
+        BossFx.swirl(world, style, at, if (facing.lengthSquared() < 1e-6) Vec3d(0.0, 0.0, 1.0) else facing, PORTAL_RADIUS, PORTAL_LIFE, closing = true)
+
+    /** Ein Trugbild löst sich auf: schließender Wirbel und eine kleine Federwolke (dort fliegen wirklich Federn). */
+    fun dissolve(world: ServerWorld, style: Vfx.Style, body: Vec3d) {
+        BossFx.swirl(world, style, body, Vec3d(0.0, 1.0, 0.0), DISSOLVE_RADIUS, DISSOLVE_LIFE, closing = true)
+        Vfx.feathers(world, style, body, DISSOLVE_FEATHERS, 0.9f, 26)
+    }
+
+    const val DISSOLVE_FEATHERS = 8
+}
 
 /**
  * Das Kampfrepertoire von Hermes (Plan 4.2): je Stage eine **feste Reihenfolge**.
@@ -125,7 +204,7 @@ class HermesAttacks(private val fight: HermesFight) {
             guard.counterHit(target)
         }
         boss.pose = HermesPose.ASCEND
-        Vfx.trail(world, style, boss, 0.7f, 12)
+        HermesLook.streak(world, style, boss, from, from.add(0.0, H.COUNTER_HEIGHT, 0.0), H.COUNTER_RISE)
         fight.sound(HhaSounds.DASH, from, 2.2f, 1.3f)
         flyTo(from.add(0.0, H.COUNTER_HEIGHT, 0.0), H.COUNTER_RISE, smooth = false)
         guard.endCounter()
@@ -141,7 +220,7 @@ class HermesAttacks(private val fight: HermesFight) {
     /** Trugbilder zerplatzen beim ersten Treffer in einer Federwolke. */
     fun onIllusionStruck(entity: HermesEntity, source: DamageSource) {
         val pos = entity.entityPos
-        Vfx.feathers(world, style, pos.add(0.0, 1.5, 0.0), 18, 1.3f, 32)
+        HermesLook.dissolve(world, style, pos.add(0.0, 1.5, 0.0))
         fight.sound(HhaSounds.BLINK, pos, 1.5f, 1.3f)
         (source.attacker as? ServerPlayerEntity)?.let { fight.hint("hha.hermes.hint.fake", listOf(it)) }
         fight.illusions.remove(entity)
@@ -156,7 +235,7 @@ class HermesAttacks(private val fight: HermesFight) {
         fight.sound(HhaSounds.HIT, entity.entityPos.add(0.0, 1.5, 0.0), 1.6f, 0.9f + world.random.nextFloat() * 0.25f)
         if (fight.illusions.isNotEmpty()) {
             for (illusion in fight.illusions) {
-                Vfx.feathers(world, style, illusion.entityPos.add(0.0, 1.5, 0.0), 14, 1.1f, 30)
+                HermesLook.dissolve(world, style, illusion.entityPos.add(0.0, 1.5, 0.0))
                 illusion.discard()
             }
             fight.illusions.clear()
@@ -234,11 +313,16 @@ class HermesAttacks(private val fight: HermesFight) {
         if (boss.entityPos.squaredDistanceTo(spot) > 0.25) flyTo(spot, H.LAND)
     }
 
-    /** Blinzelt an einen neuen Ort: Federn am Start, ein Flare am Ziel (Plan 3.4). */
+    /**
+     * Blinzelt an einen neuen Ort (PLAN 2.4): am Start ein kleines Portal, das sich schließt, und die einzige Federwolke,
+     * am Ziel ein kurzer Lichtstern.
+     */
     private fun blink(entity: HermesEntity, to: Vec3d) {
-        Vfx.feathers(world, style, entity.entityPos.add(0.0, 1.5, 0.0), 12, 1.1f, 26)
+        val start = entity.entityPos.add(0.0, 1.5, 0.0)
+        HermesLook.portal(world, style, start, flat(to.subtract(entity.entityPos)))
+        Vfx.feathers(world, style, start, BLINK_FEATHERS, 1.0f, 26)
         entity.setPosition(to)
-        Vfx.flare(world, style, to.add(0.0, 1.5, 0.0), 2.6f, 8)
+        HermesLook.star(world, style, to.add(0.0, 1.5, 0.0))
         fight.sound(HhaSounds.BLINK, to, 1.8f, 1f)
     }
 
@@ -321,7 +405,8 @@ class HermesAttacks(private val fight: HermesFight) {
     private fun stumble(): Sequence<Unit> = sequence {
         boss.setPosition(ground(boss.entityPos, 0.05))
         boss.pose = HermesPose.STUMBLE
-        Vfx.feathers(world, style, boss.entityPos.add(0.0, 1.2, 0.0), 14, 1.2f, 30)
+        // Er überschlägt sich: Hier fliegen wirklich Federn.
+        Vfx.feathers(world, style, boss.entityPos.add(0.0, 1.2, 0.0), STUMBLE_FEATHERS, 1.2f, 30)
         fight.sound(HhaSounds.IMPACT, boss.entityPos, 2f, 1.5f)
         fight.markOpen(H.STUMBLE_WINDOW)
         wait(H.STUMBLE_WINDOW)
@@ -354,8 +439,8 @@ class HermesAttacks(private val fight: HermesFight) {
     private fun dashTask(entity: HermesEntity, from: Vec3d, to: Vec3d, damage: Float): Sequence<Unit> = sequence {
         entity.pose = HermesPose.DASH
         fight.face(entity, to)
-        // Nur die Spur, keine Schockwelle (Plan 3.4).
-        Vfx.trail(world, style, entity, 0.7f, 24)
+        // Nur die Lichtbahn, keine Schockwelle (Plan 3.4; PLAN 2.4: Kopf am Läufer, Schweif getrennt, am Ende Funken).
+        HermesLook.streak(world, style, entity, from, to, HermesLook.ticksFor(from, to, H.DASH_SPEED))
         val way = heading(from, to)
         val side = way.crossProduct(Vec3d(0.0, 1.0, 0.0))
         val length = flat(to.subtract(from)).length()
@@ -475,7 +560,11 @@ class HermesAttacks(private val fight: HermesFight) {
             Fx.launchPlayer(target, heading(spot, target.entityPos).multiply(0.8).add(0.0, 0.95, 0.0))
         }
         Vfx.shockwave(world, style, spot, H.SLAM_RADIUS, 14, 2f)
-        telegraph.hitShake(spot, 3f)
+        // Beiwerk im Budget: Sprünge im Marmor innerhalb des Kreises (unter der folgenden Wellen-Ansage, die erst
+        // außerhalb beginnt) und ein paar echte Bodenblöcke; Ruck nach unten statt Rütteln.
+        BossFx.cracks(world, style, spot, H.SLAM_RADIUS * SLAM_CRACK_SHARE, SLAM_CRACKS, SLAM_CRACK_LIFE)
+        BossFx.debris(world, spot, SLAM_DEBRIS_RADIUS, SLAM_DEBRIS)
+        BossFx.kick(world, spot, SLAM_KICK)
         fight.sound(HhaSounds.IMPACT, spot, 3f, 1f)
         boss.pose = HermesPose.STUCK
         fight.markOpen(H.STUCK_WINDOW)
@@ -500,7 +589,7 @@ class HermesAttacks(private val fight: HermesFight) {
 
     private fun vanish(ghost: HermesEntity) {
         if (ghost.isRemoved) return
-        Vfx.feathers(world, style, ghost.entityPos.add(0.0, 1.5, 0.0), 12, 1f, 30)
+        HermesLook.dissolve(world, style, ghost.entityPos.add(0.0, 1.5, 0.0))
         ghost.discard()
         fight.illusions.remove(ghost)
     }
@@ -614,7 +703,8 @@ class HermesAttacks(private val fight: HermesFight) {
             val lines = rays.map { (a, b) -> group.line(a, b, H.CROSS_WIDTH, H.CROSS_WINDUP) }
             fight.sound(HhaSounds.CHARGE, center, 2f, 0.9f + wave * 0.1f)
             wait(group.ticks)
-            for ((a, b) in rays) Vfx.beam(world, style, a.add(0.0, 0.8, 0.0), b.add(0.0, 0.8, 0.0), 0.8f, 10)
+            // Je Bahn ein flacher Energiebogen (PLAN 2.4 statt Strahl); kaum gebogen, damit er über der Linie bleibt.
+            for ((a, b) in rays) BossFx.arc(world, style, a.add(0.0, 0.8, 0.0), b.add(0.0, 0.8, 0.0), CROSS_ARC_BEND, CROSS_ARC_WIDTH, CROSS_ARC_LIFE, strands = 2)
             val struck = LinkedHashSet<ServerPlayerEntity>()
             for (line in lines) for (p in line.hits(fight.targets())) struck.add(p)
             for (p in struck) fight.hurt(p, Dmg.CROSS)
@@ -700,7 +790,9 @@ class HermesAttacks(private val fight: HermesFight) {
             // Abgestürzt: Er taumelt am Boden, offen für einen Konter.
             boss.pose = HermesPose.FALL
             flyTo(ground(fall, 0.05), H.HERMA_CRASH, smooth = false)
-            Vfx.feathers(world, style, boss.entityPos.add(0.0, 1.0, 0.0), 16, 1.4f, 30)
+            // Absturz auf den Marmor: Federn stieben, ein paar Bodenblöcke springen.
+            Vfx.feathers(world, style, boss.entityPos.add(0.0, 1.0, 0.0), STUMBLE_FEATHERS, 1.4f, 30)
+            BossFx.debris(world, ground(fall), CRASH_DEBRIS_RADIUS, CRASH_DEBRIS)
             fight.sound(HhaSounds.IMPACT, fall, 3f, 1.4f)
             boss.pose = HermesPose.STAGGER
             fight.hint("hha.hermes.hint.stagger")
@@ -719,7 +811,9 @@ class HermesAttacks(private val fight: HermesFight) {
         for (stone in fight.stones.toList()) {
             wait(H.HERMA_DECAY)
             if (stone.isRemoved) continue
-            Fx.burst(world, ParticleTypes.POOF, stone.entityPos.add(0.0, 1.6, 0.0), 12, 0.6, 0.04)
+            // Der Stein zerspringt in echte Marmorbrocken (PLAN 2.4, `core.debris`).
+            BossFx.debris(world, ground(stone.entityPos), HERMA_DEBRIS_RADIUS, HERMA_DEBRIS)
+            Fx.burst(world, ParticleTypes.POOF, stone.entityPos.add(0.0, 1.6, 0.0), 6, 0.6, 0.04)
             fight.sound(SoundEvents.BLOCK_STONE_BREAK, stone.entityPos, 1.6f, 0.8f)
             stone.discard()
             fight.stones.remove(stone)
@@ -781,6 +875,7 @@ class HermesAttacks(private val fight: HermesFight) {
         boss.pose = HermesPose.PLANT
         wait(H.TWINS_PLANT_STRIKE)
         Fx.burst(world, ParticleTypes.CLOUD, staff.add(0.0, 0.2, 0.0), 12, 0.5, 0.04)
+        BossFx.cracks(world, style, staff, PLANT_CRACK_RADIUS, PLANT_CRACKS, PLANT_CRACK_LIFE)
         fight.sound(HhaSounds.IMPACT, staff, 2.4f, 1.2f)
         wait(H.TWINS_PLANT - H.TWINS_PLANT_STRIKE)
         fight.hint("hha.hermes.hint.serpents")
@@ -798,6 +893,8 @@ class HermesAttacks(private val fight: HermesFight) {
             val travel = H.TWINS_OUT + H.TWINS_BACK
             for (lane in lanes) laneLines(group, lane, travel)
             val serpents = fight.spawnSerpents(staff.add(0.0, SERPENT_HEIGHT, 0.0))
+            // Kielwasser auf genau den Stützpunkten, auf denen moveSerpent die Köpfe bewegt.
+            for (lane in lanes) HermesLook.lane(world, style, lane, H.TWINS_OUT, H.TWINS_BACK)
             fight.sound(HhaSounds.ROAR, staff, 2.4f, 1.3f)
             val hits = List(serpents.size) { HashSet<UUID>() }
             for (k in 1..H.TWINS_OUT) {
@@ -976,7 +1073,7 @@ class HermesAttacks(private val fight: HermesFight) {
             val wave = group.ring(spot, H.DIVE_WAVE_RADIUS, H.DIVE_WINDUP + H.DIVE_DROP, inner = H.DIVE_RADIUS)
             fight.sound(HhaSounds.CHARGE, spot, 2f, 1.3f)
             wait(circle.ticks - H.DIVE_DROP)
-            Vfx.trail(world, style, boss, 0.8f, 10)
+            HermesLook.streak(world, style, boss, boss.entityPos, ground(spot, 0.1), H.DIVE_DROP)
             flyTo(ground(spot, 0.1), H.DIVE_DROP, smooth = false)
             for (target in circle.hits(fight.targets())) {
                 fight.hurt(target, Dmg.DIVE, reach = BossDefense.Reach.SKY)
@@ -984,6 +1081,7 @@ class HermesAttacks(private val fight: HermesFight) {
             }
             // Eine Schockwelle trägt Einschlag und Bodenwelle; Rütteln entfällt, weil der Wellenring noch angesagt ist.
             Vfx.shockwave(world, style, spot, H.DIVE_WAVE_RADIUS, H.DIVE_WAVE_TRAVEL, 2f)
+            BossFx.debris(world, spot, IMPACT_DEBRIS_RADIUS, IMPACT_DEBRIS)
             fight.sound(HhaSounds.IMPACT, spot, 3f, 1.1f)
             fight.runTask(groundWave(spot, H.DIVE_RADIUS.toDouble(), H.DIVE_WAVE_RADIUS.toDouble(), (wave.ticks - circle.ticks).coerceAtLeast(0), H.DIVE_WAVE_TRAVEL, Dmg.DIVE_WAVE, effect = false))
             wait(H.DIVE_GAP)
@@ -1004,7 +1102,9 @@ class HermesAttacks(private val fight: HermesFight) {
             val spots = fight.targets().map { fight.clampToArena(ground(it.entityPos)) }
             if (spots.isEmpty()) break
             val circles = spots.map { spot ->
-                Vfx.spear(world, style, spot, 60f, 1f, windup)
+                // Riss in der Wolkendecke, dann der Speer (PLAN 2.4): vor dem Riss nichts (die Ansage gehört dem
+                // Telegraph); der Strahl trifft genau `delay + SKY_IMPACT_AFTER` = windup Ticks nach diesem Aufruf.
+                BossFx.skyStrike(world, style, spot, SPEAR_STRIKE_RADIUS, SPEAR_STRIKE_HEIGHT, (windup - SKY_IMPACT_AFTER).coerceAtLeast(0))
                 group.ring(spot, H.SPEAR_RADIUS, windup)
             }
             fight.sound(HhaSounds.RIFT, center, 2.6f, 0.7f)
@@ -1014,9 +1114,10 @@ class HermesAttacks(private val fight: HermesFight) {
                     fight.hurt(target, Dmg.SPEAR, reach = BossDefense.Reach.SKY)
                     Fx.launchPlayer(target, heading(circle.center, target.entityPos).multiply(1.1).add(0.0, 0.8, 0.0))
                 }
-                Vfx.shockwave(world, style, circle.center, H.SPEAR_RADIUS, 16, 3f)
+                // Der Flächeneffekt ist der Himmelsschlag (impact); dazu vier echte Marmorblöcke.
+                BossFx.debris(world, circle.center, IMPACT_DEBRIS_RADIUS, IMPACT_DEBRIS)
             }
-            telegraph.hitShake(spots.first(), 4f)
+            BossFx.kick(world, spots.first(), SPEAR_KICK)
             fight.sound(HhaSounds.IMPACT, spots.first(), 4f, 0.7f)
             for (circle in circles) {
                 val wave = group.ring(circle.center, H.SPEAR_WAVE_RADIUS, H.SPEAR_WAVE_WINDUP, inner = H.SPEAR_RADIUS)
@@ -1127,6 +1228,36 @@ class HermesAttacks(private val fight: HermesFight) {
         const val BEAM_HEIGHT = 1.0
         const val FINAL_COOLDOWN = 10
         const val EXHAUST_LIFT = 3.0
+
+        // Überarbeitung 3 (P07): reine Darstellung (Anzahl, Größen, Ruck-Winkel). Keine Zeit, keine Trefferfläche.
+        const val BLINK_FEATHERS = 8
+        const val STUMBLE_FEATHERS = 10
+        const val SLAM_CRACK_SHARE = 0.85f
+        const val SLAM_CRACKS = 5
+        const val SLAM_CRACK_LIFE = 50
+        const val SLAM_DEBRIS_RADIUS = 3.2f
+        const val SLAM_DEBRIS = 6
+        /** Ruck nach unten (Grad) beim Sturmschlag; ersetzt `hitShake(3)`. */
+        const val SLAM_KICK = 1.8f
+        const val CROSS_ARC_BEND = 0.05f
+        const val CROSS_ARC_WIDTH = 0.8f
+        const val CROSS_ARC_LIFE = 9
+        const val CRASH_DEBRIS_RADIUS = 2.2f
+        const val CRASH_DEBRIS = 4
+        const val HERMA_DEBRIS_RADIUS = 1.4f
+        const val HERMA_DEBRIS = 5
+        const val PLANT_CRACK_RADIUS = 2.4f
+        const val PLANT_CRACKS = 4
+        const val PLANT_CRACK_LIFE = 50
+        /** PLAN 2.4: „4 Marmorblöcke“ bei Sturzflug und Speer. */
+        const val IMPACT_DEBRIS = 4
+        const val IMPACT_DEBRIS_RADIUS = 3.0f
+        const val SPEAR_STRIKE_RADIUS = 2.2f
+        const val SPEAR_STRIKE_HEIGHT = 40f
+        /** `SkyStrikeFx.IMPACT_AFTER` (P03): Riss + Strahl brauchen so viele Ticks nach `delay`. */
+        const val SKY_IMPACT_AFTER = 6
+        /** Ruck nach unten (Grad) beim Einschlag der Speere; ersetzt `hitShake(4)` (PLAN 2.4: 2°). */
+        const val SPEAR_KICK = 2f
     }
 }
 

@@ -30,7 +30,16 @@ Choose your side: the radiant **Heaven Set** with golden trims and holy light, o
 - **Readable duels**: every attack is announced on the floor, gold always means safe or open, at most one room hazard at a time, no summoned adds, no loss of control. Bosses scale with the number of players and **counter repeated mace smashes** from above
 - **Relics**: every piece of the Heaven and Hell sets drops exactly once per world, spread over the bosses; a second win gives ingots instead. Smithing the set pieces is off by default (`relic_crafting`)
 - **Enemies of Olympus**: Curetes with shields, griffins diving from their columns and golden automatons that wake up when you come close
+- **Boss presentation (third overhaul)**: every attack has its own smooth effect (light trails, rifts in the sky, real flying floor blocks, glowing cracks), hits turn the camera slightly instead of shaking it, and intros, phase changes and defeats play as staged, skippable cutscenes with a guided camera. Each boss has a theme per phase with smooth crossfades and a victory stinger. Screen effects such as Hekate's eclipse, Kronos' time stop and his gravity lens can be turned off (`/hhac toggle screen_fx`). Fight numbers are unchanged
 - Docs: [Olympus](docs/olymp.md), [Tartarus](docs/tartaros.md), [bosses in general](docs/bosse-allgemein.md) (German)
+
+## RPG mode
+
+- **HHA RPG** in the main menu starts a group adventure as its own game ([docs](docs/rpg.md), German): the lobby is a tunnel of light in which your group floats with skins and the armor of the chosen path (Heaven or Hell); friends join with a six-letter code
+- **No loading screens**: after "Depart" the tunnel keeps running over world creation and connection, everyone waits in the tunnel and lands together in an arrival cutscene
+- **A story in chapters** with goals, a direction arrow, chapter cards and island cutscenes, from Hermes to Zeus and down through Tartarus to Kronos, ending with credits
+- **Own HUD, journal (J), pause menu, death and rest screens** in the style of the control center; rests heal you and set your respawn, no hunger by default, bosses slightly gentler (`rpg_boss_health`, `rpg_boss_damage`)
+- Only in RPG worlds; normal worlds play exactly as before. Addons can add their own paths (`HhaRpg.Path` with costume and arrival)
 
 ## Requirements
 

@@ -1,15 +1,18 @@
 package dev.henny.hha.client.model
 
+import dev.henny.hha.client.anim.PoseMemory
+import dev.henny.hha.client.anim.Spring
+import dev.henny.hha.client.cine.CinePlayer
 import dev.henny.hha.entity.boss.olymp.HekateAction
 import dev.henny.hha.logic.boss.timings.HekateTimings
 import net.minecraft.client.MinecraftClient
 import net.minecraft.client.model.ModelPart
 import net.minecraft.client.util.math.MatrixStack
+import net.minecraft.util.math.MathHelper
 import net.minecraft.util.math.Vec3d
 import org.joml.Vector3f
 import kotlin.math.PI
-import kotlin.math.abs
-import kotlin.math.exp
+import kotlin.math.cos
 import kotlin.math.sin
 
 /**
@@ -25,13 +28,24 @@ import kotlin.math.sin
  * Der Kopf zeigt das Gesicht der Phase (`state.phase`: 0 Fackel, 1 Schlüssel, 2 Dolch) und dreht in [TURN] Ticks
  * dorthin; in der Dreigestalt das Gesicht der Gestalt (`state.form`). Die Schleier drehen gegen, damit sie hinten
  * bleiben. Das Trugbild (`state.echo`) unterscheidet sich nur durch die Textur, die der Renderer wählt.
+ *
+ * Überarbeitung 3 (P08, PLAN 2.1 Punkt 3), Zustand je Wesen in [Memory] (Map nach `entityId`, vergisst Wesen nach
+ * 200 Ticks ohne Bild):
+ * - **Überblenden aus der gezeigten Pose** über [PoseMemory] ([FADE] Ticks) statt aus „vorige Aktion bei ihrem Alter“;
+ *   zwei schnelle Wechsel hintereinander springen nicht mehr.
+ * - **Nachschwingen mit [Spring]:** Schleier (Nicken aus dem Tempo, Rollen aus der Drehrate) und beide Fackelflammen
+ *   (neigen sich gegen Drehung und Gleiten); Stöße beim Treffer jeder Aktion ([hitTicks]).
+ * - **Lippen:** Der Mund des vorderen Gesichts folgt `CinePlayer.mouthOf` (geglättet), solange sie spricht.
+ * - **Fackelanker:** [flameAnchor] legt die Weltlage beider Fackelköpfe in [HekateTorches] ab (für `HekateFx`).
  */
 class HekateModel(root: ModelPart) : GuardianModel(root) {
     private val parts: Array<ModelPart>
     private val rest: FloatArray
     private val base: FloatArray
     private val mixed: FloatArray
-    private val fadeFrom: FloatArray
+
+    /** Zielpose der Zeitleiste, bevor [PoseMemory] überblendet. */
+    private val target: FloatArray
 
     init {
         parts = Array(BONES.size) { i ->
@@ -47,7 +61,7 @@ class HekateModel(root: ModelPart) : GuardianModel(root) {
         }
         base = FloatArray(parts.size * 6)
         mixed = FloatArray(parts.size * 6)
-        fadeFrom = FloatArray(parts.size * 6)
+        target = FloatArray(parts.size * 6)
     }
 
     private fun bone(name: String) = parts[BONES.indexOfFirst { it == name || it.endsWith("/$name") }]
@@ -61,6 +75,7 @@ class HekateModel(root: ModelPart) : GuardianModel(root) {
     private val foreR = bone("fore_r")
     private val torchR = bone("torch_r")
     private val armL = bone("arm_l")
+    private val foreL = bone("fore_l")
     private val torchL = bone("torch_l")
     private val skirt = arrayOf(bone("skirt_0"), bone("skirt_1"), bone("skirt_2"))
     private val flameR = torchR.getChild("torch_r_flame")
@@ -74,13 +89,29 @@ class HekateModel(root: ModelPart) : GuardianModel(root) {
     /** Ein Schlüsselbild der Zeitleiste: ab [at] Ticks gilt [pose] (null = Ruhe); [hard] = Schlag (beschleunigt). */
     private class Key(val at: Float, val pose: FloatArray?, val hard: Boolean = false)
 
-    /** Geglätteter Kopf je Wesen: von welchem Gesicht zu welchem und seit wann. */
-    private class Memory {
+    /** Zustand je Wesen: Kopf (von welchem Gesicht zu welchem, seit wann), Pose, Federn, Bewegung, Mund. */
+    private inner class Memory {
         var face = -1
         var from = 0f
         var to = 0f
         var since = 0f
         var seen = 0L
+
+        val pose = PoseMemory(parts.size * 6)
+        var lastAction = Int.MIN_VALUE
+        var lastActionTime = 0f
+
+        /** Letztes Bild (Alter, Lage, Körperdrehung) für Tempo und Drehrate. */
+        var lastAge = Float.NaN
+        var lastX = 0.0
+        var lastZ = 0.0
+        var lastYaw = 0f
+
+        val veilPitch = Spring(VEIL_FREQ, VEIL_DAMP)
+        val veilRoll = Spring(VEIL_FREQ * 0.85f, VEIL_DAMP)
+        val flameR = Spring(FLAME_FREQ, FLAME_DAMP)
+        val flameL = Spring(FLAME_FREQ * 1.1f, FLAME_DAMP)
+        val mouth = Spring(MOUTH_FREQ, 1f)
     }
 
     private val memories = HashMap<Int, Memory>()
@@ -96,18 +127,20 @@ class HekateModel(root: ModelPart) : GuardianModel(root) {
         body.visible = true
         torchR.visible = true
         torchL.visible = true
-        for (m in mouths) m.visible = false
-
-        // --- Schlüsselposen, beim Wechsel mitten in einer Bewegung weich übergeblendet ----------------------------------
-        capture()
-        val fade = if (state.previousAction != act && state.previousAction != 0) 1f - step(a, 0f, FADE) else 0f
-        if (fade > 0f) {
-            timeline(state.previousAction, state.previousTime, state.form)
-            snapshot(fadeFrom)
-            restore()
+        for (m in mouths) {
+            m.visible = false
+            m.yScale = 1f
         }
+        val mem = memory(state.entityId)
+        val dt = if (mem.lastAge.isNaN()) 0f else (t - mem.lastAge).coerceIn(0f, 4f)
+
+        // --- Schlüsselposen, Überblendung aus der zuletzt gezeigten Pose (PoseMemory) -----------------------------------
+        capture()
         timeline(act, a, state.form)
-        if (fade > 0f) mixFrom(fadeFrom, fade)
+        snapshot(target)
+        val restart = act == mem.lastAction && a + 0.5f < mem.lastActionTime
+        val shown = mem.pose.blend(act, target, t, FADE, restart)
+        apply(shown, 0f, shown)
 
         // --- Schweben: langsames Auf und Ab (± 2, 60 Ticks), beim Gleiten nach vorn geneigt, Saum schleift nach ------
         val grounded = if (act == HekateAction.STAGGER) window(a, 6f, T.STAGGER_END - 4f) else 0f
@@ -129,11 +162,12 @@ class HekateModel(root: ModelPart) : GuardianModel(root) {
         }
         flicker(flameR, t, 0f)
         flicker(flameL, t, 2.1f)
+        secondary(state, mem, dt)
 
         // --- Kopf: Gesicht der Phase bzw. der Gestalt, in der Dreigestalt einmal ganz herum ---------------------------
         val triform = act == HekateAction.TRIFORM && a < TRIFORM_END
         val face = if (triform) state.form.coerceIn(0, 2) else state.phase.coerceIn(0, 2)
-        var turn = faceYaw(state.entityId, face, t)
+        var turn = faceYaw(mem, face, t)
         if (triform) turn += TAU * step(a, 4f, T.TRIFORM_HIT - 2f)
         head.yaw += turn + state.relativeHeadYaw * DEG * 0.5f
         head.pitch += state.pitch * DEG * 0.4f
@@ -149,6 +183,76 @@ class HekateModel(root: ModelPart) : GuardianModel(root) {
                 for (m in mouths) m.visible = open
             }
         }
+
+        // --- Lippen: Mund des vorderen Gesichts zum Text (nur wenn er nicht ohnehin offen steht) ------------------------
+        val speak = mem.mouth.step(CinePlayer.mouthOf(state.entityId), dt)
+        val front = mouths[face]
+        if (speak > MOUTH_MIN && !front.visible && body.visible) {
+            val s = MOUTH_CLOSED + (1f - MOUTH_CLOSED) * speak.coerceIn(0f, 1f)
+            front.visible = true
+            front.yScale = s
+            front.originY += MOUTH_CENTER_Y * (1f - s)
+        }
+
+        mem.lastAction = act
+        mem.lastActionTime = a
+        mem.lastAge = t
+        mem.lastX = state.x
+        mem.lastZ = state.z
+        mem.lastYaw = state.bodyYaw
+    }
+
+    /**
+     * Nachschwingen (Federn je Wesen): Schleier nicken mit dem Gleit-Tempo nach vorn und rollen gegen die Drehung,
+     * die Fackelflammen neigen sich gegen Drehung und Tempo. Beim Treffer einer Aktion ([hitTicks]) bekommen alle einen
+     * Stoß. [dt] = Ticks seit dem letzten Bild (0 bei einem zweiten Aufruf im selben Bild: dann nur anwenden).
+     */
+    private fun secondary(state: GuardianRenderState, mem: Memory, dt: Float) {
+        var speed = 0f
+        var turn = 0f
+        if (dt > 0f) {
+            val yawRad = state.bodyYaw * DEG
+            val fx = -sin(yawRad)
+            val fz = cos(yawRad)
+            speed = (((state.x - mem.lastX) * fx + (state.z - mem.lastZ) * fz) / dt).toFloat().coerceIn(-0.6f, 0.6f)
+            turn = (MathHelper.wrapDegrees(state.bodyYaw - mem.lastYaw) * DEG / dt).coerceIn(-0.5f, 0.5f)
+            for (hit in hitTicks(state.action)) {
+                if (state.action == mem.lastAction && mem.lastActionTime < hit && state.actionTime >= hit) {
+                    val sign = if (state.action == HekateAction.TORCH_SWEEP && hit == T.SWEEP_HIT2_END.f) -1f else 1f
+                    mem.veilPitch.kick(HIT_KICK_VEIL)
+                    mem.veilRoll.kick(HIT_KICK_VEIL * 0.6f * sign)
+                    mem.flameR.kick(HIT_KICK_FLAME * sign)
+                    mem.flameL.kick(-HIT_KICK_FLAME * sign)
+                }
+            }
+        }
+        val vp = mem.veilPitch.step((speed * VEIL_SPEED).coerceIn(0f, VEIL_MAX), dt).coerceIn(-VEIL_MAX, VEIL_MAX)
+        val vr = mem.veilRoll.step((-turn * VEIL_TURN).coerceIn(-VEIL_MAX, VEIL_MAX), dt).coerceIn(-VEIL_MAX, VEIL_MAX)
+        val fr = mem.flameR.step((-turn * FLAME_TURN - speed * FLAME_SPEED).coerceIn(-FLAME_MAX, FLAME_MAX), dt).coerceIn(-FLAME_MAX, FLAME_MAX)
+        val fl = mem.flameL.step((-turn * FLAME_TURN - speed * FLAME_SPEED).coerceIn(-FLAME_MAX, FLAME_MAX), dt).coerceIn(-FLAME_MAX, FLAME_MAX)
+        for ((i, v) in veils.withIndex()) {
+            val side = if (i == 0) 1f else -1f
+            v.pitch += vp
+            v.roll += side * vr
+            veilsLow[i].pitch += (vp * VEIL_LOW).coerceIn(-VEIL_MAX, VEIL_MAX)
+        }
+        flameR.roll += fr
+        flameR.pitch += fr * 0.5f
+        flameL.roll += fl
+        flameL.pitch += fl * 0.5f
+    }
+
+    /** Treffer-Ticks der Aktion [act] (Ende des Schlags, Zeiten-Datei), für die Stöße der Federn. */
+    private fun hitTicks(act: Int): FloatArray = when (act) {
+        HekateAction.TORCH_SWEEP -> SWEEP_HITS
+        HekateAction.TORCH_THROW -> THROW_HITS
+        HekateAction.PATH -> PATH_HITS
+        HekateAction.KEY_TURN -> KEY_HITS
+        HekateAction.STEP -> STEP_HITS
+        HekateAction.TRIFORM -> TRIFORM_HITS
+        HekateAction.ECLIPSE -> ECLIPSE_HITS
+        HekateAction.HOWL -> HOWL_HITS
+        else -> NO_HITS
     }
 
     /** Spielt die Zeitleiste der Aktion [act] zur Zeit [a] (setzt die Knochen absolut, Basis = [base]). */
@@ -228,18 +332,24 @@ class HekateModel(root: ModelPart) : GuardianModel(root) {
         flame.pitch += sin(t * 0.55f + seed * 0.6f) * 0.05f
     }
 
-    /** Gesicht [face] (0, 1, 2) als Kopfdrehung; dreht in [TURN] Ticks vom letzten Gesicht dorthin (immer vorwärts). */
-    private fun faceYaw(id: Int, face: Int, t: Float): Float {
+    /** Zustand des Wesens [id]; vergisst Wesen, die 200 Ticks nicht gezeichnet wurden, und alles beim Weltwechsel. */
+    private fun memory(id: Int): Memory {
         val clientWorld = MinecraftClient.getInstance().world
         val worldId = System.identityHashCode(clientWorld)
         if (worldId != lastWorldId) {
             memories.clear()
+            HekateTorches.clear()
             lastWorldId = worldId
         }
         val now = clientWorld?.time ?: 0L
         memories.entries.removeIf { now < it.value.seen || now - it.value.seen > 200L }
         val m = memories.getOrPut(id) { Memory() }
         m.seen = now
+        return m
+    }
+
+    /** Gesicht [face] (0, 1, 2) als Kopfdrehung; dreht in [TURN] Ticks vom letzten Gesicht dorthin (immer vorwärts). */
+    private fun faceYaw(m: Memory, face: Int, t: Float): Float {
         val target = face * THIRD
         if (m.face < 0 || t < m.since) {
             m.face = face
@@ -264,10 +374,18 @@ class HekateModel(root: ModelPart) : GuardianModel(root) {
      * Feature-Renderern). Liefert null, wenn die Fackel nicht zu sehen ist oder das Wesen ein Trugbild ist (erloschen).
      */
     fun flameAnchor(matrices: MatrixStack, cam: Vec3d, state: GuardianRenderState): Vec3d? {
-        if (state.echo || !body.visible || !torchR.visible) return null
+        if (state.echo || !body.visible) return null
+        val right = if (torchR.visible) tip(matrices, cam, listOf(body, chest, armR, foreR, torchR, flameR)) else null
+        val left = if (torchL.visible) tip(matrices, cam, listOf(body, chest, armL, foreL, torchL, flameL)) else null
+        HekateTorches.put(state.entityId, right, left)
+        return right
+    }
+
+    /** Weltlage der Flammenmitte am Ende der Knochenkette [chain] ([matrices] im Modellraum). */
+    private fun tip(matrices: MatrixStack, cam: Vec3d, chain: List<ModelPart>): Vec3d {
         val scratch = Vector3f()
         matrices.push()
-        for (part in listOf(body, chest, armR, foreR, torchR, flameR)) part.applyTransform(matrices)
+        for (part in chain) part.applyTransform(matrices)
         matrices.peek().positionMatrix.transformPosition(FLAME_X / 16f, FLAME_Y / 16f, FLAME_Z / 16f, scratch)
         matrices.pop()
         return Vec3d(scratch.x + cam.x, scratch.y + cam.y, scratch.z + cam.z)
@@ -298,13 +416,6 @@ class HekateModel(root: ModelPart) : GuardianModel(root) {
         }
     }
 
-    private fun restore() = apply(base, 1f, base)
-
-    /** Mischt die aktuelle Lage mit [from] (Gewicht [k] für [from]). */
-    private fun mixFrom(from: FloatArray, k: Float) {
-        snapshot(mixed)
-        apply(from, k, mixed)
-    }
 
     /** Setzt alle Knochen auf `to + (from - to) * k`. */
     private fun apply(from: FloatArray, k: Float, to: FloatArray) {
@@ -363,7 +474,45 @@ class HekateModel(root: ModelPart) : GuardianModel(root) {
         val T = HekateTimings
         val Int.f get() = toFloat()
         const val SOFT = 7f
+        /** Überblendung aus der zuletzt gezeigten Pose (Ticks). */
         const val FADE = 6f
+
+        // --- Treffer-Ticks je Aktion (Ende des Schlags, aus HekateTimings) für die Stöße der Federn ---
+        val SWEEP_HITS = floatArrayOf(HekateTimings.SWEEP_HIT_END.toFloat(), HekateTimings.SWEEP_HIT2_END.toFloat())
+        val THROW_HITS = floatArrayOf(HekateTimings.THROW_HIT_END.toFloat())
+        val PATH_HITS = floatArrayOf(HekateTimings.PATH_HIT_END.toFloat())
+        val KEY_HITS = floatArrayOf(HekateTimings.KEY_HIT_END.toFloat())
+        val STEP_HITS = floatArrayOf(HekateTimings.STEP_HIT_END.toFloat())
+        val TRIFORM_HITS = floatArrayOf(HekateTimings.TRIFORM_HIT_END.toFloat())
+        val ECLIPSE_HITS = floatArrayOf(HekateTimings.ECLIPSE_HIT_END.toFloat())
+        val HOWL_HITS = floatArrayOf(HekateTimings.HOWL_HIT_END.toFloat())
+        val NO_HITS = FloatArray(0)
+
+        // --- Nachschwingen (Federn, rad/Tick) ---
+        const val VEIL_FREQ = 0.32f
+        const val VEIL_DAMP = 0.42f
+        /** Schleier: Nicken je Block/Tick Gleit-Tempo, Rollen je rad/Tick Drehung, Deckel (rad). */
+        const val VEIL_SPEED = 1.4f
+        const val VEIL_TURN = 2.2f
+        const val VEIL_MAX = 0.35f
+        const val VEIL_LOW = 1.4f
+        const val FLAME_FREQ = 0.55f
+        const val FLAME_DAMP = 0.3f
+        const val FLAME_TURN = 1.6f
+        const val FLAME_SPEED = 0.9f
+        const val FLAME_MAX = 0.4f
+        /** Stöße beim Treffer (Änderung der Federgeschwindigkeit, rad/Tick). */
+        const val HIT_KICK_VEIL = 0.08f
+        const val HIT_KICK_FLAME = 0.12f
+
+        // --- Lippen ---
+        const val MOUTH_FREQ = 0.9f
+        /** Unter diesem Wert bleibt der Mund unsichtbar (wie im Bestand). */
+        const val MOUTH_MIN = 0.06f
+        /** Höhe des geschlossenen Mundes (Anteil). */
+        const val MOUTH_CLOSED = 0.25f
+        /** Mitte des Mund-Quaders (y −3 … −1) im Raum des Mund-Teils: dort bleibt er beim Strecken stehen. */
+        const val MOUTH_CENTER_Y = -2f
         const val TURN = 20f
         const val TAU = (PI * 2).toFloat()
         const val THIRD = (PI * 2 / 3).toFloat()
@@ -689,4 +838,32 @@ class HekateModel(root: ModelPart) : GuardianModel(root) {
         )
         // POSES END
     }
+}
+
+/**
+ * Weltlage beider Fackelköpfe je Hekate, abgelegt von [HekateModel.flameAnchor] (einmal je Bild aus dem
+ * Feature-Renderer, vor den Effekt-Phasen). `HekateFx` liest sie für die Flamme der Echten; [FRESH_NANOS] alt gilt
+ * eine Lage als frisch, sonst `null` (dann zeichnet der Effekt nichts statt an falscher Stelle).
+ */
+object HekateTorches {
+    private class Tips(val right: Vec3d?, val left: Vec3d?, val at: Long)
+
+    private val tips = HashMap<Int, Tips>()
+
+    /** Eine Lage gilt so lange (Nanosekunden, etwa sechs Bilder bei 60 fps). */
+    const val FRESH_NANOS = 100_000_000L
+
+    fun put(entityId: Int, right: Vec3d?, left: Vec3d?) {
+        if (tips.size > 64) tips.clear()
+        tips[entityId] = Tips(right, left, System.nanoTime())
+    }
+
+    /** Frische Lage des rechten ([right] = true) bzw. linken Fackelkopfs, sonst `null`. */
+    fun tip(entityId: Int, right: Boolean): Vec3d? {
+        val t = tips[entityId] ?: return null
+        if (System.nanoTime() - t.at > FRESH_NANOS) return null
+        return if (right) t.right else t.left
+    }
+
+    fun clear() = tips.clear()
 }
