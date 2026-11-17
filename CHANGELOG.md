@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.5 — Olympus, RPG mode, boss presentation (unreleased)
+## 0.8.5 — Olympus, RPG mode, boss presentation (2026-11-17)
 
 ### Added — Third overhaul: boss presentation, RPG as its own game, tunnel lobby
 - **New effect system** for all bosses: smooth shader effects (light trails, shells, rifts, flames, water walls, runes) in their own render pipelines with a simple fallback, real floor blocks that fly and land, glowing ground cracks, projectile trails; every attack of Hermes, Hekate, Brontes, Kratos and Bia, Zeus, Hades, Kronos, the five Tartarus wardens and the Olympus enemies has its own look ([docs](docs/bosse-allgemein.md#effekte-kamera-szenen))
