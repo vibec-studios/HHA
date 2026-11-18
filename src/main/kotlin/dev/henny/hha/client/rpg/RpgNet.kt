@@ -34,7 +34,9 @@ object RpgNet {
         val recommended: Int, val max: Int, val members: List<Member>,
     )
 
-    /** Standard-Adresse; überschreibbar in `config/hha/rpg.json` (`{"backend": "wss://…/ws"}`) oder `-Dhha.rpgBackend=`. */
+    /** Standard-Adresse; überschreibbar in `config/hha/rpg.json` (`{"backend": "wss://…/ws"}`) oder `-Dhha.rpgBackend=`.
+     *  Der Dienst ist nur für offizielle Builds, siehe SERVICES.md (https://github.com/vibec-studios/.github/blob/main/SERVICES.md);
+     *  Forks tragen hier einen eigenen Dienst ein (Quelle: `backend/rpg-lobby`). */
     private const val DEFAULT_BACKEND = "wss://hha-rpg.henny.dev/ws"
 
     @Volatile var status = Status.OFFLINE

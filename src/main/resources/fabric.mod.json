@@ -12,7 +12,7 @@
     "sources": "https://github.com/Henny263462/HHA",
     "issues": "https://github.com/Henny263462/HHA/issues"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "icon": "assets/hha/icon.png",
   "environment": "*",
   "entrypoints": {

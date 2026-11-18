@@ -6,7 +6,7 @@ A Fabric mod for **Minecraft 1.21.11**, written in Kotlin.
 
 ![Minecraft](https://img.shields.io/badge/Minecraft-1.21.11-green)
 ![Loader](https://img.shields.io/badge/Loader-Fabric-blue)
-![License](https://img.shields.io/badge/License-MIT-yellow)
+![License](https://img.shields.io/badge/License-Apache--2.0-blue)
 
 Choose your side: the radiant **Heaven Set** with golden trims and holy light, or the **Hell Set** — blackened netherite burning with dark-blue soul fire. Both sets come with a full ability kit, a unique sword and mace, animated textures and custom particles.
 
@@ -91,4 +91,20 @@ Requires JDK 21. The remapped jar is written to `build/libs/`.
 
 ## License
 
-[MIT](LICENSE.txt)
+**Code:** [Apache License 2.0](LICENSE), including the generators in `tools/` and the lobby server in `backend/`.
+You may fork, change and share it. Releases published before 2026-11-18 stay under the MIT License they were released
+with.
+
+**Not** covered by the code license (applies to all repositories of Vibe Craft Studios,
+[LICENSING.md](https://github.com/vibec-studios/.github/blob/main/LICENSING.md)):
+
+- **Names and logos** ("H&H Armors", "Vibe Craft Studios", the seal): forks need their own name, mod ID and logo –
+  [TRADEMARKS.md](https://github.com/vibec-studios/.github/blob/main/TRADEMARKS.md).
+- **Artwork, models and sounds** (textures, item and block models, bosses and creatures, sounds, music, voice lines,
+  icon): all rights reserved – [ASSETS-POLICY.md](https://github.com/vibec-studios/.github/blob/main/ASSETS-POLICY.md); paths in [NOTICE](NOTICE).
+- **Vibe services** (the RPG lobby `hha-rpg.henny.dev`, `vibe.henny.dev`, `vibey.henny.dev`): official builds only –
+  [SERVICES.md](https://github.com/vibec-studios/.github/blob/main/SERVICES.md). Forks run their own lobby from
+  `backend/rpg-lobby`.
+
+Third-party parts keep their own terms: the Silkscreen font (SIL OFL 1.1), Minecraft textures the mod builds on, and
+the voice lines made with ElevenLabs. Details in [NOTICE](NOTICE).

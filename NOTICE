@@ -1,0 +1,29 @@
+H&H Armors
+Copyright 2026 Vibe Craft Studios
+
+The source code is licensed under the Apache License, Version 2.0 (see LICENSE).
+Releases published before 2026-11-18 remain under the MIT License.
+
+Not covered by that license – see https://github.com/vibec-studios/.github/blob/main/LICENSING.md :
+  - our names and logos ("H&H Armors", "Heaven & Hell", "Vibe", "Vibe Craft Studios", the seal) – TRADEMARKS.md,
+  - artwork, models, textures, animations and sounds – ASSETS-POLICY.md, in this repository in particular:
+      src/main/resources/assets/hha/icon.png,
+      src/main/resources/assets/hha/textures/**,
+      src/main/resources/assets/hha/models/**, src/main/resources/assets/hha/items/**,
+      src/main/resources/assets/hha/equipment/**,
+      src/main/resources/assets/hha/sounds/** (sound effects, music, voice lines),
+      src/main/resources/assets/minecraft/textures/entity/piglin/piglin_brute.png,
+      the bosses, creatures, props and textures built by src/main/kotlin/dev/henny/hha/client/model/**,
+      tools/hha_assets/** and tools/textures/**
+  - access to the Vibe online services (the RPG lobby hha-rpg.henny.dev, vibe.henny.dev, vibey.henny.dev) –
+    SERVICES.md.
+
+Third-party material keeps its own terms:
+  - the Silkscreen font in src/main/resources/assets/hha/font/ (modified, SIL Open Font License 1.1, see
+    silkscreen_OFL.txt there),
+  - textures derived from vanilla Minecraft textures (e.g. the Piglin Brute retexture and the armor and trim
+    textures made by tools/textures/) contain material by Mojang Studios,
+  - the voice lines in src/main/resources/assets/hha/sounds/voice/ were made with ElevenLabs; ElevenLabs' terms
+    apply as well (see tools/hha_assets/voice_lines.py).
+
+Forks must use their own name, their own artwork and their own backend services.
