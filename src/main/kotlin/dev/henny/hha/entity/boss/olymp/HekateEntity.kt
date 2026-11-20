@@ -11,10 +11,16 @@ import dev.henny.hha.logic.Vfx
 import dev.henny.hha.logic.boss.BossDefense
 import dev.henny.hha.logic.boss.BossFx
 import dev.henny.hha.logic.boss.BossTimings
+import dev.henny.hha.logic.boss.Arenas
 import dev.henny.hha.logic.boss.Cine
+import dev.henny.hha.logic.boss.Cover
 import dev.henny.hha.logic.boss.SceneKit
 import dev.henny.hha.logic.boss.Telegraph
+import dev.henny.hha.logic.boss.sig.HekateDarkHour
+import dev.henny.hha.logic.boss.sig.HekateLevels
+import dev.henny.hha.logic.boss.sig.HekatePortcullis
 import dev.henny.hha.logic.boss.timings.HekateTimings
+import dev.henny.hha.world.olymp.OlympusArenas
 import dev.henny.hha.logic.world.HadesGate
 import dev.henny.hha.stage.StageScripts
 import dev.henny.hha.stage.scripts.HekateStages
@@ -58,6 +64,8 @@ object HekateAction {
     const val STAGGER = 8
     const val HOWL = 9
     const val YIELD = 10
+    /** Überarbeitung 4 (P15): die dunkle Stunde (ersetzt [ECLIPSE], das nicht mehr gespielt wird). */
+    const val DARK_HOUR = 11
 }
 
 /**
@@ -71,9 +79,14 @@ object HekateAction {
  * Ablauf (alle Zahlen aus [HekateTimings], Tabelle PLAN 5.2):
  * - **Feste Reihenfolge:** I Schwung → Wurf → Pfad; II und III Schritt → Schwung → Wurf → Pfad. Den Schwung lässt
  *   sie aus, wenn das Ziel weit weg ist ([HekateTimings.SWEEP_SKIP_DISTANCE]); nie zweimal derselbe Angriff.
- * - **Schlüsseldrehung** (ab II, alle 28 s) und **Mondfinsternis** (III, alle 20 s) sind saalweit und zählen als
- *   Saal-Gefahr: nie zugleich miteinander, nie am Stück ([HekateTimings.HAZARD_GAP]), nie neben dem Bodenfeuer. Sie
- *   spielt sie selbst (eigene Aktion), also läuft nebenher kein zweiter Angriff. Gold heißt sicher.
+ * - **Schlüsseldrehung** (ab II, alle 28 s) und **dunkle Stunde** (III, alle 20 s; Überarbeitung 4 statt der
+ *   Mondfinsternis, [HekateDarkHour]) sind saalweit und zählen als Saal-Gefahr: nie zugleich miteinander, nie am Stück
+ *   ([HekateTimings.HAZARD_GAP]), nie neben dem Bodenfeuer. Sie spielt sie selbst (eigene Aktion), also läuft nebenher
+ *   kein zweiter Angriff. Gold heißt sicher. Bei der Schlüsseldrehung fallen in den zwei falschen Toren Fallgitter
+ *   ([HekatePortcullis]); die Regel bleibt der Weg.
+ * - **Höhenband (Überarbeitung 4):** Bodenfeuer nur auf dem Kern; Schwung, Wurf, Pfad, Tritt, Schlüssel und
+ *   Dreigestalt bis zur Terrasse + 3 ([HekateLevels.bodyBand]), auf einer berührten Terrasse zusätzlich als Bild
+ *   ([HekateLevels.echo]). Die Linie der Dreigestalt endet an Deckung.
  * - **Dreigestalt** (III, nach jedem dritten Angriff): sie und zwei Trugbilder ([echo]) an den drei Wegenden, eine
  *   Ansage-Gruppe. Nur die Echte hält die brennende Fackel; wer sie in der Ansage trifft, löst die Trugbilder auf:
  *   STAGGER, offen.
@@ -89,9 +102,9 @@ object HekateAction {
  *   Pfad `hekate.path_fire`, Schlüssel und Finsternis Stoßwelle wie bisher. Dazu Beiwerk im Budget (Glut, Funken,
  *   Bodensprung, Wirbel), der Fackelwurf als `core.projectile` (`TORCH_FLAME`), das liegende Feuer `hekate.ground_fire`.
  * - Schlüsseldrehung: `hekate.key_ring` über dem Platz rastet zum Treffer ein; Ruck 1,5° statt Saal-Rütteln.
- * - Mondfinsternis: der einzige Bildschirm-Pass des Kampfs ([BossFx.Screen.ECLIPSE]); er endet an jedem Ausgang
- *   ([endEclipse]: Treffer, Phasenwechsel, Sieg, Neustart, Entfernen) und für jeden, der die Arena verlässt
- *   ([watchEclipse]).
+ * - Dunkle Stunde: der einzige Bildschirm-Pass des Kampfs ([BossFx.Screen.ECLIPSE]); er endet an jedem Ausgang
+ *   ([endEclipse]: Ende der Stunde, Phasenwechsel, Sieg, Neustart, Entfernen) und für jeden, der die Arena verlässt
+ *   ([watchEclipse]); wer während der Stunde dazukommt, bekommt ihn für den Rest.
  * - Szenen über `cinematics.staged` ([HekateStages]): Auftritt, beide Phasenwechsel, Niederlage (im Olymp).
  */
 class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossEntity(type, world) {
@@ -124,8 +137,19 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
     /** Normale Angriffe seit der letzten Dreigestalt (Phase III). */
     private var sinceTriform = 0
     private var nextKeyAt = Long.MAX_VALUE
-    private var nextEclipseAt = Long.MAX_VALUE
+    /** Nächste dunkle Stunde (Überarbeitung 4; vorher die Mondfinsternis). */
+    private var nextDarkHourAt = Long.MAX_VALUE
     private var lastHazardEnd = Long.MIN_VALUE / 4
+
+    // --- Überarbeitung 4 (P15): dunkle Stunde und Fallgitter ------------------------------------------------------
+    /** Zustand der dunklen Stunde über den Kampf (Titel einmal, gebröckelte Türme). */
+    private val darkHour = HekateDarkHour.State()
+
+    /** Wege, deren Fallgitter gerade unten sind oder fallen (für die Ausgänge). */
+    private var gatesDown: List<Int> = emptyList()
+
+    /** Bis zu diesem Welt-Tick läuft der Pass der Stunde (Nachzügler bekommen ihn für den Rest). */
+    private var passUntil = 0L
 
     /** Zuletzt goldener Weg (nie zweimal derselbe). */
     private var lastKeyPath = -1
@@ -204,21 +228,37 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         dismissEchoes()
         triformWindup = false
         fireUntil = 0L
+        endSignature()
         endEclipse()
     }
 
     override fun remove(reason: RemovalReason) {
         if (!entityWorld.isClient && !echo) {
             dismissEchoes()
+            endSignature()
             endEclipse()
         }
         super.remove(reason)
     }
 
+    /**
+     * Ausgang mitten in dunkler Stunde oder Schlüsseldrehung (Leine, Phasenwechsel, Sieg, Entfernen): Stunde vergessen,
+     * Fallgitter sofort hoch (bei offener Arena; schließt sie, stellt `Arenas.close` ohnehin alles her). Gebröckelte
+     * Türme bleiben bis zum Kampfende (PLAN 3.2 b).
+     */
+    private fun endSignature() {
+        darkHour.abort()
+        passUntil = 0L
+        if (gatesDown.isNotEmpty()) {
+            HekatePortcullis.liftNow(arena)
+            gatesDown = emptyList()
+        }
+    }
+
     /** Letzte Positionen der Mitkämpfer (für den Vorhalt des Fackelwurfs; Spielertempo ist auf dem Server unzuverlässig). */
     override fun tickBody() {
         if (echo) return
-        if (eclipseViewers.isNotEmpty()) watchEclipse()
+        if (eclipseViewers.isNotEmpty() || sw.time < passUntil) watchEclipse()
         val present = HashSet<UUID>()
         for (player in fighters()) {
             present.add(player.uuid)
@@ -296,7 +336,39 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
      */
     override fun onPhase(newPhase: Int): Sequence<Unit> {
         val id = if (newPhase == 1) HekateStages.PHASE2 else HekateStages.PHASE3
-        return cinematics.staged(id, phaseChange(newPhase), actors = listOf(self)) { Cine.music(viewers(), HhaSounds.THEME_HEKATE_2) }
+        return sequence {
+            // Die Kamera der Szene hängt an ihrem Blick: so drehen, dass kein Kamerapunkt in Tor, Turm oder Terrasse liegt.
+            faceForScene(mirror = newPhase != 1)
+            yieldAll(cinematics.staged(id, phaseChange(newPhase), actors = listOf(self)) { Cine.music(viewers(), HhaSounds.THEME_HEKATE_2) })
+        }
+    }
+
+    /**
+     * Wählt vor einer Phasen-Szene (Kamera relativ zu Lage und Blick, [HekateStages.phaseCameraPoints]) aus acht
+     * Richtungen (beginnend mit der jetzigen) den Blick mit den wenigsten Kamerapunkten in festen Blöcken; der erste
+     * ganz freie gewinnt. Stichprobe auf dem Bauplan C (Bericht P15): an 95 % der Kernpunkte ist ein Blick ganz frei, am
+     * Rest (r 16–18 an Treppen und Toren) bleiben höchstens 2 von 8 Bogenpunkten im Block.
+     */
+    private fun faceForScene(mirror: Boolean) {
+        val base = facing()
+        val points = HekateStages.phaseCameraPoints(mirror)
+        var best = base
+        var bestBlocked = Int.MAX_VALUE
+        for (k in 0 until SCENE_YAWS) {
+            val dir = rotate(base, k * 360.0 / SCENE_YAWS)
+            val right = Vec3d(-dir.z, 0.0, dir.x)
+            val blocked = points.count { (f, r, u) ->
+                val p = entityPos.add(dir.multiply(f)).add(right.multiply(r)).add(0.0, u, 0.0)
+                val pos = net.minecraft.util.math.BlockPos.ofFloored(p)
+                !sw.getBlockState(pos).getCollisionShape(sw, pos).isEmpty
+            }
+            if (blocked < bestBlocked) {
+                best = dir
+                bestBlocked = blocked
+            }
+            if (blocked == 0) break
+        }
+        hold(best)
     }
 
     private fun phaseChange(newPhase: Int): Sequence<Unit> = sequence {
@@ -305,6 +377,7 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         hold(null)
         dismissEchoes()
         triformWindup = false
+        endSignature()
         endEclipse()
         kit.act(0)
         Cine.music(viewers(), HhaSounds.THEME_HEKATE_2)
@@ -313,7 +386,7 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         val start = sw.time + T.PHASE_TRANSITION
         if (newPhase == 1) nextKeyAt = start + T.KEY_FIRST
         if (newPhase >= 2) {
-            nextEclipseAt = start + T.ECLIPSE_FIRST
+            nextDarkHourAt = start + T.DARK_HOUR_FIRST
             sinceTriform = 0
         }
         yieldAll(rest(T.PHASE_TRANSITION))
@@ -343,6 +416,7 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         hold(null)
         dismissEchoes()
         fireUntil = 0L
+        endSignature()
         endEclipse()
         kit.act(HekateAction.YIELD)
         if (!staged) say("victory")
@@ -410,16 +484,16 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         Move(HekateAction.PATH, ANYWHERE, ready = { planned() == HekateAction.PATH }) { firePath(it) },
         Move(HekateAction.STEP, ANYWHERE, ready = { planned() == HekateAction.STEP }) { thresholdStep(it) },
         Move(HekateAction.KEY_TURN, ANYWHERE, ready = { planned() == HekateAction.KEY_TURN }) { keyTurn() },
-        Move(HekateAction.ECLIPSE, ANYWHERE, ready = { planned() == HekateAction.ECLIPSE }) { eclipse() },
+        Move(HekateAction.DARK_HOUR, ANYWHERE, ready = { planned() == HekateAction.DARK_HOUR }) { darkHour() },
         Move(HekateAction.TRIFORM, ANYWHERE, ready = { planned() == HekateAction.TRIFORM }) { triform(it) },
     )
 
-    /** Was als Nächstes dran ist: erst die Uhren (Schlüssel, Mondfinsternis, Dreigestalt), sonst die feste Reihenfolge. */
+    /** Was als Nächstes dran ist: erst die Uhren (Schlüssel, dunkle Stunde, Dreigestalt), sonst die feste Reihenfolge. */
     private fun planned(): Int {
         val now = sw.time
         val hazardFree = now - lastHazardEnd >= T.HAZARD_GAP && telegraph.canStartHazard()
         if (phase >= 1 && now >= nextKeyAt && hazardFree && lastMove != HekateAction.KEY_TURN) return HekateAction.KEY_TURN
-        if (phase >= 2 && now >= nextEclipseAt && hazardFree && lastMove != HekateAction.ECLIPSE) return HekateAction.ECLIPSE
+        if (phase >= 2 && now >= nextDarkHourAt && hazardFree && lastMove != HekateAction.DARK_HOUR) return HekateAction.DARK_HOUR
         if (phase >= 2 && sinceTriform >= T.TRIFORM_EVERY && lastMove != HekateAction.TRIFORM) return HekateAction.TRIFORM
         return plannedRegular()
     }
@@ -463,6 +537,7 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         hold(dir)
         val group = telegraph.boss()
         val first = group.cone(flatGround(entityPos), dir, T.SWEEP_RADIUS, T.SWEEP_HALF_ANGLE, T.SWEEP_W)
+        bodyBand(group, first)
         telegraph.sound(HhaSounds.TORCH, entityPos, 1.8f, 1.1f)
         wait(first.ticks)
         sweepHit(first, dir, 1f)
@@ -471,6 +546,7 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         if (target.isAlive) dir = turnToward(dir, dirTo(target.entityPos), T.SWEEP_RETARGET)
         hold(dir)
         val second = group.cone(flatGround(entityPos), dir, T.SWEEP_RADIUS, T.SWEEP_HALF_ANGLE, T.SWEEP_W2, Telegraph.Pace.FOLLOW_UP)
+        bodyBand(group, second)
         wait(second.ticks)
         sweepHit(second, dir, -1f)
         hold(null)
@@ -507,6 +583,7 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         val group = telegraph.boss(pace = Telegraph.Pace.PROJECTILE)
         val near = group.ring(aim, T.THROW_RADIUS, T.THROW_W)
         val ahead = group.ring(lead, T.THROW_RADIUS, T.THROW_W)
+        bodyBand(group, near, ahead)
         telegraph.sound(HhaSounds.TORCH, entityPos, 1.8f, 1.2f)
         wait(T.THROW_HIT - T.THROW_TELEGRAPH)
         // Wurf: Die linke Fackel fliegt im Bogen zum vorderen Kreis.
@@ -519,7 +596,8 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
             yield(Unit)
         }
         torch?.rest()
-        for (player in group.hits(fighters())) strike(player, T.THROW_DAMAGE)
+        // Nur die beiden Kreise treffen (die Stücke auf den Terrassen sind Bild, siehe HekateLevels.echo).
+        for (player in fighters().filter { near.contains(it) || ahead.contains(it) }) strike(player, T.THROW_DAMAGE)
         Vfx.shockwave(sw, danger, aim, T.THROW_RADIUS, 10, 1.2f)
         if (flatDist(aim, lead) >= Telegraph.IMPACT_MERGE) Vfx.shockwave(sw, danger, lead, T.THROW_RADIUS, 10, 1.2f)
         BossFx.sparks(sw, danger, lead.add(0.0, 0.3, 0.0), count = THROW_SPARKS, speed = 0.45f)
@@ -568,7 +646,11 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
                 }
                 if (tick % T.THROW_FIRE_INTERVAL == T.THROW_FIRE_INTERVAL - 1) {
                     for (player in fighters()) {
-                        if (spots.any { it.contains(player) }) strike(player, T.THROW_FIRE_DAMAGE, BossDefense.Reach.LOW, floorY())
+                        // Bodenfeuer: Band des Kernbodens (Standardgrenzen), die Terrassen (+3, LOW) erreicht es nicht.
+                        if (!Telegraph.inBand(player.y, floorY() - FIRE_BAND_BELOW, floorY() + FIRE_BAND_ABOVE)) continue
+                        if (spots.any { it.contains(player.entityPos, player.width * 0.5) }) {
+                            strike(player, T.THROW_FIRE_DAMAGE, BossDefense.Reach.LOW, floorY())
+                        }
                     }
                 }
                 tick++
@@ -590,7 +672,9 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         val from = flatGround(pathPoint(path, T.PATH_START.toDouble()))
         val to = flatGround(pathPoint(path, T.PATH_LENGTH.toDouble()))
         hold(dirTo(to))
-        val line = telegraph.line(from, to, T.PATH_WIDTH, T.PATH_W)
+        val pathGroup = telegraph.boss()
+        val line = pathGroup.line(from, to, T.PATH_WIDTH, T.PATH_W)
+        bodyBand(pathGroup, line)
         telegraph.sound(HhaSounds.TORCH, entityPos, 2f, 0.8f)
         // Unter der Ansage: glühender Sprung frisst sich vom Wegende zur Mitte vor, fertig mit dem Treffer.
         BossFx.crack(sw, danger, to, from.subtract(to), T.PATH_LENGTH - T.PATH_START, line.ticks + PATH_CRACK_TAIL, line.ticks)
@@ -615,8 +699,12 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         val c = flatGround(plaza())
         val dir = pathDir(path)
         val end = flatGround(pathPoint(path, T.PATH_LENGTH.toDouble()))
+        // Überarbeitung 4: In den zwei falschen Toren fallen Gitter. Wer jenseits davon steht, läuft um den Pfeiler.
+        val closed = (0..2).filter { it != path }
         // Jeder muss den goldenen Weg zu Fuß erreichen können; sonst wird die Ansage länger.
-        val ticks = escapeTicks(T.KEY_W) { segmentDistance(it.entityPos, c, end) - (T.PATH_WIDTH * 0.5 - EDGE_MARGIN) }
+        val ticks = escapeTicks(T.KEY_W) {
+            segmentDistance(it.entityPos, c, end) - (T.PATH_WIDTH * 0.5 - EDGE_MARGIN) + HekatePortcullis.detour(it.entityPos, c, closed)
+        }
         val hazard = telegraph.hazard(pace = Telegraph.Pace.ROOM)
         if (hazard == null) {
             nextKeyAt = sw.time + RETRY
@@ -627,6 +715,15 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         val half = (180.0 - Math.toDegrees(atan(T.PATH_WIDTH * 0.5 / T.PATH_LENGTH.toDouble()))).toFloat()
         val room = hazard.cone(c, dir.multiply(-1.0), T.PATH_LENGTH, half, ticks)
         val safe = hazard.safeLine(c, end, T.PATH_WIDTH, ticks)
+        // Band: Kern bis +12 (Stürze und Turmköpfe sind kein Versteck vor dem Raum-Angriff); Bild auf den Terrassen.
+        bodyBand(hazard, room)
+        room.band(floorY(), 1.0, T.KEY_BAND_ABOVE)
+        safe.band(floorY(), 1.0, T.KEY_BAND_ABOVE)
+        // Das Gitter ist Bild, die Regel ist die Zone: Es fällt mit Beginn der Ansage, die Trefferlogik bleibt der Weg.
+        arena?.let {
+            gatesDown = closed
+            launch(HekatePortcullis.drop(it, closed, telegraph))
+        }
         hint("hha.hekate.hint.key")
         telegraph.sound(HhaSounds.KEY, entityPos, 2.2f, 0.8f)
         // Runenring über dem Platz: dreht während der Ansage, rastet zum Treffer auf den goldenen Weg ein.
@@ -650,6 +747,16 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         lastHazardEnd = sw.time
         hold(null)
         yieldAll(rest(T.KEY_F))
+        // Nach Treffer und Fenster heben sich die Gitter (Bauplan zurück, unten zuerst).
+        // gatesDown bleibt gesetzt, bis das letzte Gitter oben ist (bricht die Leine die Aufgabe ab, hebt endSignature).
+        val lifted = gatesDown
+        val area = arena
+        if (area != null && lifted.isNotEmpty()) {
+            launch(sequence {
+                yieldAll(HekatePortcullis.lift(area, lifted, telegraph))
+                if (gatesDown == lifted) gatesDown = emptyList()
+            })
+        }
         kit.act(0)
     }
 
@@ -667,7 +774,7 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         BossFx.swirl(sw, danger, entityPos.add(0.0, STEP_SWIRL_HEIGHT, 0.0), UP, STEP_SWIRL_RADIUS, T.STEP_TELEPORT - T.STEP_VANISH + 4, closing = true)
         telegraph.sound(HhaSounds.BLINK, entityPos, 1.6f, 0.7f)
         wait(T.STEP_TELEPORT - T.STEP_VANISH)
-        val end = standAt(pathPoint(stepPath(target.entityPos), T.PATH_LENGTH.toDouble()))
+        val end = standAt(HekateLevels.freeStand(pathPoint(stepPath(target.entityPos), T.PATH_LENGTH.toDouble()), arena?.spec))
         setPosition(end)
         BossFx.swirl(sw, danger, end.add(0.0, STEP_SWIRL_HEIGHT, 0.0), UP, STEP_SWIRL_RADIUS, T.STEP_APPEAR - T.STEP_TELEPORT + 10)
         wait(T.STEP_APPEAR - T.STEP_TELEPORT)
@@ -678,14 +785,16 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         val length = (toAim + T.STEP_OVERSHOOT).coerceIn(T.STEP_MIN_LENGTH, T.PATH_LENGTH.toDouble())
         val tip = clampToPlaza(flatGround(end.add(dir.multiply(length))))
         hold(dir)
-        val line = telegraph.line(flatGround(end), tip, T.STEP_LINE_WIDTH, T.STEP_W, Telegraph.Pace.HEAVY)
+        val stepGroup = telegraph.boss()
+        val line = stepGroup.line(flatGround(end), tip, T.STEP_LINE_WIDTH, T.STEP_W, Telegraph.Pace.HEAVY)
+        bodyBand(stepGroup, line)
         telegraph.sound(HhaSounds.CHARGE, end, 1.6f, 1.2f)
         wait(line.ticks)
         for (player in line.hits(fighters())) strike(player, T.STEP_DAMAGE)
         Vfx.beam(sw, danger, end.add(0.0, 1.4, 0.0), tip.add(0.0, 1.4, 0.0), 0.6f, 8)
         telegraph.sound(HhaSounds.WHOOSH, end, 2f, 1.1f)
-        // Der Stoß trägt sie durch die Linie (nicht in das Hekataion hinein).
-        val stop = outsideStatue(standAt(tip))
+        // Der Stoß trägt sie durch die Linie (nicht in das Hekataion, nicht in Tor, Turm oder auf eine Terrasse).
+        val stop = HekateLevels.freeStand(outsideStatue(standAt(tip)), arena?.spec)
         val lunge = T.STEP_HIT_END - T.STEP_HIT
         for (i in 1..lunge) {
             setPosition(end.lerp(stop, i.toDouble() / lunge))
@@ -720,7 +829,7 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         telegraph.sound(HhaSounds.BLINK, entityPos, 1.8f, 0.8f)
         val bodies = arrayOfNulls<HekateEntity>(3)
         for (i in 0..2) {
-            val spot = standAt(pathPoint(i, T.PATH_LENGTH.toDouble()))
+            val spot = standAt(HekateLevels.freeStand(pathPoint(i, T.PATH_LENGTH.toDouble()), arena?.spec))
             if (i == realPath) {
                 setPosition(spot)
                 form = forms[i]
@@ -738,16 +847,28 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         val group = telegraph.boss()
         val shapes = ArrayList<Telegraph.Shape>()
         val aim = clampToPlaza(flatGround(target.entityPos))
+        // Die Linie der Schlüssel-Gestalt endet an Deckung (Hekataion, Tor, Turm; Vertrag `hekate.triform_line`).
+        var lineFrom: Vec3d? = null
+        var lineTo: Vec3d? = null
         for (i in 0..2) {
             val body = bodies[i] ?: continue
             val spot = flatGround(body.entityPos)
             val inward = flatNorm(plaza().subtract(spot))
             shapes += when (forms[i]) {
                 0 -> group.cone(spot, inward, T.TRIFORM_CONE_RADIUS, T.TRIFORM_CONE_HALF_ANGLE, T.TRIFORM_W)
-                1 -> group.line(spot, flatGround(spot.add(inward.multiply(T.TRIFORM_LINE_LENGTH.toDouble()))), T.TRIFORM_LINE_WIDTH, T.TRIFORM_W)
+                1 -> {
+                    val far = spot.add(inward.multiply(T.TRIFORM_LINE_LENGTH.toDouble()))
+                    val hitAt = Cover.lineEnd(sw, spot.add(0.0, TRIFORM_LINE_HEIGHT, 0.0), far.add(0.0, TRIFORM_LINE_HEIGHT, 0.0))
+                    val stop = flatGround(hitAt)
+                    lineFrom = spot
+                    lineTo = stop
+                    arena?.spec?.let { Cover.mark(telegraph, it, OlympusArenas.HEKATE_TRIFORM_LINE, spot.add(0.0, TRIFORM_LINE_HEIGHT, 0.0), T.TRIFORM_W) }
+                    group.line(spot, stop, T.TRIFORM_LINE_WIDTH, T.TRIFORM_W)
+                }
                 else -> group.ring(aim, T.TRIFORM_CIRCLE_RADIUS, T.TRIFORM_W)
             }
         }
+        bodyBand(group, *shapes.toTypedArray())
         telegraph.sound(HhaSounds.TORCH, entityPos, 2.2f, 0.7f)
         triformBroken = false
         triformWindup = true
@@ -769,7 +890,15 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
             return@sequence
         }
         for (shape in shapes) {
-            for (player in shape.hits(fighters())) strike(player, T.TRIFORM_DAMAGE)
+            for (player in shape.hits(fighters())) {
+                // Linie: Wer beim Treffer hinter benannter Deckung steht, bleibt heil (Pflicht 4).
+                val from = lineFrom
+                if (shape is Telegraph.Line && from != null) {
+                    val spec = arena?.spec
+                    if (spec != null && Cover.shelter(sw, from.add(0.0, TRIFORM_LINE_HEIGHT, 0.0), player, spec, OlympusArenas.HEKATE_TRIFORM_LINE) != null) continue
+                }
+                strike(player, T.TRIFORM_DAMAGE)
+            }
         }
         for (i in 0..2) {
             val body = bodies[i] ?: continue
@@ -777,7 +906,7 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
             val inward = flatNorm(plaza().subtract(spot))
             when (forms[i]) {
                 0 -> Vfx.crescent(sw, danger, spot.add(0.0, 1.4, 0.0), inward, T.TRIFORM_CONE_RADIUS, 3f, 8)
-                1 -> Vfx.beam(sw, danger, spot.add(0.0, 1.2, 0.0), spot.add(inward.multiply(T.TRIFORM_LINE_LENGTH.toDouble())).add(0.0, 1.2, 0.0), 0.6f, 8)
+                1 -> Vfx.beam(sw, danger, spot.add(0.0, 1.2, 0.0), (lineTo ?: spot.add(inward.multiply(T.TRIFORM_LINE_LENGTH.toDouble()))).add(0.0, 1.2, 0.0), 0.6f, 8)
                 else -> Vfx.shockwave(sw, danger, aim, T.TRIFORM_CIRCLE_RADIUS, 10, 1.2f)
             }
         }
@@ -806,38 +935,54 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
     }
 
     // ---------------------------------------------------------------------------------------------
-    // 7 Mondfinsternis (Saal-Gefahr): der Himmel wird dunkel, 2 goldene Kreise Radius 5 sicher, W 50; S 24 SKY
+    // 7 Die dunkle Stunde (Saal-Gefahr, Phase III, alle 400 Ticks; Überarbeitung 4, P15): ersetzt die Mondfinsternis.
+    //   Ablauf, Regeln und Zahlen in HekateDarkHour; hier nur Takt, Rahmen und die Verbindung zum Kampf.
     // ---------------------------------------------------------------------------------------------
 
-    private fun eclipse(): Sequence<Unit> = sequence {
-        nextEclipseAt = sw.time + T.ECLIPSE_INTERVAL
+    private fun darkHour(): Sequence<Unit> = sequence {
+        nextDarkHourAt = sw.time + T.DARK_HOUR_INTERVAL
         stopMoving()
-        val spots = eclipseSpots()
-        val ticks = escapeTicks(T.ECLIPSE_W) { p -> spots.minOf { flatDist(p.entityPos, it) } - (T.ECLIPSE_SAFE_RADIUS - EDGE_MARGIN) }
-        val hazard = telegraph.hazard(pace = Telegraph.Pace.ROOM)
-        if (hazard == null) {
-            nextEclipseAt = sw.time + RETRY
+        val hour = HekateDarkHour.start(darkHourHost, darkHour)
+        if (hour == null) {
+            nextDarkHourAt = sw.time + RETRY
             return@sequence
         }
-        val safe = spots.map { hazard.safe(it, T.ECLIPSE_SAFE_RADIUS, ticks) }
-        hint("hha.hekate.hint.eclipse")
-        // Stimmung, keine Blindheit: Der Himmel über dem Platz wird nachtblau-violett (Mondfinsternis).
-        Vfx.skyMood(sw, Vfx.Style.MOON, plaza(), T.ECLIPSE_MOOD, ticks + MOOD_TAIL, plazaRadius().toFloat() + MOOD_MARGIN)
-        startEclipse(hazard.ticks + ECLIPSE_PASS_TAIL)
-        telegraph.sound(HhaSounds.HOWL, entityPos, 2.4f, 0.6f)
-        wait((hazard.ticks - T.ECLIPSE_W).coerceAtLeast(0))
-        kit.act(HekateAction.ECLIPSE)
-        wait(hazard.ticks)
-        for (player in fighters()) {
-            if (safe.none { it.contains(player) }) strike(player, T.ECLIPSE_DAMAGE, BossDefense.Reach.SKY)
-        }
-        Vfx.shockwave(sw, danger, flatGround(plaza()), plazaRadius().toFloat(), 18, 1.4f)
-        telegraph.sound(HhaSounds.IMPACT, plaza(), 2.6f, 0.6f)
-        endEclipse()
-        hazard.end()
-        lastHazardEnd = sw.time
-        yieldAll(rest(T.ECLIPSE_HIT_END - T.ECLIPSE_HIT + ECLIPSE_RECOVER))
+        yieldAll(hour)
+        hold(null)
         kit.act(0)
+    }
+
+    /** Was die dunkle Stunde vom Kampf braucht (geschützte Glieder bleiben hier). */
+    private val darkHourHost = object : HekateDarkHour.Host {
+        override val world: ServerWorld get() = sw
+        override val boss: net.minecraft.entity.LivingEntity get() = this@HekateEntity
+        override val telegraph: Telegraph.Fight get() = this@HekateEntity.telegraph
+        override val arena: Arenas.Arena? get() = this@HekateEntity.arena
+        override val style: Vfx.Style get() = danger
+        override fun fighters(): List<ServerPlayerEntity> = this@HekateEntity.fighters()
+        override fun viewers(): List<ServerPlayerEntity> = this@HekateEntity.viewers()
+        override fun plaza(): Vec3d = this@HekateEntity.plaza()
+        override fun floorY(): Double = this@HekateEntity.floorY()
+        override fun strike(player: ServerPlayerEntity, base: Float, shape: Telegraph.Shape): Boolean =
+            this@HekateEntity.strike(player, base, BossDefense.Reach.BODY, shape)
+        override fun open(ticks: Int) = this@HekateEntity.open(ticks, DuelBossEntity.OPEN_FACTOR)
+        override fun hint(key: String) = this@HekateEntity.hint(key)
+        override fun say(key: String) = this@HekateEntity.say(key)
+        override fun act(action: Int) = kit.act(action)
+        override fun face(dir: Vec3d?) = hold(dir)
+        override fun stop() = stopMoving()
+        override fun place(pos: Vec3d) = setPosition(pos)
+        override fun startPass(ticks: Int) {
+            Vfx.skyMood(sw, Vfx.Style.MOON, plaza(), T.ECLIPSE_MOOD, ticks + MOOD_TAIL, plazaRadius().toFloat() + MOOD_MARGIN)
+            startEclipse(ticks)
+        }
+        override fun endPass() {
+            passUntil = 0L
+            endEclipse()
+        }
+        override fun hazardEnded() {
+            lastHazardEnd = sw.time
+        }
     }
 
     /**
@@ -849,12 +994,26 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         val c = plaza()
         val range = plazaRadius().toFloat() + ECLIPSE_RANGE_MARGIN
         BossFx.screen(sw, BossFx.Screen.ECLIPSE, Vfx.Style.MOON, c, plazaRadius().toFloat(), ECLIPSE_STRENGTH, ticks, range = range)
+        passUntil = sw.time + ticks
         for (player in sw.players) {
             if (player.squaredDistanceTo(c) <= range.toDouble() * range) eclipseViewers.add(player.uuid)
         }
     }
 
-    /** Beendet den Finsternis-Pass bei allen, die ihn sehen (Treffer, Phasenwechsel, Sieg, Neustart, Entfernen). */
+    /** Wer während der Stunde in die Arena kommt, bekommt den Pass für den Rest (nur er, ohne neues Einblenden der anderen). */
+    private fun passForLateComers() {
+        val left = (passUntil - sw.time).toInt()
+        if (left <= 0) return
+        for (player in viewers()) {
+            if (!eclipseViewers.add(player.uuid)) continue
+            BossFx.play(
+                sw, "core.screen", Vfx.Style.MOON, plaza(), a = plazaRadius().toFloat(), b = ECLIPSE_STRENGTH,
+                d = BossFx.Screen.ECLIPSE.ordinal.toFloat(), life = left, to = player,
+            )
+        }
+    }
+
+    /** Beendet den Finsternis-Pass bei allen, die ihn sehen (Ende der Stunde, Phasenwechsel, Sieg, Neustart, Entfernen). */
     private fun endEclipse() {
         if (eclipseViewers.isEmpty()) return
         val world = entityWorld as? ServerWorld ?: return
@@ -868,6 +1027,7 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
     /** Je Tick während der Finsternis: Wer tot ist, die Welt wechselt oder die Arena verlässt, verliert den Pass sofort. */
     private fun watchEclipse() {
         val server = sw.server ?: return
+        passForLateComers()
         val inside = viewers().mapTo(HashSet()) { it.uuid }
         val gone = eclipseViewers.filter { id ->
             val player = server.playerManager.getPlayer(id)
@@ -885,32 +1045,6 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
             player.entityWorld as ServerWorld, "core.screen_clear", Vfx.Style.GOLD, player.entityPos,
             d = BossFx.Screen.ECLIPSE.ordinal.toFloat(), life = 1, to = player,
         )
-    }
-
-    /**
-     * Zwei Stellen für die goldenen Kreise: auf den Wegen oder dazwischen, weit genug auseinander; von den Paaren mit dem
-     * kürzesten Weg für den am schlechtesten stehenden Spieler eines der besten drei (etwas Zufall).
-     */
-    private fun eclipseSpots(): List<Vec3d> {
-        val c = plaza()
-        val mid = (T.ECLIPSE_SAFE_MIN + T.ECLIPSE_SAFE_MAX) * 0.5
-        val candidates = ArrayList<Vec3d>()
-        for (angle in OlympusLayout.C_PATH_ANGLES) {
-            candidates += flatGround(c.add(OlympusLayout.dir(angle).multiply(T.ECLIPSE_SAFE_MIN + 2.0)))
-            candidates += flatGround(c.add(OlympusLayout.dir(angle).multiply(T.ECLIPSE_SAFE_MAX - 1.0)))
-            candidates += flatGround(c.add(OlympusLayout.dir(angle + 60.0).multiply(mid)))
-        }
-        val players = fighters()
-        val pairs = ArrayList<Pair<Vec3d, Vec3d>>()
-        for (a in candidates.indices) for (b in a + 1 until candidates.size) {
-            if (flatDist(candidates[a], candidates[b]) >= T.ECLIPSE_SAFE_SPREAD) pairs += candidates[a] to candidates[b]
-        }
-        if (pairs.isEmpty()) return candidates.take(T.ECLIPSE_SAFE_COUNT)
-        val ranked = pairs.sortedBy { (a, b) ->
-            players.maxOfOrNull { min(flatDist(it.entityPos, a), flatDist(it.entityPos, b)) } ?: 0.0
-        }
-        val pick = ranked[random.nextInt(min(SPOT_CHOICES, ranked.size))]
-        return listOf(pick.first, pick.second)
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -936,6 +1070,16 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
     /** Der Weg, auf dem [pos] steht bzw. dem es am nächsten ist. */
     private fun nearestPath(pos: Vec3d): Int = (0..2).minBy {
         segmentDistance(pos, pathPoint(it, T.PATH_START.toDouble()), pathPoint(it, T.PATH_LENGTH.toDouble()))
+    }
+
+    /**
+     * Höhenband der Körperangriffe (Überarbeitung 4, Pflicht 3): vom Kernboden bis Terrasse + 3, dazu das Bild auf jeder
+     * berührten Terrasse in derselben Gruppe ([HekateLevels.echo]). Getroffen wird weiter nur mit [shapes].
+     */
+    private fun bodyBand(group: Telegraph.Fight.Group, vararg shapes: Telegraph.Shape) {
+        if (shapes.isEmpty()) return
+        for (shape in shapes) HekateLevels.bodyBand(shape, floorY())
+        HekateLevels.echo(group, shapes.toList(), arena?.spec, shapes.maxOf { it.remaining })
     }
 
     /** Innerhalb des Platzes halten. */
@@ -1024,14 +1168,22 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         /** Schwellentritt: Das Wegende soll mindestens so weit vom Ziel weg sein. */
         private const val STEP_MIN_GAP = 6.0
 
+        /** Bodenfeuer: Band des Kernbodens mit Standardgrenzen (`Shape.band`), Überarbeitung 4. */
+        private const val FIRE_BAND_BELOW = 1.0
+        private const val FIRE_BAND_ABOVE = 3.0
+
+        /** Dreigestalt: Die Linie läuft in dieser Höhe über dem Boden (wie ihr Strahl) und endet an Deckung. */
+        private const val TRIFORM_LINE_HEIGHT = 1.2
+
+        /** Phasen-Szene: so viele Blickrichtungen probieren, bis die Kamerapunkte frei sind. */
+        private const val SCENE_YAWS = 8
+
         /** Abstand zur Mitte, ab dem sie das Hekataion nicht mehr berührt. */
         private const val STATUE_CLEAR = 2.6
 
-        /** Mondfinsternis: Stimmung klingt so lange nach, über den Platz hinaus so weit. */
+        /** Dunkle Stunde (vorher Mondfinsternis): Stimmung klingt so lange nach, über den Platz hinaus so weit. */
         private const val MOOD_TAIL = 30
         private const val MOOD_MARGIN = 20f
-        private const val ECLIPSE_RECOVER = 10
-        private const val SPOT_CHOICES = 3
 
         // --- Darstellung (P08): Effekt-IDs (Client: client/vfx/fx/boss/HekateFx.kt) und reine Bildgrößen ----------------
         private const val FX_TORCH_ARC = "hekate.torch_arc"
@@ -1080,9 +1232,8 @@ class HekateEntity(type: EntityType<out HekateEntity>, world: World) : DuelBossE
         /** Auftritt: Aufflammen einer Fackelsäule. */
         private const val KINDLE_TICKS = 40
 
-        /** Mondfinsternis: Stärke des Passes (Deckel 0,7), Nachlauf über die Ansage hinaus, Reichweite über den Platz. */
+        /** Dunkle Stunde (vorher Mondfinsternis): Stärke des Passes (Deckel 0,7), Reichweite über den Platz. */
         private const val ECLIPSE_STRENGTH = 0.5f
-        private const val ECLIPSE_PASS_TAIL = 20
         private const val ECLIPSE_RANGE_MARGIN = 16f
 
         /** Niederlage im Olymp: Nach dem Ende der Szene bleibt sie so lange stehen, dann verweht sie. */

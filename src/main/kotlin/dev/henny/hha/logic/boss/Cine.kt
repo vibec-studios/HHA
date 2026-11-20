@@ -48,6 +48,12 @@ object Cine {
     /** Statuszeile über der Schnellleiste. Zahlen: ticks, Farbe; Texte: Schlüssel, Argumente … */
     const val OP_HUD_LINE = 18
 
+    /**
+     * Unterleisten unter der Hauptleiste (Überarbeitung 4, PLAN 7.6; P00, Zeichnen P04). Zahlen: Anzahl n (0–4), dann je
+     * Leiste Anteil, Zustand, Kerben; Texte: je Leiste der Namensschlüssel. n = 0 blendet aus.
+     */
+    const val OP_SUB_BARS = 19
+
     /** Sprecher für die Textbox und die Stimmlage der Dialog-Laute. */
     const val SPEAKER_NARRATOR = 0
     const val SPEAKER_HERMES = 1
@@ -193,6 +199,37 @@ object Cine {
         listOf(if (visible) 1.0 else 0.0, segments.toDouble(), current.toDouble(), fraction.toDouble(), theme.toDouble()),
         listOf(nameKey, phaseKey), force = true,
     )
+
+    /**
+     * Eine Unterleiste (Teilziel): [key] Namensschlüssel, [fraction] Leben 0–1, [state] 0 ruht, 1 golden/verwundbar,
+     * 2 gebrochen; [notches] Kerben (z. B. Risse im Amboss), 0 = keine.
+     */
+    class SubBar(val key: String, val fraction: Float, val state: Int, val notches: Int = 0)
+
+    /** So viele Unterleisten zeigt der Client höchstens. */
+    const val MAX_SUB_BARS = 4
+
+    /**
+     * Höchstens vier Unterleisten unter der Hauptleiste; eine leere Liste blendet sie aus (Überarbeitung 4, PLAN 7.6).
+     * Optional [theme] (P04, hinten angefügt): Farbthema der ruhenden Leisten wie bei [phaseBar]; −1 = Thema der
+     * Hauptleiste. Geht als letzte Zahl nach den Leisten hinaus (fehlt sie, gilt −1). Teilziel-Kämpfe senden nicht
+     * selbst, sondern über `SubTargetGroup.tick` (nur bei Änderung, höchstens alle 2 Ticks).
+     */
+    fun subBars(players: Iterable<ServerPlayerEntity>, bars: List<SubBar>, theme: Int = -1) {
+        val shown = bars.take(MAX_SUB_BARS)
+        val numbers = ArrayList<Double>(2 + shown.size * 3)
+        numbers.add(shown.size.toDouble())
+        for (bar in shown) {
+            numbers.add(bar.fraction.coerceIn(0f, 1f).toDouble())
+            numbers.add(bar.state.coerceIn(0, 2).toDouble())
+            numbers.add(bar.notches.coerceIn(0, MAX_NOTCHES).toDouble())
+        }
+        numbers.add(theme.toDouble())
+        send(players, OP_SUB_BARS, numbers, shown.map { it.key }, force = true)
+    }
+
+    /** Mehr Kerben zeichnet eine 72 px breite Unterleiste nicht sinnvoll. */
+    const val MAX_NOTCHES = 8
 
     /** Zeigt an, wie viele Mitspieler schon überspringen wollen. */
     fun skipVotes(players: Iterable<ServerPlayerEntity>, votes: Int, total: Int) =

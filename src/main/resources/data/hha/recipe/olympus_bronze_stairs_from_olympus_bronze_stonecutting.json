@@ -1,0 +1,8 @@
+{
+  "type": "minecraft:stonecutting",
+  "ingredient": "hha:olympus_bronze",
+  "result": {
+    "count": 1,
+    "id": "hha:olympus_bronze_stairs"
+  }
+}

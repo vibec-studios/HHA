@@ -3,8 +3,16 @@ package dev.henny.hha.client.vfx.fx.boss
 import dev.henny.hha.client.anim.Ease
 import dev.henny.hha.client.anim.Spring
 import dev.henny.hha.client.model.HadesAnchors
+import dev.henny.hha.client.vfx.ChainEffect
 import dev.henny.hha.client.vfx.Palette
+import dev.henny.hha.client.vfx.VfxDraw
 import dev.henny.hha.client.vfx.VfxEffect
+import dev.henny.hha.client.vfx.VfxLayers
+import dev.henny.hha.client.vfx.basisOf
+import dev.henny.hha.client.vfx.lerpColor
+import dev.henny.hha.client.vfx.withAlpha
+import dev.henny.hha.entity.boss.HadesEntity
+import dev.henny.hha.entity.boss.HadesPose
 import dev.henny.hha.client.vfx.fx.FxArgs
 import dev.henny.hha.client.vfx.fx.FxClock
 import dev.henny.hha.client.vfx.fx.FxDraw
@@ -38,6 +46,8 @@ import kotlin.math.sin
  * | `hades.judge` | Saalmitte (Boden) | – | Höhe der Säulen | Radius einer Säule | Fallzeit (Ticks) | – | life | – | Versätze `dx,dz;dx,dz` |
  * | `hades.gate` | Fuß der Pforte | nach innen | Höhe | Breite | 1 = Zug der Toten tritt aus | – | life (verlängert eine stehende Pforte) | – | – |
  * | `hades.chain_snap` | Rissstelle | – | – | – | – | – | life | Hades | – |
+ * | `hades.fetter_hold` | Ankerpunkt (Boden) | – | – | – | – | – | life (endet früher, sobald Hades nicht mehr „hält“) | Hades | Gefesselter (`entity2`) |
+ * | `hades.fetter_snap` | Rissstelle | zur Hand (Rückschnellen) | – | – | – | – | life | Hades | – |
  */
 object HadesFx {
     fun init() {
@@ -45,6 +55,8 @@ object HadesFx {
         FxRegistry.register(JudgeFx.ID) { JudgeFx(it) }
         FxRegistry.register(GateFx.ID) { GateFx.create(it) }
         FxRegistry.register(ChainSnapFx.ID) { ChainSnapFx(it) }
+        FxRegistry.register(FetterHoldFx.ID) { FetterHoldFx(it) }
+        FxRegistry.register(FetterSnapFx.ID) { FetterSnapFx(it) }
     }
 
     internal val UP = Vec3d(0.0, 1.0, 0.0)
@@ -429,5 +441,187 @@ class ChainSnapFx(args: FxArgs) : FxEffect(args.life.coerceIn(MIN_LIFE, MAX_LIFE
         const val WIDTH = 0.09f
         const val ALPHA = 0.85f
         const val END_GLOW = 0.35f
+    }
+}
+
+/**
+ * `hades.fetter_hold` (Überarbeitung 4, P19): Die Fessel hält. Zwei Ketten wie das vorhandene Kettenbild
+ * ([ChainEffect], gleiche Glieder und Physik): Hades → Ankerpunkt am Boden und Gefesselter → Ankerpunkt, dazu ein
+ * schwacher Schein am Anker. Der Effekt endet, sobald Hades die Pose [HadesPose.HOLD] verlässt (jeder Ausgang der
+ * Fessel am Server setzt sie zurück): So bleibt keine Kette stehen, wenn die Fessel früher reißt. Kein Blinken; die
+ * inneren Ketten leben länger als der Effekt, damit ihr Einholen nie anfängt.
+ */
+class FetterHoldFx(args: FxArgs) : VfxEffect(args.life.coerceIn(MIN_LIFE, MAX_LIFE)) {
+    private val anchor = args.pos.add(0.0, ANCHOR_LIFT, 0.0)
+    private val hades: Entity? = args.entity
+    private val bound: Entity? = args.entity2
+    private val palette: Palette = args.palette
+    private val innerLife = (life / RETRACT_SAFE).toInt() + 1
+    private val toHand = ChainEffect(hades, anchor, null, anchor, palette, innerLife)
+    private val toBound = bound?.let { ChainEffect(it, anchor, null, anchor, palette, innerLife) }
+
+    override fun tick(world: ClientWorld) {
+        toHand.advance(world)
+        toBound?.advance(world)
+    }
+
+    override fun finished(): Boolean {
+        if (age < GRACE) return false
+        val h = hades as? HadesEntity ?: return true
+        if (h.isRemoved || h.pose != HadesPose.HOLD) return true
+        return bound == null || bound.isRemoved
+    }
+
+    override fun render(d: VfxDraw, time: Float) {
+        toHand.render(d, time)
+        toBound?.render(d, time)
+        val swell = 0.85 + 0.15 * sin(time * PULSE)
+        d.billboard(VfxLayers.GLOW_ADD, anchor, ANCHOR_GLOW * swell, withAlpha(palette.alt, ANCHOR_ALPHA), time * 0.05)
+    }
+
+    companion object {
+        const val ID = "hades.fetter_hold"
+        const val MIN_LIFE = 10
+        const val MAX_LIFE = 80
+
+        /** Erste Ticks: Die Pose kommt evtl. einen Tick nach dem Effekt an. */
+        const val GRACE = 3
+
+        /** [ChainEffect] holt ab 65 % seiner Lebenszeit ein; die inneren Ketten leben darum länger (÷ 0,6). */
+        const val RETRACT_SAFE = 0.6f
+
+        /** Anker knapp über dem Boden; Schein dort (Größe, Deckkraft ≤ 0,35, ruhiges Atmen in rad/Tick). */
+        const val ANCHOR_LIFT = 0.15
+        const val ANCHOR_GLOW = 0.7
+        const val ANCHOR_ALPHA = 0.3f
+        const val PULSE = 0.3f
+    }
+}
+
+/**
+ * `hades.fetter_snap` (Überarbeitung 4, P19): Die Fessel reißt. Ein Ruck (kurzer heller Riss-Schein, das freie Ende
+ * schnellt ein Stück zur Hand zurück), und eine Handvoll Glieder fällt, prallt einmal vom Boden ab und bleibt kurz
+ * liegen, bevor sie verblasst. Glieder wie im Kettenbild ([ChainEffect]: zwei Längs-, zwei Querstreben, Eisen mit
+ * warmem Rand). Ruhig: kein Funkenregen (die Funken schickt der Server einmal), kein Flackern.
+ */
+class FetterSnapFx(args: FxArgs) : VfxEffect(args.life.coerceIn(MIN_LIFE, MAX_LIFE)) {
+    private val at = args.pos
+    private val back = args.dir.let { if (it.lengthSquared() < 1e-6) Vec3d(0.0, 1.0, 0.0) else it.normalize() }
+    private val palette: Palette = args.palette
+    private val random = Random(args.seed)
+
+    private class Link(var pos: Vec3d, var vel: Vec3d, val axis: Vec3d, var angle: Double, var spin: Double, val floor: Double) {
+        var prevPos = pos
+        var prevAngle = angle
+        var bounced = false
+        var resting = false
+    }
+
+    private val links = ArrayList<Link>()
+    private var ready = false
+
+    private fun init(world: ClientWorld) {
+        ready = true
+        for (i in 0 until LINKS) {
+            val along = (i - (LINKS - 1) / 2.0) / LINKS * SPREAD
+            val start = at.add(back.multiply(along))
+            val out = Vec3d(random.nextDouble() - 0.5, 0.0, random.nextDouble() - 0.5).multiply(OUT_SPEED * 2.0)
+            val vel = out.add(0.0, UP_MIN + random.nextDouble() * (UP_MAX - UP_MIN), 0.0)
+            val raw = Vec3d(random.nextDouble() - 0.5, random.nextDouble() - 0.5, random.nextDouble() - 0.5)
+            val axis = if (raw.lengthSquared() < 1e-4) Vec3d(0.0, 1.0, 0.0) else raw.normalize()
+            val floor = FxLib.groundY(world, start.x, start.y, start.z)
+            links.add(Link(start, vel, axis, random.nextDouble() * PI * 2.0, (random.nextDouble() - 0.5) * SPIN * 2.0, floor))
+        }
+    }
+
+    override fun tick(world: ClientWorld) {
+        if (!ready) init(world)
+        for (link in links) {
+            link.prevPos = link.pos
+            link.prevAngle = link.angle
+            if (link.resting) continue
+            link.vel = link.vel.add(0.0, -GRAVITY, 0.0).multiply(DRAG)
+            link.pos = link.pos.add(link.vel)
+            link.angle += link.spin
+            if (link.pos.y <= link.floor + REST_LIFT) {
+                link.pos = Vec3d(link.pos.x, link.floor + REST_LIFT, link.pos.z)
+                if (!link.bounced) {
+                    link.bounced = true
+                    link.vel = Vec3d(link.vel.x * BOUNCE_KEEP, -link.vel.y * BOUNCE, link.vel.z * BOUNCE_KEEP)
+                    link.spin *= BOUNCE
+                } else {
+                    link.resting = true
+                    link.vel = Vec3d.ZERO
+                }
+            }
+        }
+    }
+
+    override fun render(d: VfxDraw, time: Float) {
+        val k = (time / life).coerceIn(0f, 1f)
+        val fade = if (k < FADE_FROM) 1f else (1f - (k - FADE_FROM) / (1f - FADE_FROM)).coerceIn(0f, 1f).let { it * it }
+        // Der Ruck: kurzer Schein am Riss, das freie Ende schnellt ein Stück zur Hand.
+        if (time < JERK_TICKS) {
+            val j = time / JERK_TICKS
+            val glow = (1f - j) * (1f - j)
+            d.billboard(VfxLayers.FLARE_ADD, at, FLASH_SIZE * (0.6 + 0.4 * glow), withAlpha(palette.alt, FLASH_ALPHA * glow), 0.0)
+            val tip = at.add(back.multiply(RECOIL * Ease.outCubic(j)))
+            d.ribbon(VfxLayers.GLOW_ADD, listOf(at, tip), { RECOIL_WIDTH * (1.0 - j) }, { withAlpha(palette.alt, RECOIL_ALPHA * glow * (1f - it * 0.5f)) })
+        }
+        if (fade <= 0.01f || links.isEmpty()) return
+        val partial = (time - age).coerceIn(0f, 1f).toDouble()
+        val color = withAlpha(lerpColor(IRON, palette.alt, HEAT), fade)
+        for (link in links) {
+            val center = link.prevPos.lerp(link.pos, partial)
+            val angle = link.prevAngle + (link.angle - link.prevAngle) * partial
+            val (u, v) = basisOf(link.axis)
+            val dir = u.multiply(cos(angle)).add(v.multiply(sin(angle)))
+            val axial = dir.multiply(LINK_H)
+            val lateral = link.axis.multiply(LINK_W)
+            val normal = dir.crossProduct(link.axis).multiply(LINK_TH)
+            d.box(VfxLayers.CHAIN_ALPHA, center.add(lateral), axial, link.axis.multiply(LINK_TH), normal, color)
+            d.box(VfxLayers.CHAIN_ALPHA, center.subtract(lateral), axial, link.axis.multiply(LINK_TH), normal, color)
+            d.box(VfxLayers.CHAIN_ALPHA, center.add(axial), dir.multiply(LINK_TH), lateral, normal, color)
+            d.box(VfxLayers.CHAIN_ALPHA, center.subtract(axial), dir.multiply(LINK_TH), lateral, normal, color)
+        }
+    }
+
+    companion object {
+        const val ID = "hades.fetter_snap"
+        const val MIN_LIFE = 16
+        const val MAX_LIFE = 60
+
+        /** Glieder: Anzahl, Streuung entlang der Kette (Blöcke), Maße wie im Kettenbild. */
+        const val LINKS = 6
+        const val SPREAD = 1.4
+        const val LINK_H = 0.21
+        const val LINK_W = 0.085
+        const val LINK_TH = 0.024
+
+        /** Fall: seitlich, nach oben (Blöcke/Tick), Schwerkraft, Luftwiderstand, Drehung (rad/Tick). */
+        const val OUT_SPEED = 0.06
+        const val UP_MIN = 0.05
+        const val UP_MAX = 0.14
+        const val GRAVITY = 0.04
+        const val DRAG = 0.98
+        const val SPIN = 0.35
+
+        /** Ein Aufprall: so viel Sprung bleibt, so viel Gleiten; Glieder liegen so hoch über dem Boden. */
+        const val BOUNCE = 0.3
+        const val BOUNCE_KEEP = 0.6
+        const val REST_LIFT = 0.03
+
+        /** Ruck: Dauer (Ticks), Schein, Rückschnellen zur Hand (Blöcke, Breite, Deckkraft ≤ 0,35 für Lichthöfe). */
+        const val JERK_TICKS = 6f
+        const val FLASH_SIZE = 0.9
+        const val FLASH_ALPHA = 0.35f
+        const val RECOIL = 1.2
+        const val RECOIL_WIDTH = 0.08
+        const val RECOIL_ALPHA = 0.3f
+
+        /** Verblassen ab diesem Anteil der Lebenszeit; Eisenfarbe und warmer Anteil. */
+        const val FADE_FROM = 0.6f
+        val IRON = 0xFFC8CCD6.toInt()
+        const val HEAT = 0.25f
     }
 }

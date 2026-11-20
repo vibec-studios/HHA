@@ -2,13 +2,12 @@ package dev.henny.hha.logic.world
 
 import dev.henny.hha.HhaSounds
 import dev.henny.hha.logic.Vfx
+import dev.henny.hha.world.arena.ApproachSpec
+import dev.henny.hha.world.arena.Waypoint
+import dev.henny.hha.world.olymp.OlympusArenas
 import dev.henny.hha.world.olymp.OlympusBridges
 import dev.henny.hha.world.olymp.OlympusLayout
-import dev.henny.hha.world.olymp.SkyCanvas
-import net.minecraft.block.Block
-import net.minecraft.block.BlockState
 import net.minecraft.block.Blocks
-import net.minecraft.entity.EntityType
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.server.world.ServerWorld
@@ -21,6 +20,8 @@ import net.minecraft.util.math.BlockPos
 import net.minecraft.util.math.ChunkPos
 import net.minecraft.util.math.Vec3d
 import java.util.UUID
+import kotlin.math.abs
+import kotlin.math.hypot
 
 /**
  * Der Weg durch den Olymp (Überarbeitung 2, PLAN 8.2). Gerüst von P00, gefüllt von P04:
@@ -66,6 +67,9 @@ object OlympusPath {
     /**
      * Goldene Fernsäule für [player] zum nächsten Ziel laut [OlympusProgress] und [OlympusLayout]: Hermes (B), dann
      * Brontes (D), Kratos (E), Zeus (F). Nach Zeus nichts. Nur im Olymp.
+     *
+     * Überarbeitung 4 (P23, PLAN 5.4): Die Säule steht auf dem nächsten Wegpunkt des Wegs **zur** nächsten Insel (die
+     * Brücke, die dort ankommt, [beaconSpot]), erst ab dem Kopftor auf dem Altar. Beide Modi.
      */
     fun pointNext(player: ServerPlayerEntity) {
         val world = player.entityWorld
@@ -76,8 +80,143 @@ object OlympusPath {
         val last = lastBeacon[player.uuid]
         if (last != null && now - last in 0 until BEACON_REPEAT) return
         lastBeacon[player.uuid] = now
-        val spot = next.altar ?: next.center
-        Vfx.farBeacon(player, Vec3d(spot.x + 0.5, spot.y.toDouble(), spot.z + 0.5), BEACON_TICKS, false, Vfx.Style.GOLD)
+        Vfx.farBeacon(player, beaconSpot(player, next), BEACON_TICKS, false, Vfx.Style.GOLD)
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Wegführung über die Wegpunkte der Brücken (Überarbeitung 4, P23)
+    // ---------------------------------------------------------------------------------------------
+
+    /** Insel betreten: so weit unter … (gleiches Fenster wie `RpgStory.onIsle`) */
+    const val ISLE_BELOW = 16
+
+    /** … bis so weit über ihrem Boden. */
+    const val ISLE_ABOVE = 48
+
+    /** Kleiner Vorsprung, ab dem ein Wegpunkt als „vor“ bzw. „hinter“ dem Spieler gilt (Anteil der Weglänge). */
+    private const val K_EPS = 1e-3
+
+    /** Textstufe „in die Insel hinein“ (Eingang bzw. beim Rückweg der Altar, solange man noch nicht auf der Insel ist). */
+    const val STEP_INTO = 3
+
+    /** Textstufe „auf der Insel“ (Ziel ist der Altar). */
+    const val STEP_ON_ISLE = 4
+
+    /**
+     * Ein Schritt des Wegs zu einer Insel: Zielpunkt [pos]; [point] = Wegpunkt (oder `null` = Altar bzw. Inselmitte);
+     * [final] = auf der letzten Brücke vor der Insel (bzw. schon auf ihr); [n] = Stufe für den Zieltext (0 Brückenkopf,
+     * 1 Engstelle, 2 Kopftor, [STEP_INTO], [STEP_ON_ISLE]); [forward] = Brücke in Bauweise gelaufen (Rückweg: false).
+     */
+    class WayStep(val pos: Vec3d, val bridge: ApproachSpec?, val point: Waypoint?, val n: Int, val final: Boolean, val forward: Boolean) {
+        /** Rang für „am weitesten fortgeschritten“ (Mehrspieler-Zieltext): auf der letzten Brücke zählt die Stufe. */
+        val rank: Int get() = if (final) 10 + n else 0
+    }
+
+    /** Brücken in Pfadreihenfolge (A–B … E–F) mit ihrem Weg aus dem Vertrag. */
+    private val ways: List<Pair<OlympusBridges.Bridge, ApproachSpec>> by lazy {
+        OlympusBridges.ALL.map { b -> b to OlympusArenas.APPROACHES.first { it.id == "bridge_${b.id}" } }
+    }
+
+    /** Ziel auf der Insel selbst: der Altar, sonst die Mitte. */
+    fun isleGoal(isle: OlympusLayout.Isle): Vec3d = isle.altar?.let { Vec3d.ofBottomCenter(it) } ?: isle.centerVec
+
+    /** Steht [pos] auf [isle] (waagerecht im Inselradius, Höhe [ISLE_BELOW] … [ISLE_ABOVE] um den Boden)? */
+    fun onIsle(isle: OlympusLayout.Isle, pos: Vec3d): Boolean =
+        hypot(pos.x - isle.centerVec.x, pos.z - isle.centerVec.z) <= isle.radius &&
+            pos.y >= isle.floorY - ISLE_BELOW && pos.y <= isle.floorY + ISLE_ABOVE
+
+    /**
+     * Nächster Schritt für [player] auf dem Weg zur Insel [target] (P23, Briefing 1): Brückenkopf → Engstelle → Kopftor →
+     * Inseleingang, über jede Brücke dazwischen; auf der Insel der Altar. Vorwärts gilt `Approach.next` (erreichte Punkte
+     * merkt `Approach` je Spieler); wer eine Brücke rückwärts läuft (Kapitel U0 von F zurück zum Dreiweg), bekommt die
+     * Punkte in umgekehrter Folge nach seinem Fortschritt k. Außerhalb des Olymps oder ohne Lage: `null`.
+     *
+     * Lage des Spielers: auf einer Brücke (`Approach.progress` ≠ null) → diese; sonst auf einer Insel → die Brücke von
+     * dort zum Ziel; sonst die nächste Insel (Flug, Nebeninsel).
+     */
+    fun wayTo(player: ServerPlayerEntity, target: OlympusLayout.Isle): WayStep? {
+        if (player.entityWorld.registryKey != OlympusLayout.WORLD) return null
+        val pos = player.entityPos
+        val t = OlympusLayout.ISLES.indexOf(target)
+        if (t < 0) return null
+        if (onIsle(target, pos)) return WayStep(isleGoal(target), null, null, STEP_ON_ISLE, final = true, forward = true)
+        // Auf einer Brücke: die, deren Weglinie den Spieler einschließt (zwei nur an einem Inselrand; dann die zum Ziel hin).
+        val on = ways.indices.mapNotNull { j -> Approach.progress(player, ways[j].second)?.let { j to it } }
+            .minByOrNull { (j, _) -> if (t >= j + 1) t - (j + 1) else j - t }
+        if (on != null) {
+            val (j, k) = on
+            return if (t >= j + 1) forwardOnBridge(player, j, k, t) else reverseOnBridge(player, j, k, t)
+        }
+        val here = OlympusLayout.ISLES.indexOfFirst { onIsle(it, pos) }.takeIf { it >= 0 }
+            ?: OlympusLayout.ISLES.indices.minBy { i -> OlympusLayout.ISLES[i].let { hypot(pos.x - it.centerVec.x, pos.z - it.centerVec.z) - it.radius } }
+        return when {
+            here == t -> WayStep(isleGoal(target), null, null, STEP_ON_ISLE, final = true, forward = true)
+            here < t -> forwardFromIsle(player, here, t)
+            else -> reverseFromIsle(player, here - 1, t)
+        }
+    }
+
+    /** Vorwärts von Insel [j] über Brücke [j]: nächster nicht erreichter Punkt, sonst wieder ab dem Brückenkopf. */
+    private fun forwardFromIsle(player: ServerPlayerEntity, j: Int, t: Int): WayStep {
+        val spec = ways[j].second
+        val p = Approach.next(player, spec) ?: spec.points.first()
+        return step(spec, p, final = j + 1 == t, forward = true)
+    }
+
+    /** Vorwärts auf Brücke [j] bei Fortschritt [k]. Alles erreicht → nächste Brücke bzw. Altar der Zielinsel. */
+    private fun forwardOnBridge(player: ServerPlayerEntity, j: Int, k: Double, t: Int): WayStep {
+        val spec = ways[j].second
+        val ks = pointKs(spec)
+        val p = Approach.next(player, spec)
+            ?: spec.points.firstOrNull { (ks[it.id] ?: 1.0) > k + K_EPS && !near(player, it) }
+        if (p != null) return step(spec, p, final = j + 1 == t, forward = true)
+        if (j + 1 == t) return WayStep(isleGoal(OlympusLayout.ISLES[t]), spec, null, STEP_INTO, final = true, forward = true)
+        return forwardFromIsle(player, j + 1, t)
+    }
+
+    /** Rückwärts über Brücke [j] (von Insel j + 1 nach j), der Spieler steht noch auf Insel j + 1. */
+    private fun reverseFromIsle(player: ServerPlayerEntity, j: Int, t: Int): WayStep = reverseOnBridge(player, j, Double.POSITIVE_INFINITY, t)
+
+    /**
+     * Rückwärts auf Brücke [j] bei Fortschritt [k]: Kopftor → Engstelle → Brückenkopf (der Inseleingang liegt auf der
+     * Insel, die man verlässt). Ein Punkt ist erledigt, wenn er hinter dem Spieler liegt (k des Punkts ≥ k) oder in
+     * Reichweite ist. Alles erledigt → Brücke davor bzw. Altar der Zielinsel.
+     */
+    private fun reverseOnBridge(player: ServerPlayerEntity, j: Int, k: Double, t: Int): WayStep {
+        val spec = ways[j].second
+        val ks = pointKs(spec)
+        val order = spec.points.dropLast(1).reversed()
+        val idx = order.indexOfFirst { (ks[it.id] ?: 0.0) < k - K_EPS && !near(player, it) }
+        if (idx >= 0) return WayStep(order[idx].pos, spec, order[idx], idx, final = j == t, forward = false)
+        if (j == t) return WayStep(isleGoal(OlympusLayout.ISLES[t]), spec, null, STEP_INTO, final = true, forward = false)
+        return reverseFromIsle(player, j - 1, t)
+    }
+
+    private fun step(spec: ApproachSpec, p: Waypoint, final: Boolean, forward: Boolean) =
+        WayStep(p.pos, spec, p, spec.points.indexOf(p).coerceAtLeast(0), final, forward)
+
+    private fun near(player: ServerPlayerEntity, p: Waypoint): Boolean =
+        hypot(player.x - p.pos.x, player.z - p.pos.z) <= p.reach && abs(player.y - p.pos.y) <= Approach.HEIGHT_RANGE
+
+    private val pointKCache = HashMap<String, Map<String, Double>>()
+
+    /** Lage jedes Wegpunkts auf der Weglinie (0 … 1), wie `Approach` sie rechnet. */
+    private fun pointKs(spec: ApproachSpec): Map<String, Double> = pointKCache.getOrPut(spec.id) {
+        val line = Approach.route(spec)
+        spec.points.associate { it.id to (Approach.measure(line, Double.MAX_VALUE, it.pos) ?: 0.0) }
+    }
+
+    /**
+     * Fuß der Fernsäule zur Insel [isle] (Briefing 5): der nächste nicht erreichte Wegpunkt der Brücke, die auf [isle]
+     * ankommt; ab dem Kopftor (nächster Punkt ist der Eingang oder alles erreicht) sowie auf oder hinter der Insel der
+     * Altar. Wer noch vor dieser Brücke ist, sieht die Säule an ihrem Brückenkopf in der Ferne.
+     */
+    fun beaconSpot(player: ServerPlayerEntity, isle: OlympusLayout.Isle): Vec3d {
+        val goal = isleGoal(isle)
+        val way = ways.firstOrNull { it.first.to === isle }?.second ?: return goal
+        if (onIsle(isle, player.entityPos)) return goal
+        val p = Approach.next(player, way) ?: return goal
+        return if (p === way.points.last()) goal else p.pos
     }
 
     /** Nächste Station auf dem Pfad (ohne Hekate, die am Dreiweg quer dazu steht), `null` nach Zeus. */
@@ -227,21 +366,5 @@ object OlympusPath {
                 }
             }
         }
-    }
-
-    /** Leinwand direkt in der Welt, auf [box] beschränkt (nur geladene Chunks, siehe [loaded]). */
-    private class LiveCanvas(private val world: ServerWorld, box: BlockBox) : SkyCanvas() {
-        override val minX = box.minX
-        override val maxX = box.maxX
-        override val minZ = box.minZ
-        override val maxZ = box.maxZ
-        private val pos = BlockPos.Mutable()
-        override fun put(x: Int, y: Int, z: Int, state: BlockState) {
-            if (inside(x, z) && y in world.bottomY..world.topYInclusive) world.setBlockState(pos.set(x, y, z), state, Block.NOTIFY_LISTENERS)
-        }
-        override fun isFree(x: Int, y: Int, z: Int): Boolean = inside(x, z) && world.getBlockState(pos.set(x, y, z)).isAir
-        override fun ground(x: Int, z: Int): Int = 0
-        override fun chest(x: Int, y: Int, z: Int) {}
-        override fun spawner(x: Int, y: Int, z: Int, type: EntityType<*>) {}
     }
 }

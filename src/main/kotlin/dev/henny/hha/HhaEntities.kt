@@ -11,6 +11,7 @@ import dev.henny.hha.entity.boss.DivineParcelEntity
 import dev.henny.hha.entity.boss.HadesEntity
 import dev.henny.hha.entity.boss.KronosEntity
 import dev.henny.hha.entity.boss.CoreEntity
+import dev.henny.hha.entity.boss.SubTargetEntity
 import dev.henny.hha.entity.boss.HermaEntity
 import dev.henny.hha.entity.boss.HermesBoltEntity
 import dev.henny.hha.entity.boss.HermesEntity
@@ -88,6 +89,9 @@ object HhaEntities {
     val GRIFFIN: EntityType<dev.henny.hha.entity.mob.GriffinEntity> = boss("griffin", 1.4f, 1.8f, SpawnGroup.MONSTER, ::GriffinEntity)
     val AUTOMATON: EntityType<dev.henny.hha.entity.mob.AutomatonEntity> = boss("automaton", 1.1f, 2.8f, SpawnGroup.MONSTER, ::AutomatonEntity)
 
+    // Überarbeitung 4 (PLAN 7.6): schlagbares Teilziel ohne KI (Gerüst P00, Besitzer P04); Vorbild CORE.
+    val SUB_TARGET: EntityType<dev.henny.hha.entity.boss.SubTargetEntity> = boss("sub_target", 1.2f, 1.6f, SpawnGroup.MISC, ::SubTargetEntity)
+
     fun init() {
         FabricDefaultAttributeRegistry.register(HERMES, HermesEntity.attributes())
         FabricDefaultAttributeRegistry.register(SERPENT, SerpentEntity.attributes())
@@ -109,5 +113,6 @@ object HhaEntities {
         FabricDefaultAttributeRegistry.register(KURETE, dev.henny.hha.entity.mob.KureteEntity.attributes())
         FabricDefaultAttributeRegistry.register(GRIFFIN, dev.henny.hha.entity.mob.GriffinEntity.attributes())
         FabricDefaultAttributeRegistry.register(AUTOMATON, dev.henny.hha.entity.mob.AutomatonEntity.attributes())
+        FabricDefaultAttributeRegistry.register(SUB_TARGET, dev.henny.hha.entity.boss.SubTargetEntity.attributes())
     }
 }

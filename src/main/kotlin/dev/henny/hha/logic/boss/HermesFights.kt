@@ -37,7 +37,8 @@ object HermesFights {
     fun isProtected(world: net.minecraft.world.World, pos: BlockPos): Boolean {
         val server = world as? ServerWorld ?: return false
         if (active[server.registryKey]?.arena?.contains(pos) == true) return true
-        // Arenen der neuen Bosse (Überarbeitung 2, Arenas.kt).
+        // Arenen der neuen Bosse (Überarbeitung 2, Arenas.kt) und der Tartaros-Wächter (Überarbeitung 4, GuardianArenas:
+        // `spec.box`, solange der Wächter steht; sie hängen in derselben Liste).
         if (Arenas.protects(server, pos)) return true
         // Der Palast des Hades lässt sich weder aufbrechen noch umgraben.
         if (server.registryKey == dev.henny.hha.logic.world.HadesGate.TARTAROS) {

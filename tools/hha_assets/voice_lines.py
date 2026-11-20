@@ -62,6 +62,9 @@ SCENE_SPEAKERS = {
     'hha.rpg.scene.end.line.1': 'narrator',
     'hha.rpg.scene.end.line.2': 'narrator',
     'hha.kampe.stage.defeat': 'narrator',
+    # Überarbeitung 4 (P25, 19.11.2026): neue Kampfzeilen. Die von Zeus, Hekate, Brontes und Kratos (`*.line.*`) laufen
+    # schon über EXTRA_PREFIXES; hier steht nur Kampes Ausruf beim gesprengten Kettenschloss. Nur vorbereitet, nichts erzeugt.
+    'hha.kampe.line.chains': 'kampe',
 }
 TARGET_LUFS = -14.0
 
@@ -110,6 +113,12 @@ CAST = {
         'voice': 'pqHfZKP75CvOlQylNhV4',  # Platzhalter: Bill; Befehlston, kurz und hart.
         'settings': {'stability': 0.7, 'similarity_boost': 0.8, 'style': 0.3, 'use_speaker_boost': True},
         'filter': 'asetrate=44100*0.9,aresample=44100,atempo=1.04,acompressor=threshold=-16dB:ratio=4:attack=5:release=90,alimiter=limit=0.95',
+    },
+    # Überarbeitung 4: PLATZHALTER für Kampe (dieselbe vorgefertigte Stimme wie Hekate, tiefer und zischend gefiltert).
+    'kampe': {
+        'voice': 'XB0fDUnXU5powFXDhCwa',  # Platzhalter: Charlotte; Kampe faucht, kurz und wütend.
+        'settings': {'stability': 0.45, 'similarity_boost': 0.75, 'style': 0.45, 'use_speaker_boost': True},
+        'filter': 'asetrate=44100*0.86,aresample=44100,atempo=1.06,highpass=f=90,aecho=0.8:0.5:40:0.2,alimiter=limit=0.95',
     },
     'narrator': {
         'voice': 'JBFqnCBsd6RMkjVDRZzb',  # George, "Warm, Captivating Storyteller"

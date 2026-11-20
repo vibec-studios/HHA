@@ -1,0 +1,7 @@
+{
+  "parent": "minecraft:block/cube_column_horizontal",
+  "textures": {
+    "end": "hha:block/olympus_marble_pillar_top",
+    "side": "hha:block/olympus_marble_pillar"
+  }
+}

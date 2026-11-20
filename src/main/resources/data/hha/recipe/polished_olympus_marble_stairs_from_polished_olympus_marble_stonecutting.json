@@ -1,0 +1,8 @@
+{
+  "type": "minecraft:stonecutting",
+  "ingredient": "hha:polished_olympus_marble",
+  "result": {
+    "count": 1,
+    "id": "hha:polished_olympus_marble_stairs"
+  }
+}

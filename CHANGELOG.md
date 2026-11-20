@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.9.0 — Arenas, battle approaches and boss mechanics (2026-11-20)
+
+### Added — Fourth overhaul: arenas, approaches and mechanics after HHA Blood and Void
+- **35 new blocks** in the creative tab *H&H World* ([docs](docs/bloecke.md)): Olympus marble (natural, bricks, polished, chiseled with laurel, pillar, gilded), storm marble with pulsing lightning veins, Olympus bronze, a translucent storm cloud; Tartarus basalt (natural, bricks, polished, chiseled with bident, pillar), soul vein basalt (heartbeat pulse), ember basalt, Tartarus bronze; stairs, slabs and walls; 32 px textures painted on 8-step ramps with light from the top left. Mined with a pickaxe, variants in the stonecutter, no base recipe
+- **Arena devices** (unbreakable): messenger bell (Hermes), grounding rod (Zeus), chain post (Jailer), sluice wheel (Tantalus). One right click, golden only when it does something now; the status line says why an idle device does nothing
+- **Arenas that take part** ([docs](docs/bosse-allgemein.md#arena)): every arena has a flat core and raised levels at the edge (terraces, stages, gallery, walkway, ledge, rim step). Raised ground protects only from ground attacks; every boss has attacks that reach the levels. **Cover is line of sight**: pillars, gates, standards, molds, the titan and more block named attacks, with a golden rune and a "covered"/"seen" status line; spent cover returns at phase start or after the fight
+- **Sub-targets with their own bars** (up to four under the boss bar) and **breaking arena parts** (floes, gallery arches, walkway, chains), always announced at thresholds or phase starts
+- **Signature mechanics**: Hermes' messenger run with bells and breaking columns; Hekate's *Dark Hour* (a fair stealth phase, replaces the lunar eclipse); Brontes' hammer gets stuck after a clean miss and his anvil cracks and breaks; Bia as a sub-target (break her and Kratos rages); Zeus' island breaks apart and the grounding grip throws his lightning back; Hades' fetters with three ways out; Kronos' hourglass ray with pillar cover and rewind; the Jailer's chain posts, Sisyphus' boulder rolled back, Ixion's fetter bars, Tantalus' sluices, Kampe's chain locks
+- **Battle approaches**: the five Olympus bridges are themed ways (Way of the Messengers, Threshold Way, Slag Way, Army Road, Sky Stair) with head gates, a narrow pass, three events and a pulse that grows louder towards the boss; the Hades palace has a closed approach in five sections (obelisk avenue with two colossi, propylon, corridor of shades, hall of the judges, Styx bridge, hound gate); every warden site has a short approach road with a landmark
+- **Richer buildings**: Hekate's crossroads with gates, portcullises, torch towers and terraces; the forge hall on D; the stairs of power with standards and landing; Zeus' throne with six floes, storm pillars and a ring of storm clouds; the palace courtyard with colonnades, garden, treasury and walkable towers; the throne hall with walkway, gallery stairs and floor lines; the Bronze Fortress and Titan Prison with walkable towers, crane, ledge and locks; reworked punishment sites; basalt vents, steles, ruins and skeletons in the wastes
+- **Arena blueprints**: every arena is repaired from its blueprint when a fight starts (also in old worlds and in the Tartarus) and restored exactly after victory, abort, an empty arena, server stop or a crash
+- **Olympus retrofit** for old worlds: islands and bridges are rebuilt in slices as you approach (chests stay); switch `world_retrofit`
+- RPG mode: goals and arrow follow the new waypoints (bridge head → narrow pass → head gate → entrance → altar; palace approach; warden approach roads), a narrator line per bridge, new looks for `rpg.isle.f` and `rpg.palace`
+- New sounds: nine approach pulses and twelve arena sounds (bell, rod, post, sluice, collapse, crumble, gate, sub-target hit and break, stuck weapon, fetter, cover)
+- New commands (OP): `/hha arena list|show|repair|restore|part`, `/hha world retrofit status|run|all`, `/hha sub test`, `/hha device`, `/hha approach`, `/hha deco give`
+
+### Changed — Fourth overhaul
+- Wardens are treated like bosses: block protection in their arena core and a knock-out instead of death while they stand
+- Ground attacks of all bosses only hit inside the height band of the core; bosses and wardens step up to 1.1 blocks
+- Fight numbers changed only where a mechanic needs it, e.g. Brontes' stuck hammer opens him for 60 ticks, Hades' soul chains became the fetter (16 ticks warning, 40 ticks leash), Kronos' standstill strikes became the hourglass ray, Ixion tilts 40 ticks and needs two hits per fetter, Kampe can now be hit off the titan twice (second dive sequence at 25 %). Overall difficulty (health ×1.6, damage ×1.35, player scaling, RPG factors) is unchanged
+- Hermes uses the HHA health bar with four sections instead of the vanilla boss bar; only fight participants can ring the bells
+- Hekataion is 7 high, Zeus' altar and throne sit on the new stage
+- The cherry trees and the scale statue on islands A and B no longer have floating parts; the scales now hold hanging lanterns
+
+### Fixed
+- Client crash in busy fights (e.g. Zeus with two players): an effect that spawned another effect on impact broke the effect list (since 0.8.5)
+- *Last Stand* now really shortens the pauses of all Olympus duel bosses (×0.7), as documented
+- Floating blocks in several Olympus and Tartarus buildings (verified by a floating-block counter in the worldgen check)
+- The grey concrete cloud over Zeus' throne, the stick pillars on F and the dotted pattern on Hekate's crossroads are gone
+
 ## 0.8.5 — Olympus, RPG mode, boss presentation (2026-11-17)
 
 ### Added — Third overhaul: boss presentation, RPG as its own game, tunnel lobby

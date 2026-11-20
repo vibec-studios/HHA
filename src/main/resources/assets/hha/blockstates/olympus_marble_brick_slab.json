@@ -1,0 +1,13 @@
+{
+  "variants": {
+    "type=bottom": {
+      "model": "hha:block/olympus_marble_brick_slab"
+    },
+    "type=double": {
+      "model": "hha:block/olympus_marble_bricks"
+    },
+    "type=top": {
+      "model": "hha:block/olympus_marble_brick_slab_top"
+    }
+  }
+}

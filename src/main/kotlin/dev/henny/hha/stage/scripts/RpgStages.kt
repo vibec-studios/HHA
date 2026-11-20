@@ -174,6 +174,16 @@ object RpgStages {
     /** Blickziel der Brückenfahrt: Front des Tempels. */
     private val TEMPLE_FRONT by lazy { HEAVEN_ANCHOR.at(OlympusLayout.B.centerVec.x, OlympusLayout.B.floorY + 8.0, OlympusLayout.B.center.z + 18.0) }
 
+    /**
+     * Flughöhe über dem Deck von Insel B am Ende der Brückenfahrt (Überarbeitung 4, P23): Windbögen (Krone +6) und
+     * Flügeltor (Sturz bis +8, P06) stehen jetzt auf den letzten 30 Zellen; die alte Bahn (B-Boden + 7) lief durch ihre
+     * Kronen. Gemessen im Bauplan `plan_olymp_bridge_ab` (Bericht P23).
+     */
+    const val HEAVEN_BRIDGE_CLEAR = 10.0
+
+    /** Kamerahöhe der Brückenfahrt relativ zum Anker (Ankunftsplatz auf A). */
+    private val BRIDGE_FLIGHT_U get() = OlympusLayout.B.floorY + HEAVEN_BRIDGE_CLEAR - HEAVEN_ANCHOR.y
+
     private fun arrivalHeaven(): StageScript = stage(ARRIVAL_HEAVEN, ARRIVAL_HEAVEN_LENGTH) {
         val k = "$KEY.arrival"
         val perch = HERMES_PERCH
@@ -196,7 +206,7 @@ object RpgStages {
         shot(262, 330, cam = listOf(Key.At(3.6, 2.8, 3.6), Key.At(3.8, -2.8, 3.2)), look = listOf(Key.Group(1.0)), fov = 60f to 64f, arc = true, cut = true)
         shot(
             330, 460,
-            cam = listOf(Key.Last, Key.At(5.0, 1.2, 9.0), Key.At(28.0, -3.0, 12.5), Key.At(58.0, 2.5, 14.5), Key.At(80.0, -1.0, 15.0)),
+            cam = listOf(Key.Last, Key.At(5.0, 1.2, 9.0), Key.At(28.0, -3.0, 12.5), Key.At(58.0, 2.5, BRIDGE_FLIGHT_U - 1.0), Key.At(80.0, -1.0, BRIDGE_FLIGHT_U)),
             look = listOf(Key.Last, Key.At(26.0, 0.0, 4.0), TEMPLE_FRONT), fov = 64f to 72f, follow = 0.15f, handheld = 0.6f,
         )
         backToEyes(460, ARRIVAL_HEAVEN_LENGTH)
@@ -274,6 +284,14 @@ object RpgStages {
     /** Hekate steht rechts zwischen Gruppe und Tor, zur Gruppe gewandt. */
     private val HEKATE_SPOT = Key.At(3.5, 3.5, 0.0)
 
+    /**
+     * Hinter dem Ankunftsplatz steigt seit P07 die Basalttreppe zum Dreiweg an (ab 1,5 Blöcke östlich, rechts eine Wange):
+     * Kamerapunkte hinter der Gruppe liegen deshalb höchstens [HELL_BEHIND] zurück, links und höher (Bericht P23).
+     */
+    const val HELL_BEHIND = -0.5
+    const val HELL_BEHIND_SIDE = -0.6
+    const val HELL_BEHIND_UP = 2.6
+
     private fun arrivalHell(): StageScript = stage(ARRIVAL_HELL, ARRIVAL_HELL_LENGTH) {
         val k = "$KEY.arrival"
         val gate = GATE_CENTER
@@ -293,10 +311,10 @@ object RpgStages {
         )
         shot(250, 300, cam = listOf(Key.At(3.5, -2.6, 3.2), Key.At(3.8, 2.6, 3.0)), look = listOf(Key.Group(1.0)), fov = 60f to 62f, arc = true, cut = true)
         shot(
-            300, 400, cam = listOf(Key.At(-2.5, 0.6, 2.4), Key.At(gate.f - 3.2, 0.2, gate.u - 1.3)),
+            300, 400, cam = listOf(Key.At(HELL_BEHIND, HELL_BEHIND_SIDE, HELL_BEHIND_UP + 0.8), Key.At(gate.f - 3.2, 0.2, gate.u - 1.3)),
             look = listOf(Key.At(gate.f, 0.0, gate.u - 0.5), Key.At(gate.f + 2.0, 0.0, gate.u - 0.2)), fov = 62f to 50f, cut = true, follow = 0.15f,
         )
-        backToEyes(400, ARRIVAL_HELL_LENGTH, color = NIGHT, holdFrom = NIGHT_STRENGTH)
+        backToEyes(400, ARRIVAL_HELL_LENGTH, color = NIGHT, holdFrom = NIGHT_STRENGTH, behind = HELL_BEHIND, side = HELL_BEHIND_SIDE, up = HELL_BEHIND_UP)
 
         // --- Ankunft bei Nacht ----------------------------------------------------------------------
         mark(0, "start")
@@ -380,13 +398,17 @@ internal fun StageBuilder.chapterCard(at: Int, id: String, color: Int, hell: Boo
 
 /**
  * Rückkehr in die Augen mit Schnitt: kurze Blende in [color] über den Schnitt bei [from] ([RpgStages.DIP_IN] Ticks vorher zu, dann
- * in [RpgStages.DIP_OUT] Ticks auf), Kamera hinter Darsteller 0, dann `Key.Eye`. Endet bei [to] (= Skriptlänge).
+ * in [RpgStages.DIP_OUT] Ticks auf), Kamera hinter Darsteller 0 ([behind] vor, [side] rechts, [up] hoch), dann `Key.Eye`. Endet
+ * bei [to] (= Skriptlänge).
  */
-internal fun StageBuilder.backToEyes(from: Int, to: Int, color: Int = RpgStages.LIGHT, dip: Float = 1f, holdFrom: Float = 0f) {
+internal fun StageBuilder.backToEyes(
+    from: Int, to: Int, color: Int = RpgStages.LIGHT, dip: Float = 1f, holdFrom: Float = 0f,
+    behind: Double = -1.8, side: Double = 0.9, up: Double = 2.0,
+) {
     fade(from - RpgStages.DIP_IN, color, holdFrom, dip, RpgStages.DIP_IN)
     fade(from, color, dip, 0f, RpgStages.DIP_OUT)
     shot(
-        from, to, cam = listOf(Key.ActorRel(0, -1.8, 0.9, 2.0), Key.Eye), look = listOf(Key.Actor(0, 1.5), Key.EyeLook),
+        from, to, cam = listOf(Key.ActorRel(0, behind, side, up), Key.Eye), look = listOf(Key.Actor(0, 1.5), Key.EyeLook),
         fov = 64f to 70f, ease = EaseKind.SMOOTH, handheld = 0f, cut = true,
     )
 }

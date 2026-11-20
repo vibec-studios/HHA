@@ -181,6 +181,9 @@ class BrontesModel(root: ModelPart) : GuardianModel(root) {
         BrontesAction.DOUBLE_HAMMER -> GLOW_REST + (1f - GLOW_REST) * window(a, SOFT, T.DOUBLE_STUCK_END.f)
         BrontesAction.FORGE -> GLOW_REST + (1f - GLOW_REST) * step(a, 4f, T.FORGE_HIT_1.f)
         BrontesAction.BLINDED -> GLOW_OPEN
+        // Überarbeitung 4 (P16): Hammer steckt bzw. Amboss gebrochen – beides offen.
+        BrontesAction.STUCK -> GLOW_OPEN
+        BrontesAction.STAGGER -> GLOW_OPEN
         BrontesAction.WEDGE_THROW -> if (a < T.WEDGE_HIT_END) 1f else GLOW_OPEN
         BrontesAction.RISE -> GLOW_DIM + (GLOW_REST - GLOW_DIM) * step(a, RISE_EYE_OPEN - 6f, RISE_EYE_OPEN + 10f)
         else -> GLOW_REST
@@ -297,6 +300,8 @@ class BrontesModel(root: ModelPart) : GuardianModel(root) {
         BrontesAction.WEDGE_THROW -> HITS_WEDGE
         BrontesAction.TONGS_UP -> HITS_TONGS
         BrontesAction.YIELD -> HITS_YIELD
+        BrontesAction.STUCK -> HITS_STUCK
+        BrontesAction.STAGGER -> HITS_STAGGER
         else -> NO_HITS
     }
 
@@ -440,7 +445,47 @@ class BrontesModel(root: ModelPart) : GuardianModel(root) {
                 // Er nickt einmal.
                 head.pitch += window(a, 18f, 32f) * 0.22f
             }
+            BrontesAction.STUCK -> {
+                // Überarbeitung 4 (P16): Der Hammerkopf steckt im Boden, er zerrt mit beiden Armen in Rucken (jeder Ruck
+                // stößt Bart und Schürze an, siehe HITS_STUCK), holt vor dem Herausreißen Luft und reißt ihn hoch.
+                val rip = T.STUCK_RIP.f
+                play(a, Key(-1f, HAMMER_STUCK), Key(rip - 2f, HAMMER_STUCK), Key(rip + 2f, HAMMER_WINDUP, true), Key(T.STUCK_END.f, null))
+                strain(a, STRAIN_FROM, rip - 2f)
+                chest.pitch -= window(a, rip - T.SPLINTER_W, rip) * STRAIN_BRACE
+            }
+            BrontesAction.STAGGER -> {
+                // Überarbeitung 4 (P16): Der Amboss bricht unter dem Hammer, er taumelt zurück, blickt auf den Stumpf,
+                // schwankt (≤ 1 Hz) und fängt sich gegen Ende.
+                val end = T.STAGGER_END.f
+                play(a, Key(-1f, HAMMER_HIT), Key(8f, null))
+                val reel = step(a, 2f, 24f) * (1f - step(a, end - 24f, end))
+                val sway = step(a, 4f, 12f) * (1f - step(a, end - 16f, end))
+                body.originZ += reel * 6f + sin(a * 0.22f) * 1.1f * sway
+                body.roll += sin(a * 0.19f) * 0.07f * sway
+                chest.pitch += reel * 0.12f
+                head.pitch += reel * 0.15f
+                head.roll += sin(a * 0.27f) * 0.06f * sway
+                legR.pitch += sin(a * 0.22f) * 0.12f * sway
+                legL.pitch -= sin(a * 0.22f) * 0.12f * sway
+            }
         }
+    }
+
+    /**
+     * Er zerrt am fest steckenden Hammer (P16): alle [STRAIN_PERIOD] Ticks ein Ruck mit beiden Armen nach hinten
+     * (Brust zurück, Körper nach hinten, Kopf nickt mit), dazwischen zittern die Arme.
+     */
+    private fun strain(a: Float, from: Float, to: Float) {
+        val k = window(a, from, to)
+        if (k <= 0f) return
+        val phase = ((a - from).coerceAtLeast(0f) % STRAIN_PERIOD) / STRAIN_PERIOD
+        val jerk = (if (phase < STRAIN_PULL) sin(phase / STRAIN_PULL * Math.PI.toFloat()) else 0f) * k
+        chest.pitch -= jerk * 0.12f
+        body.originZ += jerk * 1.2f
+        armR.pitch -= jerk * 0.08f
+        armL.pitch -= jerk * 0.08f
+        head.pitch += jerk * 0.05f
+        tremble(k)
     }
 
     /** Sichtbarkeit der Requisiten zur Zeit [a] der laufenden Aktion. */
@@ -644,6 +689,14 @@ class BrontesModel(root: ModelPart) : GuardianModel(root) {
         val HITS_WEDGE = floatArrayOf(T.WEDGE_HIT_END.f)
         val HITS_TONGS = floatArrayOf(T.TONGS_HIT_END.f)
         val HITS_YIELD = floatArrayOf(16f)
+        /** P16: Zerren am steckenden Hammer – Rucke alle [STRAIN_PERIOD] Ticks ab [STRAIN_FROM], Herausreißen. */
+        const val STRAIN_FROM = 2f
+        const val STRAIN_PERIOD = 12f
+        const val STRAIN_PULL = 0.3f
+        const val STRAIN_BRACE = 0.06f
+        val HITS_STUCK = FloatArray(((T.STUCK_RIP - 2f - STRAIN_FROM) / STRAIN_PERIOD).toInt() + 1) { STRAIN_FROM + STRAIN_PERIOD * (it + STRAIN_PULL * 0.5f) } +
+            floatArrayOf(T.STUCK_RIP + 2f)
+        val HITS_STAGGER = floatArrayOf(2f, 14f)
         val NO_HITS = FloatArray(0)
 
         /** Anker im Kopf (Mund vor dem Kiefer) und im Hammer (Mitte des Kopfes), Modell-Pixel. */

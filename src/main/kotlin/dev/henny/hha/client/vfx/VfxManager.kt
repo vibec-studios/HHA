@@ -28,6 +28,44 @@ object VfxManager {
     private val effects = ArrayList<VfxEffect>()
     private var seed = 0L
 
+    /**
+     * Schutz gegen gleichzeitiges Ändern: Effekte dürfen beim Ticken oder Zeichnen neue Effekte anstoßen (Aufschlag
+     * eines Projektils, Trümmer eines Bruchs). Solange [effects] durchlaufen wird, landen neue Effekte und ein
+     * `clear` erst hier und werden danach übernommen. Ohne das gab es eine `ConcurrentModificationException`
+     * (Absturz im Zeus-Kampf, 19.11.2026).
+     */
+    private var iterating = 0
+    private val pending = ArrayList<VfxEffect>()
+    private var clearPending = false
+    private val pendingRemovals = ArrayList<(VfxEffect) -> Boolean>()
+
+    private inline fun iterate(block: () -> Unit) {
+        iterating++
+        try {
+            block()
+        } finally {
+            iterating--
+            if (iterating == 0) flushPending()
+        }
+    }
+
+    private fun flushPending() {
+        if (clearPending) {
+            clearPending = false
+            effects.clear()
+            FxAttach.clear()
+        }
+        if (pendingRemovals.isNotEmpty()) {
+            val removals = ArrayList(pendingRemovals)
+            pendingRemovals.clear()
+            for (match in removals) effects.removeIf(match)
+        }
+        if (pending.isEmpty()) return
+        val queued = ArrayList(pending)
+        pending.clear()
+        for (effect in queued) add(effect)
+    }
+
     /** Größe des eigenen Puffers der neuen Effekte (PLAN 6.4, REF T2). */
     const val FX_BUFFER_BYTES = 1 shl 21
 
@@ -48,13 +86,21 @@ object VfxManager {
         BossGlow.tick(world)
         PortalVfx.tick(world)
         FarBeacon.tick()
-        val iterator = effects.iterator()
-        while (iterator.hasNext()) {
-            if (!iterator.next().advance(world)) iterator.remove()
+        iterate {
+            val iterator = effects.iterator()
+            while (iterator.hasNext()) {
+                if (!iterator.next().advance(world)) iterator.remove()
+            }
         }
     }
 
     fun clear() {
+        if (iterating > 0) {
+            pending.clear()
+            pendingRemovals.clear()
+            clearPending = true
+            return
+        }
         effects.clear()
         FxAttach.clear()
     }
@@ -88,7 +134,13 @@ object VfxManager {
             }
             Vfx.Kind.TELEGRAPH_CLEAR -> {
                 // Nur die Ansagen, die genau hier begonnen haben (abgebrochener Angriff); alles andere bleibt.
-                effects.removeIf { e -> e.telegraph && (e.telegraphOrigin?.squaredDistanceTo(pos) ?: Double.MAX_VALUE) < 1.0e-4 }
+                val match = { e: VfxEffect -> e.telegraph && (e.telegraphOrigin?.squaredDistanceTo(pos) ?: Double.MAX_VALUE) < 1.0e-4 }
+                if (iterating > 0) {
+                    pending.removeIf(match)
+                    pendingRemovals.add(match)
+                } else {
+                    effects.removeIf(match)
+                }
                 return
             }
             else -> {}
@@ -146,6 +198,10 @@ object VfxManager {
     fun addEffect(effect: VfxEffect) = add(effect)
 
     private fun add(effect: VfxEffect) {
+        if (iterating > 0) {
+            pending.add(effect)
+            return
+        }
         if (effects.size >= MAX_EFFECTS) {
             val oldest = effects.indexOfFirst { !it.telegraph }
             effects.removeAt(if (oldest >= 0) oldest else 0)
@@ -166,17 +222,19 @@ object VfxManager {
         } else {
             BossGlow.clear()
         }
-        for (effect in effects) {
-            effect.render(draw, effect.age + tickDelta)
+        iterate {
+            for (effect in effects) {
+                effect.render(draw, effect.age + tickDelta)
+            }
+            // Überarbeitung 3 (PLAN 6.4, REF T2): Bestand → Energie → Bildschirm-Pass → darüber, je Phase eigener Puffer.
+            val frame = FxFrame.of(client.gameRenderer.camera, tickDelta, fxBuffers, FxFrame.Phase.ENERGY)
+            forEachFx { effect -> FxClient.guarded("energy:${effect.javaClass.simpleName}") { effect.energy(frame) } }
+            FxClient.guarded("energy.draw") { fxBuffers.draw() }
+            FxClient.guarded("screen_pass") { ScreenPass.render(frame) }
+            val over = frame.inPhase(FxFrame.Phase.OVER)
+            forEachFx { effect -> FxClient.guarded("over:${effect.javaClass.simpleName}") { effect.over(over) } }
+            FxClient.guarded("over.draw") { fxBuffers.draw() }
         }
-        // Überarbeitung 3 (PLAN 6.4, REF T2): Bestand → Energie → Bildschirm-Pass → darüber, je Phase eigener Puffer.
-        val frame = FxFrame.of(client.gameRenderer.camera, tickDelta, fxBuffers, FxFrame.Phase.ENERGY)
-        forEachFx { effect -> FxClient.guarded("energy:${effect.javaClass.simpleName}") { effect.energy(frame) } }
-        FxClient.guarded("energy.draw") { fxBuffers.draw() }
-        FxClient.guarded("screen_pass") { ScreenPass.render(frame) }
-        val over = frame.inPhase(FxFrame.Phase.OVER)
-        forEachFx { effect -> FxClient.guarded("over:${effect.javaClass.simpleName}") { effect.over(over) } }
-        FxClient.guarded("over.draw") { fxBuffers.draw() }
     }
 
     /**
@@ -187,7 +245,7 @@ object VfxManager {
         val client = MinecraftClient.getInstance()
         if (client.world == null) return
         val frame = FxFrame.of(client.gameRenderer.camera, client.renderTickCounter.getTickProgress(false), fxBuffers, FxFrame.Phase.SOLID)
-        forEachFx { effect -> FxClient.guarded("solid:${effect.javaClass.simpleName}") { effect.solid(frame) } }
+        iterate { forEachFx { effect -> FxClient.guarded("solid:${effect.javaClass.simpleName}") { effect.solid(frame) } } }
         FxClient.guarded("solid.draw") { fxBuffers.draw() }
     }
 

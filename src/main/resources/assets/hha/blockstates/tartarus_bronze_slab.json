@@ -1,0 +1,13 @@
+{
+  "variants": {
+    "type=bottom": {
+      "model": "hha:block/tartarus_bronze_slab"
+    },
+    "type=double": {
+      "model": "hha:block/tartarus_bronze"
+    },
+    "type=top": {
+      "model": "hha:block/tartarus_bronze_slab_top"
+    }
+  }
+}

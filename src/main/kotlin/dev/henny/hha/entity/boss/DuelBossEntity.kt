@@ -9,6 +9,7 @@ import dev.henny.hha.logic.boss.Cine
 import dev.henny.hha.logic.boss.DuelCinematics
 import dev.henny.hha.logic.world.OlympusPath
 import dev.henny.hha.logic.world.OlympusProgress
+import dev.henny.hha.world.olymp.OlympusArenas
 import dev.henny.hha.world.olymp.OlympusLayout
 import net.minecraft.entity.EntityType
 import net.minecraft.entity.Tameable
@@ -176,6 +177,9 @@ abstract class DuelBossEntity(type: EntityType<out DuelBossEntity>, world: World
 
     override fun defaultFloor(): Double = arena?.floorY ?: super.defaultFloor()
 
+    /** Seine Arena (für Wegfindung, `floorOf`, `strike` mit Form). */
+    override fun arenaOrNull(): Arenas.Arena? = arena
+
     override fun tick() {
         if (!entityWorld.isClient && kit.barVisible) kit.barVisible = false
         super.tick()
@@ -184,7 +188,16 @@ abstract class DuelBossEntity(type: EntityType<out DuelBossEntity>, world: World
 
     /** Pause zwischen zwei Angriffen nach Spielerzahl ([BossScaling.pause]); Ansagen bleiben unverändert. */
     protected fun pause(ticks: Int = basePause()): Sequence<Unit> =
-        rest(BossScaling.pause((ticks * if (enraged) RAGE_PAUSE else 1.0).toInt(), crowdSize))
+        rest(BossScaling.pause((ticks * rageFactor).toInt(), crowdSize))
+
+    /** Pausenfaktor des Letzten Gefechts: [RAGE_PAUSE] ab [RAGE_AT], sonst 1. */
+    protected val rageFactor: Double get() = if (enraged) RAGE_PAUSE else 1.0
+
+    /**
+     * P24 (Freigabe A2): Das Drehbuch wartet [basePause] × [rageFactor], so wirkt das Letzte Gefecht bei allen
+     * Duell-Bossen (vorher nur über [pause], das kein Boss aufrief).
+     */
+    override fun pauseTicks(): Int = (basePause() * rageFactor).toInt()
 
     /**
      * Letztes Gefecht: Ab [RAGE_AT] des Lebens kämpft der Boss verbissener (Titelkarte `hha.<id>.rage`, kürzere Pausen
@@ -492,7 +505,9 @@ abstract class DuelBossEntity(type: EntityType<out DuelBossEntity>, world: World
             }
             val entity = type.create(world, SpawnReason.EVENT) ?: return null
             entity.refreshPositionAndAngles(spawn.x, spawn.y, spawn.z, 0f, 0f)
-            val arena = Arenas.Arena(world, center, isle.arenaRadius.toDouble(), center.y, entrance, entity)
+            // Vertrag (Ebenen, Deckung, Teile, Bauplan) nur an der festen Station im Olymp; Tests anderswo bleiben beim Kreis.
+            val spec = if (inOlymp) OlympusArenas.spec(boss) else null
+            val arena = Arenas.Arena(world, center, isle.arenaRadius.toDouble(), center.y, entrance, entity, spec)
             if (!Arenas.open(arena)) return null
             world.spawnEntity(entity)
             entity.begin(arena, starter)

@@ -168,8 +168,12 @@ object HekateTimings {
     const val TRIFORM_SETUP = 2
 
     // --- 7 ECLIPSE: Mondfinsternis (Saal-Gefahr, Phase III, alle 20 s) ---
+    // Überarbeitung 4 (P15): Die Mondfinsternis entfällt, die dunkle Stunde (unten) ersetzt sie. Die Konstanten bleiben
+    // stehen, werden aber **nicht mehr benutzt** – außer [ECLIPSE_MOOD] (Himmelsstimmung der dunklen Stunde) und den
+    // Animations-Marken ECLIPSE_HIT/_HIT_END, die Modell und Fackel-Effekt für die alte Aktion `ECLIPSE` noch kennen.
+    /** Nicht mehr benutzt (P15): Takt jetzt [DARK_HOUR_INTERVAL]. */
     const val ECLIPSE_INTERVAL = 400
-    /** Die erste Mondfinsternis kommt so viele Ticks nach Beginn der Phase III. */
+    /** Nicht mehr benutzt (P15): jetzt [DARK_HOUR_FIRST]. */
     const val ECLIPSE_FIRST = 120
     const val ECLIPSE_SAFE_COUNT = 2
     const val ECLIPSE_SAFE_RADIUS = 5f
@@ -192,4 +196,57 @@ object HekateTimings {
 
     // --- 8 STAGGER ---
     const val STAGGER_END = 70
+
+    // --- 11 DARK_HOUR: Die dunkle Stunde (Überarbeitung 4, P15; Saal-Gefahr in Phase III statt der Mondfinsternis) ---
+    /** Takt wie bisher die Mondfinsternis: alle 400 Ticks (Beginn zu Beginn), Abstand [HAZARD_GAP]. */
+    const val DARK_HOUR_INTERVAL = 400
+    /** Die erste dunkle Stunde kommt so viele Ticks nach Beginn der Phase III (wie bisher die Finsternis). */
+    const val DARK_HOUR_FIRST = 120
+    /** Dauer der Stunde (PLAN 4.1: höchstens 10 s). */
+    const val DARK_HOUR_TICKS = 200
+    /** Beginn: Sie tritt in dieser Zeit (Wirbel, wie beim Schwellentritt) an das Hekataion. */
+    const val DARK_HOUR_SETUP = 10
+    /** Drei Schwenks des Blicks. */
+    const val GAZE_SWEEPS = 3
+    /** Je Schwenk: Ansage (zwei Kegel derselben Gruppe) … */
+    const val GAZE_W = 30
+    /** … dann steht der Kegel so lange („Blick“), geprüft alle [GAZE_CHECK_EVERY] Ticks. */
+    const val GAZE_HOLD = 20
+    const val GAZE_CHECK_EVERY = 5
+    /** Reichweite für alle, die nicht schleichen … */
+    const val GAZE_RADIUS = 18f
+    /** … und für alle (wer schleicht, wird erst so nah gesehen). */
+    const val GAZE_RADIUS_SNEAK = 9f
+    const val GAZE_HALF_ANGLE = 60f
+    /** Ohne neues Ziel dreht der Blick so weit im Uhrzeigersinn weiter (Grad). */
+    const val GAZE_TURN = 120.0
+    /** Zwischen zwei Schwenks gleitet sie in dieser Zeit (am Anfang der Ansage) um das Hekataion. */
+    const val GAZE_MOVE = 12
+    /** Standplatz: so weit von der Mitte des Hekataion (Stufensockel 5 × 5 reicht bis Ecke 3,54, halbe Breite 0,6). */
+    const val GAZE_STAND_RADIUS = 4.2
+    /** Gewittert: Kreis-Ansage unter dem Spieler (folgt ihm nicht), Dauer, Grundschaden, Radius. */
+    const val SCENT_W = 20
+    const val SCENT_DAMAGE = 18f
+    const val SCENT_RADIUS = 3f
+    /** Niemand gewittert: Die Fackeln flammen auf und blenden sie, offen so lange. */
+    const val DAWN_F = 60
+    /** Endet die Stunde ohne Fenster, steht sie danach noch so lange. */
+    const val DARK_HOUR_RECOVER = 16
+
+    // --- Höhenband (Überarbeitung 4, P15, PLAN 4.1/Pflicht 3) ---
+    /** Körperangriffe erreichen die Terrassen (+3): Band vom Kernboden bis so hoch darüber. */
+    const val BODY_BAND_ABOVE = 6.0
+    /**
+     * Schlüsseldrehung (saalweit, vorher SKY = jede Höhe): Band bis so hoch, damit Tor-Stürze (+7,5) und die Krone des
+     * Hekataion (+9) kein Versteck vor dem Raum-Angriff sind. Terrassen-Bild wie bei den Körperangriffen.
+     */
+    const val KEY_BAND_ABOVE = 12.0
+
+    // --- Fallgitter der Schlüsseldrehung (Überarbeitung 4, P15) ---
+    /** Das Gitter fällt mit Beginn der Ansage von oben nach unten in so vielen Ticks … */
+    const val PORTCULLIS_DROP = 10
+    /** … und hebt sich nach Treffer und Fenster in so vielen Ticks (unten zuerst). */
+    const val PORTCULLIS_LIFT = 10
+    /** Erreichbarkeit: Wer hinter einem geschlossenen Tor steht, läuft um den Pfeiler herum, so viele Blöcke mehr. */
+    const val PORTCULLIS_DETOUR = 8.0
 }

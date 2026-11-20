@@ -222,4 +222,37 @@ object KratosTimings {
     const val BIA_LEAP_LIFT = 2.5
     /** Abprall-Ton höchstens einmal je so viele Ticks. */
     const val BIA_DEFLECT_COOLDOWN = 20
+
+    // =============================================================================================================
+    // Überarbeitung 4 (P17, PLAN 4.2/4.3): Bia als Teilziel, Zorn, Standarten, Treppenabsatz
+    // =============================================================================================================
+
+    /**
+     * Bias Leben = dieser Anteil von [EFFECTIVE_HEALTH] (solo 425 vor Skalierung; die Teilziel-Gruppe rechnet einmalig
+     * `× BossScaling.health(n)` wie Kratos' eigenes Leben).
+     */
+    const val BIA_HEALTH_SHARE = 0.25f
+    /** Deckel je Treffer: höchstens dieser Anteil von Bias Leiste (mindestens 9 Treffer). */
+    const val BIA_CAP = 0.12f
+    /** Bia ist so lange verwundbar (golden), nachdem sie Kratos gerammt hat (= sein Fenster [CLASH_F]). */
+    const val BIA_OPEN_CLASH = 80
+    /** … bzw. so lange nach dem Ende von „KNIET!“, während sie am Rand steht (sie wartet dort, bevor sie zurückspringt). */
+    const val BIA_OPEN_KNEEL = 20
+
+    /** Zorn (ohne Bia): Pausen × dies; zusammen mit anderen Pausenfaktoren nie unter [WRATH_PAUSE_FLOOR] der Grundpause. */
+    const val WRATH_PAUSE = 0.85
+    const val WRATH_PAUSE_FLOOR = 0.6
+
+    /** Ein Hammerfall, dessen Mitte näher als so weit (waagerecht) an einer stehenden Standarte liegt, zerschlägt sie. */
+    const val STANDARD_BREAK_RADIUS = 2.5
+    /** Nach Bias Bruch: Zerschlägt sein Hammer eine Standarte, steht er so lange offen (Ersatz für den Zusammenstoß). */
+    const val STANDARD_OPEN_F = 40
+
+    /** Höhenband „trifft Kern und Absatz“: bis so weit über dem Kernboden (Absatz +4, dazu Springen). */
+    const val BAND_BOTH_ABOVE = 7.0
+    /** Höhenband „nur Kern“ (Bias Sturm, Klingenreihe von „KNIET!“): bis so weit über dem Kernboden, der Absatz (+4) nicht. */
+    const val BAND_CORE_ABOVE = 3.0
+
+    /** Szene `kratos.bia_break` (Länge und Marken stehen in `KratosStages`); Sprechzeile danach so lange. */
+    const val BREAK_LINE_TICKS = 60
 }

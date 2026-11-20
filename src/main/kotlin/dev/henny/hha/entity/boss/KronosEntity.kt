@@ -57,6 +57,12 @@ object KronosPose {
 
     /** Von Hades' Ketten gehalten (offen). */
     const val CHAINED = 19
+
+    /**
+     * Stillstand mit Sanduhr-Strahl (Überarbeitung 4, P20): Die linke Hand hebt sich und bleibt erhoben, solange
+     * Ansage und Schwenk laufen (Dauer vom Server, die Ansage kann sich verlängern); der Leib dreht mit dem Strahl.
+     */
+    const val STASIS = 20
 }
 
 /** Kronos, der Titan der Zeit. Wie Hades ein Darsteller ohne eigene KI; der Kampf im Thronsaal bewegt ihn. */

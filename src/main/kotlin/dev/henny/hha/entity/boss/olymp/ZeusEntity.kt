@@ -14,9 +14,14 @@ import dev.henny.hha.logic.boss.BossDefense
 import dev.henny.hha.logic.boss.BossScaling
 import dev.henny.hha.logic.boss.BossTimings
 import dev.henny.hha.logic.boss.Cine
+import dev.henny.hha.logic.boss.Cover
 import dev.henny.hha.logic.boss.Telegraph
 import dev.henny.hha.logic.boss.ZeusScenes
+import dev.henny.hha.logic.boss.sig.ZeusIsland
+import dev.henny.hha.logic.boss.sig.ZeusIsland.Rod
+import dev.henny.hha.logic.boss.sig.ZeusIsland.RodState
 import dev.henny.hha.logic.boss.timings.ZeusTimings as Z
+import dev.henny.hha.world.olymp.OlympusArenas
 import dev.henny.hha.world.olymp.OlympusLayout
 import net.minecraft.block.Block
 import net.minecraft.block.BlockState
@@ -82,7 +87,12 @@ object ZeusAction {
  * - **Luftregel:** Wer länger als 30 Ticks 3 Blöcke über dem Boden ist, bekommt einen eigenen Himmelsblitz (`SKY`).
  * - **Phase I** Grundangriffe nach Entfernung; **Phase II** dazu Gorgonenblick (alle 30 s) und eine Saal-Gefahr im
  *   Wechsel (Adler, Sturmwand); **Phase III** nur noch die drei Ketten und zweimal die Waage.
- * - Gold heißt nur: geladener Pfeiler, Schale der Waage, Lücke der Sturmwand, offenes Fenster.
+ * - **Überarbeitung 4** ([ZeusIsland], PLAN 3.5/4.2): Pfeiler 3 × 3 auf der Terrasse (+2), Erdung von ihrer Scholle oder
+ *   aus dem Kern (≤ 3 vom Sockel), Entladung ≤ 4 vom Sockel. Geladene Pfeiler haben einen goldenen Erdungsgriff. In
+ *   Phase III brechen die Schollen 0 und 3, bei 50 % der dritten Leiste 1 und 4, samt Pfeilern. Angriffe tragen ein
+ *   Höhenband (Kern bis +7; die Ringe des Donnerschlags nur der Kern), Formen liegen auf jeder Ebene, die sie schneiden.
+ * - Gold heißt nur: geladener Pfeiler (Rune, Griff), Schale der Waage, Lücke der Sturmwand, offenes Fenster, Griff-Linie
+ *   (Ziel), sichere Fläche beim Schollenbruch.
  * - Echte Blitze sind kosmetisch und höchstens zwei je Sekunde ([lightning]).
  *
  * Auftritt, Phasenwechsel und Ende sind kurze Szenen in [ZeusScenes].
@@ -113,22 +123,11 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
     // Zustand
     // ---------------------------------------------------------------------------------------------
 
-    private enum class RodState { FRESH, CHARGED, SPENT }
-
-    /** Ein Blitzableiter-Pfeiler: [foot] ist der unterste Kupferblock (y = Boden). */
-    private class Rod(val foot: BlockPos, val temporary: Boolean) {
-        var state = RodState.FRESH
-        var chargedUntil = 0L
-        var nextRune = 0L
-
-        /** Vorher dort stehende Blöcke (nur bei [temporary]): am Kampfende zurück. */
-        val saved = ArrayList<Pair<BlockPos, BlockState>>()
-
-        val center: Vec3d get() = Vec3d(foot.x + 0.5, foot.y.toDouble(), foot.z + 0.5)
-        val tip: Vec3d get() = Vec3d(foot.x + 0.5, foot.y + OlympusLayout.PILLAR_HEIGHT + 1.0, foot.z + 0.5)
-    }
-
+    /** Pfeiler ([Rod], Zustand [RodState]) liegen seit Überarbeitung 4 in [ZeusIsland]; auf F 3 × 3 auf der Terrasse. */
     private val rods = ArrayList<Rod>()
+
+    /** Signatur: Erdungsgriff und brechende Schollen ([ZeusIsland.Fight]). */
+    internal val island = ZeusIsland.Fight(this)
     private var rodsReady = false
     private var rodsRestored = false
 
@@ -216,6 +215,8 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         gazeAt = Z.GAZE_FIRST
         hazardAt = Z.HAZARD_FIRST
         lastMove = -1
+        // Überarbeitung 4 (PLAN 3.5): Nach der Szene (auch übersprungen, auch nach `/hha boss skip`) brechen die Schollen 0 und 3.
+        if (newPhase == 2) yieldAll(solo(island.breakFloes(OlympusArenas.F_FLOES_BREAK_FIRST)))
     }
 
     override fun victory(): Sequence<Unit> = sequence {
@@ -233,6 +234,11 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
             val index = scalesDone++
             return solo(scales(index))
         }
+        // Zweiter Bruch bei 50 % der dritten Leiste: nach einer anstehenden Waage, nie in eine laufende Griff-Linie.
+        if (island.secondBreakDue()) {
+            if (island.gripPending) return sequence { while (island.gripPending) yield(Unit) }
+            return solo(island.breakFloes(OlympusArenas.F_FLOES_BREAK_SECOND))
+        }
         if (phase == 1 && hazard == null && phaseAge >= gazeAt) return solo(gorgonGaze(Z.GAZE_W, null, chained = false))
         return null
     }
@@ -249,6 +255,8 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         if (arena != null) {
             if (!rodsReady) setupRods(arena)
             syncViewers()
+            // Griff-Linie, Geräte und Sturz-Rückfall laufen auch in Szenen (eine Linie über den Szenenbeginn fällt dann aus).
+            island.tick()
         }
         if (scenes.playing || ending) return
         phaseAge++
@@ -284,6 +292,7 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
             tuned.clear()
             jobs.clear()
             endHazard()
+            island.close()
             // Beim Entladen eines Chunks keine Blöcke tauschen; der nächste Kampf macht bestehende Pfeiler wieder frisch.
             if (reason.shouldDestroy()) restoreRods()
         }
@@ -328,19 +337,25 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         val dir = dirTo(target.entityPos)
         hold(dir)
         val from = spot(entityPos)
-        val blocker = rodOnLine(from, dir, Z.THROW_LENGTH.toDouble())
+        // Überarbeitung 4: Der Wurf endet an der ersten Deckung (Sichtstrahl über Terrasse und Bühne, `Cover.lineEnd`).
+        val blocker = keraunosBlocker(from, dir) ?: rodOnLine(from, dir, Z.THROW_LENGTH.toDouble())
         val length = blocker?.let { (it.second - 0.7).coerceAtLeast(1.5) } ?: Z.THROW_LENGTH.toDouble()
-        val to = spot(from.add(dir.multiply(length)))
+        val reach = spot(from.add(dir.multiply(length)))
+        // Kein Ende über einer abgebrochenen Scholle (der Blitz steckt dort, wo man stehen kann).
+        val to = ZeusIsland.trimLost(arena, from, reach)?.second ?: reach
         // Die Gruppe ohne eigene Mindestart: Die Kreise des steckenden Blitzes dauern 10 Ticks, nur der Wurf ist PROJECTILE.
-        val group = chain ?: telegraph.boss()
-        val line = group.line(from, to, Z.THROW_WIDTH, Z.THROW_W, Telegraph.Pace.PROJECTILE)
+        val group = banded(chain ?: telegraph.boss())
+        val line = ZeusIsland.line(arena, group, from, to, Z.THROW_WIDTH, Z.THROW_W, Telegraph.Pace.PROJECTILE)
+        arena?.spec?.let { Cover.mark(telegraph, it, OlympusArenas.ZEUS_KERAUNOS, throwEye(), line.ticks) }
         telegraph.sound(HhaSounds.THUNDER_CALL, entityPos, 2.2f, 1.25f)
         kit.act(ZeusAction.THROW)
         val started = sw.time
         wait(line.ticks)
         for (player in line.hits(fighters())) strike(player, Z.THROW_DAMAGE)
         val hand = entityPos.add(0.0, height * 0.78, 0.0).add(dir.multiply(0.8))
-        val stuckAt = Vec3d(to.x, to.y + 0.9, to.z)
+        // Bild auf der Fläche, auf der der Blitz steckt (Terrasse +2, Bühne +3 oder Kern).
+        val ground = ZeusIsland.top(arena, to)
+        val stuckAt = Vec3d(ground.x, ground.y + 0.9, ground.z)
         val bolt = prop(ScriptedBolt.spawn(sw, self, HermesBoltEntity.KERAUNOS, 1f, hand))
         // Spur des fliegenden Blitzes (endet am Client, sobald das Requisit weg ist).
         bolt?.entity?.let { BossFx.projectile(sw, Vfx.Style.THUNDER, it, BossFx.Look.KERAUNOS) }
@@ -351,18 +366,18 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         bolt?.rest()
         telegraph.sound(HhaSounds.IMPACT, to, 2f, 1.3f)
         val rod = blocker?.first
-        if (rod != null && rod.state == RodState.CHARGED && groundingAllowed()) {
+        if (rod != null && rod.charged && groundingAllowed()) {
             bolt?.discard()
             yieldAll(discharge(rod))
             return@sequence
         }
         // Der Blitz steckt: leere Hand, offen. Um ihn knistert ein stehender Bogen bis zum Rückruf.
         Vfx.flare(sw, Vfx.Style.THUNDER, stuckAt, 1.2f, 8)
-        BossFx.play(sw, "zeus.stuck", Vfx.Style.THUNDER, to, a = Z.THROW_STUCK_RADIUS, life = Z.THROW_STUCK + Z.THROW_RETURN)
+        BossFx.play(sw, "zeus.stuck", Vfx.Style.THUNDER, ground, a = Z.THROW_STUCK_RADIUS, life = Z.THROW_STUCK + Z.THROW_RETURN)
         open(Z.THROW_F, OPEN_FACTOR)
         var zone: Telegraph.Ring? = null
         for (t in 0 until Z.THROW_STUCK) {
-            if (t % Z.THROW_STUCK_INTERVAL == 0) zone = group.ring(to, Z.THROW_STUCK_RADIUS, Z.THROW_STUCK_INTERVAL)
+            if (t % Z.THROW_STUCK_INTERVAL == 0) zone = ZeusIsland.ring(arena, group, to, Z.THROW_STUCK_RADIUS, Z.THROW_STUCK_INTERVAL)
             if (sw.time - started == Z.THROW_END.toLong()) kit.act(ZeusAction.EMPTY)
             yield(Unit)
             val current = zone
@@ -384,8 +399,8 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
     private fun aegisBash(target: ServerPlayerEntity, chain: Telegraph.Fight.Group? = null): Sequence<Unit> = sequence {
         val dir = dirTo(target.entityPos)
         hold(dir)
-        val group = chain ?: telegraph.boss()
-        val cone = group.cone(spot(entityPos), dir, Z.BASH_RADIUS, Z.BASH_HALF_ANGLE, Z.BASH_W)
+        val group = banded(chain ?: telegraph.boss())
+        val cone = ZeusIsland.cone(arena, group, spot(entityPos), dir, Z.BASH_RADIUS, Z.BASH_HALF_ANGLE, Z.BASH_W)
         telegraph.sound(HhaSounds.SHIELD, entityPos, 2f, 0.8f)
         kit.act(ZeusAction.BASH)
         wait(cone.ticks)
@@ -416,8 +431,8 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
     private fun thunderSlam(chain: Telegraph.Fight.Group? = null): Sequence<Unit> = sequence {
         nearestFighter()?.let { hold(dirTo(it.entityPos)) }
         val center = spot(entityPos)
-        val group = chain ?: telegraph.boss()
-        val ring = group.ring(center, Z.SLAM_RADIUS, Z.SLAM_W)
+        val group = banded(chain ?: telegraph.boss())
+        val ring = ZeusIsland.ring(arena, group, center, Z.SLAM_RADIUS, Z.SLAM_W)
         telegraph.sound(HhaSounds.CHARGE, entityPos, 2.6f, 0.6f)
         kit.act(ZeusAction.SLAM)
         wait(ring.ticks)
@@ -457,6 +472,8 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
             }
             for (player in fighters()) {
                 val r = GuardianEntity.flat(player.entityPos, from)
+                // Höhenband des Kernbodens (PLAN 4.3 „Bodenangriffe“): Terrasse (+2) und Bühne sind sicher, Fallende auch.
+                if (!inCoreBand(player)) continue
                 if (abs(r - radius) < Z.SLAM_RING_DEPTH && player.uuid !in struck &&
                     strike(player, Z.SLAM_RING_DAMAGE, BossDefense.Reach.LOW, courtFloor())
                 ) {
@@ -477,7 +494,7 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
     private fun skyCall(
         chain: Telegraph.Fight.Group? = null, waves: Int = 1, gap: Int = 0, window: Int = Z.CALL_F,
     ): Sequence<Unit> = sequence {
-        val group = chain ?: telegraph.boss()
+        val group = banded(chain ?: telegraph.boss())
         val pending = ArrayList<Pair<ServerPlayerEntity, Telegraph.Ring>>()
         // Bild des Himmelsblitzes: [SKY_LEAD] Ticks vor dem Treffer entschieden (Strahl oder Bogen in den Pfeiler).
         val announced = HashMap<Telegraph.Ring, Rod?>()
@@ -487,7 +504,11 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
             if (made < waves && t == made * gap) {
                 nearestFighter()?.let { hold(dirTo(it.entityPos)) }
                 kit.act(ZeusAction.CALL)
-                for (player in fighters()) pending.add(player to group.ring(spot(player.entityPos), Z.CALL_RADIUS, Z.CALL_W))
+                // Der Kreis liegt unter dem Spieler (über abgebrochener Scholle: auf der nächsten Fläche), auf jeder Ebene sichtbar.
+                for (player in fighters()) {
+                    val at = ZeusIsland.toSurface(arena, spot(player.entityPos))
+                    pending.add(player to ZeusIsland.ring(arena, group, at, Z.CALL_RADIUS, Z.CALL_W))
+                }
                 telegraph.sound(HhaSounds.THUNDER_CALL, entityPos, 2.4f, 1f)
                 made++
             }
@@ -514,13 +535,14 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
             val rod = if (groundingAllowed()) groundingRod(target, ring) else null
             if (rod != null) {
                 // Kam die Erdung erst in den letzten Ticks zustande, biegt der Bogen jetzt noch in den Pfeiler.
-                if (announced[ring] !== rod) groundArc(ring.center, rod)
+                if (announced[ring] !== rod) groundArc(ZeusIsland.top(arena, ring.center), rod)
                 chargeRod(rod)
                 continue
             }
             for (player in ring.hits(fighters())) strike(player, Z.CALL_DAMAGE, BossDefense.Reach.SKY)
-            skyBolt(ring.center)
-            skyImpact(target, ring.center)
+            val ground = ZeusIsland.top(arena, ring.center)
+            skyBolt(ground)
+            skyImpact(target, ground)
         }
         telegraph.sound(HhaSounds.THUNDER, entityPos, 2.6f, 1.1f)
     }
@@ -532,10 +554,11 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
      */
     private fun announceSky(target: ServerPlayerEntity, ring: Telegraph.Ring): Rod? {
         val rod = if (groundingAllowed()) groundingRod(target, ring) else null
+        val ground = ZeusIsland.top(arena, ring.center)
         if (rod != null) {
-            groundArc(ring.center, rod)
+            groundArc(ground, rod)
         } else {
-            skyStrike(ring.center, Z.CALL_RADIUS, ring.remaining)
+            skyStrike(ground, Z.CALL_RADIUS, ring.remaining)
         }
         return rod
     }
@@ -572,8 +595,8 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
      */
     private fun thunderStep(target: ServerPlayerEntity, chain: Telegraph.Fight.Group? = null): Sequence<Unit> = sequence {
         val landing = landingFor(target.entityPos)
-        val group = chain ?: telegraph.boss()
-        val ring = group.ring(landing, Z.STEP_RADIUS, Z.STEP_W)
+        val group = banded(chain ?: telegraph.boss())
+        val ring = ZeusIsland.ring(arena, group, landing, Z.STEP_RADIUS, Z.STEP_W)
         telegraph.sound(HhaSounds.THUNDER_CALL, landing, 2.2f, 1.4f)
         stopMoving()
         hold(dirTo(landing))
@@ -621,8 +644,11 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         hold(dir)
         kit.act(ZeusAction.GAZE)
         if (chained) wait(Z.GAZE_CHAIN_LEAD)
-        val group = chain ?: telegraph.boss(pace = Telegraph.Pace.ROOM)
-        val cone = group.cone(spot(entityPos), dir, Z.GAZE_RADIUS, Z.GAZE_HALF_ANGLE, windup)
+        val group = banded(chain ?: telegraph.boss(pace = Telegraph.Pace.ROOM))
+        val cone = ZeusIsland.cone(arena, group, spot(entityPos), dir, Z.GAZE_RADIUS, Z.GAZE_HALF_ANGLE, windup)
+        val spec = arena?.spec
+        // Deckung (PLAN 3.5): goldene Rune an jedem Pfeiler, der gerade jemanden schützt, so lange wie die Ansage.
+        if (spec != null) Cover.mark(telegraph, spec, OlympusArenas.ZEUS_GAZE, gazeEye(), cone.ticks)
         hint(HINT_GAZE)
         telegraph.sound(HhaSounds.CHARGE, entityPos, 3f, 0.55f)
         // Aigis-Schein: lädt über die Ansage an der Aigis auf, im Treffer ein gerichteter Lichtkegel (kein Bildschirm-Pass).
@@ -630,12 +656,20 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
             sw, "zeus.gaze", Vfx.Style.THUNDER, gazeEye(), dir, a = Z.GAZE_RADIUS, b = Z.GAZE_HALF_ANGLE,
             c = cone.ticks.toFloat(), life = cone.ticks + GAZE_FX_AFTER, entity = self,
         )
-        wait(cone.ticks)
+        for (t in 0 until cone.ticks) {
+            // Statuszeile „gedeckt“/„gesehen“ für alle im Kegel (Cover drosselt selbst auf Wechsel).
+            if (spec != null && t % COVER_STATUS_EVERY == 0) {
+                val from = gazeEye()
+                for (player in fighters()) if (cone.contains(player)) Cover.status(player, Cover.shelter(sw, from, player, spec, OlympusArenas.ZEUS_GAZE) != null)
+            }
+            yield(Unit)
+        }
         val eye = gazeEye()
         for (player in fighters()) {
             // Wer hinsieht, bekommt eine kühle Vignette (getroffen oder hinter einem Pfeiler geschützt).
             if (looksAt(player, eye)) BossFx.vignette(player, Vfx.Style.THUNDER, GAZE_VIGNETTE, GAZE_VIGNETTE_TICKS)
-            if (!cone.contains(player) || !looksAt(player, eye) || !sees(eye, player)) continue
+            // Zwei Auswege: weggesehen, oder gedeckt (Pfeiler mit Sockel; jede volle Sichtsperre zählt, Cover.sheltered).
+            if (!cone.contains(player) || !looksAt(player, eye) || gazeCovered(eye, player)) continue
             if (strike(player, Z.GAZE_DAMAGE, BossDefense.Reach.SKY)) {
                 Vfx.beam(sw, Vfx.Style.THUNDER, eye, player.eyePos.subtract(0.0, 0.3, 0.0), 0.5f, 8)
             }
@@ -766,7 +800,8 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
                 )
             }
             if (t >= stormStart && (t - stormStart) % Z.SCALES_STORM_INTERVAL == 0) {
-                val outside = fighters().filter { !bowl.contains(it) }
+                // Sturm über Kern, Terrasse und Bühne (Band bis +7); wer gerade fällt, holt ohnehin die Bö.
+                val outside = fighters().filter { !bowl.contains(it) && inFightBand(it) }
                 for (player in outside) strike(player, Z.SCALES_STORM_DAMAGE, BossDefense.Reach.SKY)
                 outside.randomOrNull()?.let { skyBolt(spot(it.entityPos)) }
                 if (t == stormStart) telegraph.sound(HhaSounds.THUNDER, mid, 3f, 0.6f)
@@ -797,10 +832,14 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         }
     }
 
-    /** Schale am Rand, zwischen zwei Pfeilern; die Lage, die alle am schnellsten erreichen. */
+    /**
+     * Schale am Rand, zwischen zwei Pfeilern; die Lage, die alle am schnellsten erreichen. Überarbeitung 4: mit Vertrag
+     * liegt sie ganz im Kern (Mitte höchstens Kernradius − Schalenradius − Rand), nie auf einer Scholle.
+     */
     private fun chooseBowl(radius: Double): Vec3d {
         val mid = courtCenter()
-        val distance = (courtRadius() - radius - Z.BOWL_EDGE_MARGIN).coerceAtLeast(0.0)
+        val edge = (arena?.spec?.core as? dev.henny.hha.world.arena.Disc)?.radius ?: courtRadius()
+        val distance = (edge - radius - Z.BOWL_EDGE_MARGIN).coerceAtLeast(0.0)
         val options = BOWL_ANGLES.map { spot(mid.add(OlympusLayout.dir(it).multiply(distance))) }
         val scored = options.map { it to bowlEscape(it, radius) }
         val best = scored.minOf { it.second }
@@ -874,13 +913,15 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         // Sehne durch den Spieler: Schnittpunkte der Geraden rel + s · dir mit dem Rand des Hofs.
         val b = rel.x * dir.x + rel.z * dir.z
         val disc = b * b - (rel.lengthSquared() - r * r)
-        val (a, end) = if (disc > 0.0) {
+        val (a0, end0) = if (disc > 0.0) {
             val root = sqrt(disc)
             spot(mid.add(rel).add(dir.multiply(-b - root))) to spot(mid.add(rel).add(dir.multiply(-b + root)))
         } else {
             spot(mid.add(dir.multiply(-r))) to spot(mid.add(dir.multiply(r)))
         }
-        val line = group.line(a, end, Z.EAGLE_WIDTH, Z.EAGLE_W)
+        // Anfang und Ende nie über einer abgebrochenen Scholle (Überarbeitung 4).
+        val (a, end) = ZeusIsland.trimLost(arena, a0, end0) ?: return@sequence
+        val line = ZeusIsland.line(arena, banded(group), a, end, Z.EAGLE_WIDTH, Z.EAGLE_W)
         group.hold(Z.EAGLE_W + Z.EAGLE_FLIGHT + 1)
         telegraph.sound(HhaSounds.GRIFFIN_CRY, a, 2.6f, 1.25f)
         wait(line.ticks)
@@ -931,7 +972,11 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
             val half = width / 2.0
             val limit = reach - half - 4.0
             if (limit <= 0.0) break
-            val options = (-20..20).map { it / 20.0 * limit }.map { it to max(Z.STORM_W, windupFor(it, half)) }
+            // Die goldene Lücke liegt auf vorhandener Fläche (nicht über abgebrochenen Schollen).
+            val options = (-20..20).map { it / 20.0 * limit }
+                .filter { ZeusIsland.surfaceSamples(arena, point(-reach, it), point(reach, it)) >= ZeusIsland.GAP_SURFACE_MIN }
+                .map { it to max(Z.STORM_W, windupFor(it, half)) }
+            if (options.isEmpty()) continue
             val best = options.minOf { it.second }
             if (best > BossTimings.Min.ESCAPE_MAX) continue
             val near = options.filter { it.second <= best + 2 }
@@ -943,9 +988,10 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         // Die Ansage zeigt genau, was die Wand trifft: alles außer der goldenen Lücke.
         val low = gap - half + reach
         val high = reach - (gap + half)
-        group.line(point(-reach, (gap - half - reach) / 2.0), point(reach, (gap - half - reach) / 2.0), low.toFloat(), windup)
-        group.line(point(-reach, (gap + half + reach) / 2.0), point(reach, (gap + half + reach) / 2.0), high.toFloat(), windup)
-        group.safeLine(point(-reach, gap), point(reach, gap), (half * 2.0).toFloat(), windup)
+        banded(group)
+        ZeusIsland.line(arena, group, point(-reach, (gap - half - reach) / 2.0), point(reach, (gap - half - reach) / 2.0), low.toFloat(), windup)
+        ZeusIsland.line(arena, group, point(-reach, (gap + half + reach) / 2.0), point(reach, (gap + half + reach) / 2.0), high.toFloat(), windup)
+        ZeusIsland.line(arena, group, point(-reach, gap), point(reach, gap), (half * 2.0).toFloat(), windup, safe = true)
         group.hold(windup + Z.STORM_TRAVEL + 1)
         hint(HINT_STORM)
         telegraph.sound(HhaSounds.THUNDER, point(-reach, gap), 3f, 0.6f)
@@ -964,7 +1010,7 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
                 val off = player.entityPos.subtract(mid)
                 val a = off.x * axis.x + off.z * axis.z
                 val c = off.x * across.x + off.z * across.z
-                if (abs(a - at) >= Z.STORM_DEPTH || abs(c - gap) <= half || player.uuid in struck) continue
+                if (abs(a - at) >= Z.STORM_DEPTH || abs(c - gap) <= half || player.uuid in struck || !inFightBand(player)) continue
                 if (strike(player, Z.STORM_DAMAGE)) {
                     struck.add(player.uuid)
                     Fx.launchPlayer(player, axis.multiply(0.8).add(0.0, 0.4, 0.0))
@@ -1021,14 +1067,16 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
     // Pfeiler (Erdung)
     // ---------------------------------------------------------------------------------------------
 
-    /** Darf ein Pfeiler gerade laden oder sich entladen? Nicht in Szenen, nicht während der Waage. */
-    private fun groundingAllowed(): Boolean = arena != null && !scenes.playing && !scalesActive && !ending
+    /** Darf ein Pfeiler gerade laden oder sich entladen? Nicht in Szenen, nicht während Waage oder Schollenbruch. */
+    private fun groundingAllowed(): Boolean = arena != null && !scenes.playing && !scalesActive && !ending && !island.breaking
 
     private fun setupRods(arena: Arenas.Arena) {
         rodsReady = true
         val world = sw
         val station = world.registryKey == OlympusLayout.WORLD && GuardianEntity.flat(arena.center, OlympusLayout.F.centerVec) < 2.0
         flatCourt = station
+        // Griffe gibt es nur am Thron F mit Vertrag (`rod_i` in der Terrassenwand vor Pfeiler i).
+        val withDevices = station && arena.spec?.id == OlympusArenas.F.id
         for (i in 0 until OlympusLayout.PILLAR_COUNT) {
             val column = if (station) {
                 OlympusLayout.pillar(i)
@@ -1038,30 +1086,33 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
                     arena.center.x + OlympusLayout.PILLAR_RING * cos(a), arena.floorY, arena.center.z + OlympusLayout.PILLAR_RING * sin(a),
                 )
             }
+            val device = if (withDevices) OlympusArenas.fRod(i) else null
+            // Überarbeitung 4: Auf F steht der Pfeiler auf der Terrasse (y 234), das Kupfer y 234 … 238 im Sockel (P09).
             val existing = (-1..1).map { column.up(it) }.firstOrNull { isCopper(world.getBlockState(it)) }
             if (existing != null) {
-                // Bestehender Pfeiler (Bau von P04): frisch machen, falls ein abgebrochener Kampf ihn verbraucht zurückließ.
-                setCopper(existing, Blocks.WAXED_COPPER_BLOCK.defaultState)
-                rods.add(Rod(existing, temporary = false))
+                // Bestehender Pfeiler: frisch machen, falls ein abgebrochener Kampf ihn verbraucht zurückließ.
+                val rod = Rod(i, existing, temporary = false, device = device, big = station)
+                rods.add(rod)
+                setCopper(rod, Blocks.WAXED_COPPER_BLOCK.defaultState)
             } else {
-                buildRod(column, station)?.let(rods::add)
+                buildRod(i, column, station, device)?.let(rods::add)
             }
         }
     }
 
     /**
      * Fehlt der Pfeiler (Test-Arena um einen gesetzten Altar, Thronhof noch nicht gebaut), steht er für den Kampf als
-     * Leihgabe: fünf gewachste Kupferblöcke und ein Blitzableiter, nur auf Luft oder Ersetzbarem. Am Ende zurück.
+     * Leihgabe: fünf gewachste Kupferblöcke und ein Blitzableiter, nur auf Luft oder Ersetzbarem. Am Ende zurück: mit
+     * Edit-Register über den Bauplan (`arena.edits`), sonst aus [Rod.saved].
      */
-    private fun buildRod(column: BlockPos, station: Boolean): Rod? {
+    private fun buildRod(index: Int, column: BlockPos, station: Boolean, device: BlockPos?): Rod? {
         val world = sw
         val foot = if (station) column else findFoot(column) ?: return null
         val cells = (0..OlympusLayout.PILLAR_HEIGHT).map { foot.up(it) }
         if (cells.any { !world.getBlockState(it).isReplaceable || world.getBlockEntity(it) != null }) return null
-        val rod = Rod(foot, temporary = true)
-        for (cell in cells) rod.saved.add(cell to world.getBlockState(cell))
-        for (k in 0 until OlympusLayout.PILLAR_HEIGHT) world.setBlockState(foot.up(k), Blocks.WAXED_COPPER_BLOCK.defaultState, Block.NOTIFY_ALL)
-        world.setBlockState(foot.up(OlympusLayout.PILLAR_HEIGHT), Blocks.WAXED_LIGHTNING_ROD.defaultState, Block.NOTIFY_ALL)
+        val rod = Rod(index, foot, temporary = true, device = device, big = false)
+        for (k in 0 until OlympusLayout.PILLAR_HEIGHT) setRodBlock(rod, foot.up(k), Blocks.WAXED_COPPER_BLOCK.defaultState)
+        setRodBlock(rod, foot.up(OlympusLayout.PILLAR_HEIGHT), Blocks.WAXED_LIGHTNING_ROD.defaultState)
         return rod
     }
 
@@ -1076,16 +1127,36 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         return null
     }
 
-    /** Am Kampfende (Sieg, Abbruch, Entfernen): alles zurück. Mehrfacher Aufruf schadet nicht. */
+    /**
+     * Ein Block des Pfeilers: über das Edit-Register der Arena, wenn sie eins hat (der Bauplan stellt ihn am Kampfende
+     * wieder her, auch nach einem Absturz); sonst direkt, bei Leihgaben mit Merken des alten Zustands.
+     */
+    private fun setRodBlock(rod: Rod, pos: BlockPos, state: BlockState) {
+        val edits = arena?.edits
+        if (edits != null) {
+            edits.set(pos, state)
+            return
+        }
+        if (rod.temporary && rod.saved.none { it.first == pos }) rod.saved.add(pos.toImmutable() to sw.getBlockState(pos))
+        sw.setBlockState(pos, state, Block.NOTIFY_ALL)
+    }
+
+    /**
+     * Am Kampfende (Sieg, Abbruch, Entfernen): alles zurück. Mit Edit-Register macht das `Arenas.close` (Bauplan
+     * `olymp_f`, auch abgebrochene Schollen samt Pfeilern); ohne Register (Test-Arena) Leihgaben aus [Rod.saved],
+     * bestehende Pfeiler wieder gewachst. Mehrfacher Aufruf schadet nicht.
+     */
     private fun restoreRods() {
         if (!rodsReady || rodsRestored) return
         rodsRestored = true
         val world = entityWorld as? ServerWorld ?: return
-        for (rod in rods) {
-            if (rod.temporary) {
-                for ((pos, state) in rod.saved) world.setBlockState(pos, state, Block.NOTIFY_ALL)
-            } else {
-                setCopper(rod.foot, Blocks.WAXED_COPPER_BLOCK.defaultState)
+        if (arena?.edits == null) {
+            for (rod in rods) {
+                if (rod.temporary) {
+                    for ((pos, state) in rod.saved) world.setBlockState(pos, state, Block.NOTIFY_ALL)
+                } else {
+                    setCopper(rod, Blocks.WAXED_COPPER_BLOCK.defaultState)
+                }
             }
         }
         rods.clear()
@@ -1094,38 +1165,40 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
     private fun isCopper(state: BlockState): Boolean = COPPER.any { state.isOf(it) }
 
     /** Setzt die Kupferblöcke des Pfeilers (nur solche, die Kupfer sind) auf [state]. */
-    private fun setCopper(foot: BlockPos, state: BlockState) {
+    private fun setCopper(rod: Rod, state: BlockState) {
         val world = sw
         for (k in 0 until OlympusLayout.PILLAR_HEIGHT) {
-            val pos = foot.up(k)
+            val pos = rod.foot.up(k)
             val current = world.getBlockState(pos)
-            if (isCopper(current) && !current.isOf(state.block)) world.setBlockState(pos, state, Block.NOTIFY_ALL)
+            if (isCopper(current) && !current.isOf(state.block)) setRodBlock(rod, pos, state)
         }
     }
 
     private fun tickRods() {
         val now = sw.time
         for (rod in rods) {
-            if (rod.state != RodState.CHARGED) continue
-            if (now >= rod.chargedUntil) {
+            if (rod.state != RodState.CHARGED || rod.doomed) continue
+            // Während der Griff-Linie verglüht er nicht (die Linie entscheidet).
+            if (now >= rod.chargedUntil && !rod.gripped) {
                 // Ungenutzt verglüht: Der Pfeiler ist wieder frisch.
                 rod.state = RodState.FRESH
                 continue
             }
-            if (now >= rod.nextRune) {
+            if (now >= rod.nextRune && !rod.gripped) {
                 rod.nextRune = now + Z.ROD_RUNE_CYCLE
-                val life = min(Z.ROD_RUNE_CYCLE + 4, (rod.chargedUntil - now).toInt())
-                Vfx.rune(sw, Vfx.Style.GOLD, rod.center.add(0.0, 0.06, 0.0), Z.ROD_RUNE_RADIUS, life)
+                val life = min(Z.ROD_RUNE_CYCLE + 4, (rod.chargedUntil - now).toInt()).coerceAtLeast(1)
+                Vfx.rune(sw, Vfx.Style.GOLD, rod.center.add(0.0, 0.06, 0.0), Z.ROD_RUNE_RADIUS * if (rod.big) BIG_RUNE else 1f, life)
                 // Dazu ein kleiner, ruhiger Schein am Fuß (knistert ≤ 1 Hz); endet mit der Rune oder bei der Entladung.
                 BossFx.play(sw, "zeus.rod", Vfx.Style.THUNDER, rod.center, life = life)
             }
         }
     }
 
-    /** Der Blitz schlägt in den Pfeiler: kein Schaden, der Pfeiler ist geladen. */
+    /** Der Blitz schlägt in den Pfeiler: kein Schaden, der Pfeiler ist geladen (Griff golden, [ZeusIsland]). */
     private fun chargeRod(rod: Rod) {
         val now = sw.time
         rod.state = RodState.CHARGED
+        rod.gripSpent = false
         rod.chargedUntil = now + Z.ROD_CHARGED
         rod.nextRune = now
         Vfx.bolt(sw, Vfx.Style.THUNDER, rod.tip.add(0.0, 22.0, 0.0), rod.tip, 1.1f, 8)
@@ -1134,16 +1207,21 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         hint(HINT_LURE)
     }
 
-    /** Entladung in Zeus: 40 × H(n) effektiv (unter dem Deckel), Taumeln, **offen** F 90; der Pfeiler ist verbraucht. */
-    private fun discharge(rod: Rod): Sequence<Unit> = sequence {
+    /**
+     * Entladung in Zeus: 40 × H(n) effektiv (unter dem Deckel), Taumeln, **offen** F 90; der Pfeiler ist verbraucht.
+     * [viaGrip] = ausgelöst über den Erdungsgriff (dessen Bogen `zeus.rod_arc` ersetzt den Bogen hier).
+     */
+    private fun discharge(rod: Rod, viaGrip: Boolean = false): Sequence<Unit> = sequence {
         chainBroken = true
         rod.state = RodState.SPENT
         rod.chargedUntil = 0L
-        setCopper(rod.foot, Blocks.WAXED_OXIDIZED_COPPER.defaultState)
+        setCopper(rod, Blocks.WAXED_OXIDIZED_COPPER.defaultState)
         stopMoving()
         val chest = entityPos.add(0.0, height * 0.6, 0.0)
         // Dicker Bogen Pfeiler → Zeus (zwei Stränge), Funken an der Brust, Ruck.
-        BossFx.arc(sw, Vfx.Style.THUNDER, rod.tip, chest, bend = DISCHARGE_BEND, width = DISCHARGE_WIDTH, life = DISCHARGE_LIFE, strands = 2, toEntity = self)
+        if (!viaGrip) {
+            BossFx.arc(sw, Vfx.Style.THUNDER, rod.tip, chest, bend = DISCHARGE_BEND, width = DISCHARGE_WIDTH, life = DISCHARGE_LIFE, strands = 2, toEntity = self)
+        }
         BossFx.sparks(sw, Vfx.Style.THUNDER, chest, Vec3d(0.0, 1.0, 0.0), BossFx.SPARKS_PER_CALL, DISCHARGE_SPARK_SPEED, DISCHARGE_SPARK_LIFE)
         BossFx.kick(sw, entityPos, KICK_DISCHARGE, ticks = KICK_TICKS + 1, radius = KICK_RADIUS)
         lightning(entityPos)
@@ -1155,20 +1233,24 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         yieldAll(stagger(Z.ROD_STAGGER_F))
     }
 
+    /** Geladener Pfeiler, dessen Sockel [pos] höchstens 4 nah ist (waagerecht, ab dem Sockelrand; PLAN 3.5). */
     private fun chargedRodNear(pos: Vec3d): Rod? = rods
-        .filter { it.state == RodState.CHARGED && GuardianEntity.flat(pos, it.center) <= Z.ROD_DISCHARGE_DISTANCE + ROD_HALF }
-        .minByOrNull { GuardianEntity.flat(pos, it.center) }
+        .filter { it.charged && it.socketDistance(pos) <= Z.ROD_DISCHARGE_DISTANCE }
+        .minByOrNull { it.socketDistance(pos) }
 
-    /** Frischer Pfeiler für einen Himmelsblitz: der Gerufene oder jemand im Kreis steht am Boden nah daran. */
+    /**
+     * Frischer Pfeiler für einen Himmelsblitz: der Gerufene oder jemand im Kreis steht am Boden höchstens 3 neben dem
+     * Sockel, und zwar auf der Scholle dieses Pfeilers oder im Kern (Überarbeitung 4; ohne Vertrag wie bisher).
+     */
     private fun groundingRod(target: ServerPlayerEntity, ring: Telegraph.Ring): Rod? {
         val candidates = (listOf(target) + ring.hits(fighters())).distinct().filter { it.isAlive && !it.isRemoved && grounded(it) }
         var best: Rod? = null
         var bestDistance = Double.MAX_VALUE
         for (player in candidates) {
             for (rod in rods) {
-                if (rod.state != RodState.FRESH) continue
-                val d = GuardianEntity.flat(player.entityPos, rod.center)
-                if (d <= Z.ROD_LURE_DISTANCE + ROD_HALF && d < bestDistance) {
+                if (rod.state != RodState.FRESH || rod.doomed || !groundsFrom(rod, player)) continue
+                val d = rod.socketDistance(player.entityPos)
+                if (d <= Z.ROD_LURE_DISTANCE && d < bestDistance) {
                     best = rod
                     bestDistance = d
                 }
@@ -1177,8 +1259,18 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         return best
     }
 
-    /** Erster Pfeiler auf der Wurflinie ab [from] in [dir] bis [length] und sein Abstand entlang der Linie. */
-    private fun rodOnLine(from: Vec3d, dir: Vec3d, length: Double): Pair<Rod, Double>? {
+    /** Steht [player] auf einer Fläche, von der aus [rod] erdet (seine Scholle oder der Kern)? Ohne Vertrag immer. */
+    private fun groundsFrom(rod: Rod, player: ServerPlayerEntity): Boolean {
+        val a = arena ?: return true
+        val spec = a.spec ?: return true
+        val level = a.levelAt(player.entityPos)
+        if (level != null) return level.id == "floe_${rod.index}"
+        return spec.core.contains(player.x, player.z)
+    }
+
+    /** Test-Arena ohne Vertrag: erster Pfeiler auf der Wurflinie ab [from] in [dir] bis [length] und sein Abstand. */
+    private fun rodOnLine(from: Vec3d, dir: Vec3d, length: Double): Pair<Rod?, Double>? {
+        if (arena?.spec != null) return null
         var best: Pair<Rod, Double>? = null
         for (rod in rods) {
             val at = along(rod.center, from, dir)
@@ -1190,6 +1282,23 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
             if (best == null || at < best.second) best = rod to at
         }
         return best
+    }
+
+    /**
+     * Mit Vertrag (Überarbeitung 4, PLAN 3.5 „Deckung“): Der Keraunos fliegt in Höhe [Z.KERAUNOS_RAY_HEIGHT] über dem
+     * Kern und endet am ersten Block (`Cover.lineEnd`). Trifft er einen Pfeiler, liefert das den Pfeiler (`null`, wenn
+     * er schon gefallen ist) und den Abstand; endet er an anderem Gestein, nur den Abstand. Ohne Vertrag `null`.
+     */
+    private fun keraunosBlocker(from: Vec3d, dir: Vec3d): Pair<Rod?, Double>? {
+        val spec = arena?.spec ?: return null
+        val y = spec.coreY + Z.KERAUNOS_RAY_HEIGHT
+        val a = Vec3d(from.x, y, from.z)
+        val b = a.add(dir.multiply(Z.THROW_LENGTH.toDouble()))
+        val end = Cover.lineEnd(sw, a, b)
+        if (end.squaredDistanceTo(b) < 1e-6) return null
+        val spot = Cover.spotAt(spec, end)
+        val rod = spot?.let { s -> rods.firstOrNull { "pillar_${it.index}" == s.id } }
+        return rod to GuardianEntity.flat(a, end)
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1211,15 +1320,49 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         return Vec3d(pos.x, (hit ?: a.floorY) + 0.05, pos.z)
     }
 
-    private fun grounded(player: ServerPlayerEntity): Boolean = player.isOnGround || player.y - courtFloor() < 0.6
+    /** Steht [player] am Boden seiner Fläche (Kern, Terrasse, Bühne)? Ohne Vertrag gegen den Hofboden. */
+    private fun grounded(player: ServerPlayerEntity): Boolean = player.isOnGround || player.y - floorOf(player.entityPos) < 0.6
+
+    // --- Höhenband (Überarbeitung 4, PLAN 4.3 und _KAMPF_GEMEINSAM Pflicht 3) -----------------------------------
+
+    /** Gruppe mit dem Band Kern bis +7 (trifft Kern, Terrasse und Bühne); ohne Vertrag unverändert. */
+    private fun banded(group: Telegraph.Fight.Group): Telegraph.Fight.Group {
+        val spec = arena?.spec ?: return group
+        return group.band(spec.coreY.toDouble(), Z.BAND_BELOW, Z.BAND_ABOVE)
+    }
+
+    /** Füße im Band der Kampfflächen (Kern −1 … +7)? Ohne Vertrag immer. */
+    private fun inFightBand(player: ServerPlayerEntity): Boolean {
+        val spec = arena?.spec ?: return true
+        return Telegraph.inBand(player.y, spec.coreY - Z.BAND_BELOW, spec.coreY + Z.BAND_ABOVE)
+    }
+
+    /** Füße im Band des Kernbodens (Kern −1 … +3, Bodenangriffe)? Ohne Vertrag immer. */
+    private fun inCoreBand(player: ServerPlayerEntity): Boolean {
+        val spec = arena?.spec ?: return true
+        return Telegraph.inBand(player.y, spec.coreY - Z.BAND_BELOW, spec.coreY + Z.BAND_LOW_ABOVE)
+    }
+
+    /** Gorgonenblick gedeckt? Mit Vertrag Sichtlinie mit zwei Strahlen (Pfeiler mit Sockel, `Cover`), sonst wie bisher. */
+    private fun gazeCovered(eye: Vec3d, player: ServerPlayerEntity): Boolean {
+        if (arena?.spec == null) return !sees(eye, player)
+        return Cover.sheltered(sw, eye, player)
+    }
+
+    /** Aus dieser Höhe wirft er den Keraunos (Quelle für die Deckungs-Rune). */
+    private fun throwEye(): Vec3d = entityPos.add(0.0, height * 0.78, 0.0)
 
     private fun nearestFighter(): ServerPlayerEntity? = fighters().minByOrNull { it.squaredDistanceTo(self) }
 
-    /** Landepunkt des Donnerschritts: auf der Fläche und nicht im Kupfer. */
+    /**
+     * Landepunkt des Donnerschritts: auf der Fläche und nicht im Kupfer. Mit Vertrag immer im Kern (Zeus steigt keine
+     * Treppen, PLAN 0; der Kern bricht nie), höchstens [Z.CORE_MARGIN] vom Kernrand.
+     */
     private fun landingFor(target: Vec3d): Vec3d {
         val mid = courtCenter()
-        var x = target.x
-        var z = target.z
+        val core = ZeusIsland.clampToCore(arena?.spec, target, Z.CORE_MARGIN)
+        var x = core.x
+        var z = core.z
         val limit = courtRadius() - 2.0
         val d = GuardianEntity.flat(Vec3d(x, 0.0, z), mid)
         if (d > limit) {
@@ -1345,7 +1488,8 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         if (flatCourt) {
             val altar = OlympusLayout.F.altar ?: OlympusLayout.F.center
             val seal = Vec3d(altar.x + 0.5, a.floorY, altar.z + 0.5)
-            val throne = Vec3d(OlympusLayout.THRONE.x + 0.5, a.floorY, OlympusLayout.THRONE.z + 1.5)
+            // Überarbeitung 4: Füße vor dem Sitz auf der Thronstufe (y 236, Bühne +3 mit Stufe), nicht auf dem Hofboden.
+            val throne = Vec3d(OlympusLayout.THRONE.x + 0.5, OlympusLayout.THRONE.y.toDouble(), OlympusLayout.THRONE.z + 1.5)
             val toSeal = flatNorm(seal.subtract(center))
             return Stage(seal, throne, spot(center.add(toSeal.multiply(4.0))), center)
         }
@@ -1392,14 +1536,79 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         if (on) Cine.atmosphere(players, Vfx.Style.THUNDER, courtCenter(), ticks) else Cine.atmosphere(players, null, courtCenter(), 1)
     }
 
-    /** Zu Beginn von Phase II und III: zwei verbrauchte Pfeiler werden wieder frisch. Liefert ihre Spitzen. */
-    internal fun sceneRenewRods(): List<Vec3d> {
-        val renewed = rods.filter { it.state == RodState.SPENT }.take(Z.ROD_RENEW)
+    /**
+     * Zu Beginn von Phase II und III: zwei verbrauchte Pfeiler werden wieder frisch. Liefert ihre Spitzen. Überarbeitung 4:
+     * nur vorhandene Pfeiler, und keiner, dessen Scholle zu Beginn von Phase [newPhase] bricht.
+     */
+    internal fun sceneRenewRods(newPhase: Int = phase): List<Vec3d> {
+        val breaking = island.breaksAt(newPhase)
+        val renewed = rods.filter { it.state == RodState.SPENT && !it.doomed && it.index !in breaking }.take(Z.ROD_RENEW)
         for (rod in renewed) {
             rod.state = RodState.FRESH
-            setCopper(rod.foot, Blocks.WAXED_COPPER_BLOCK.defaultState)
+            rod.gripSpent = false
+            setCopper(rod, Blocks.WAXED_COPPER_BLOCK.defaultState)
         }
         return renewed.map { it.tip }
+    }
+
+    /** Szene `zeus.phase3`: Risse an den Fugen der Schollen, die gleich brechen (nur Bild). */
+    internal fun sceneFloeOmen(life: Int) = island.omen(OlympusArenas.F_FLOES_BREAK_FIRST, life)
+
+    // ---------------------------------------------------------------------------------------------
+    // Für die Signatur (ZeusIsland, Überarbeitung 4)
+    // ---------------------------------------------------------------------------------------------
+
+    internal fun islandArena(): Arenas.Arena? = arena
+
+    internal fun islandRods(): List<Rod> = rods
+
+    internal fun islandFighters(): List<ServerPlayerEntity> = fighters()
+
+    internal fun islandViewers(): List<ServerPlayerEntity> = viewers()
+
+    internal fun islandTelegraph(): Telegraph.Fight = telegraph
+
+    /** Darf jetzt geerdet bzw. entladen werden (keine Szene, keine Waage, kein Ende, Arena da)? */
+    internal fun islandCanGround(): Boolean = arena != null && !scenes.playing && !scalesActive && !ending
+
+    /** Läuft der Kampf noch (für den Bruch: nicht weg, kein Ende, keine Szene)? */
+    internal fun islandFighting(): Boolean = !isRemoved && isAlive && !ending && !scenes.playing && arena?.open == true
+
+    /** Läuft noch eine Boss-Ansage (Ringe, Kette, Luftblitz)? Dann beginnt kein Bruch. */
+    internal fun islandBusy(): Boolean = telegraph.activeGroups > 0 || airActive.isNotEmpty() || jobs.isNotEmpty()
+
+    internal fun islandHint(key: String) = hint(key)
+
+    internal fun islandSound(event: SoundEvent, at: Vec3d, volume: Float, pitch: Float) {
+        telegraph.sound(event, at, volume, pitch)
+    }
+
+    internal fun islandAct(action: Int) = kit.act(action)
+
+    /** Griff getroffen: Entladung wie heute (bricht den laufenden Angriff ab; ein Höhepunkt endet damit). */
+    internal fun islandDischarge(rod: Rod) {
+        alone = false
+        interrupt(discharge(rod, viaGrip = true))
+    }
+
+    /** Griff verfehlt: Der Pfeiler oxidiert trotzdem, kein Fenster. */
+    internal fun islandOxidize(rod: Rod) {
+        rod.state = RodState.SPENT
+        rod.chargedUntil = 0L
+        setCopper(rod, Blocks.WAXED_OXIDIZED_COPPER.defaultState)
+    }
+
+    /** Die Pfeiler der gebrochenen Schollen sind weg (keine Erdung, keine Erneuerung, kein Griff). */
+    internal fun islandRemoveRods(indices: Collection<Int>) {
+        rods.removeAll { it.index in indices }
+    }
+
+    /** Steht er außerhalb des Kerns, tritt er hinein (Donnerschritt ohne Schaden); sonst nichts. */
+    internal fun islandToCore(): Sequence<Unit> {
+        val spec = arena?.spec ?: return emptySequence()
+        val goal = ZeusIsland.clampToCore(spec, entityPos, Z.CORE_MARGIN * 2.0)
+        if (GuardianEntity.flat(goal, entityPos) < 0.5) return emptySequence()
+        return stepTo(spot(goal))
     }
 
     /** Wer Nikes Kranz bekommt: der Spieler mit dem meisten Schaden (sonst der nächste). */
@@ -1488,6 +1697,12 @@ class ZeusEntity(type: EntityType<out ZeusEntity>, world: World) : DuelBossEntit
         const val GAZE_FX_AFTER = 20
         const val GAZE_VIGNETTE = 0.2f
         const val GAZE_VIGNETTE_TICKS = 34
+
+        /** Gorgonenblick: Statuszeile „gedeckt/gesehen“ so oft neu bestimmen (Cover drosselt zusätzlich). */
+        const val COVER_STATUS_EVERY = 5
+
+        /** Rune am Fuß des 3 × 3-Pfeilers etwas größer als am alten Kupferstab. */
+        const val BIG_RUNE = 1.5f
 
         /** Waage: Aufladen an der Waage; Regen außerhalb der Schale. */
         const val SCALES_CHARGE_RADIUS = 2.6f

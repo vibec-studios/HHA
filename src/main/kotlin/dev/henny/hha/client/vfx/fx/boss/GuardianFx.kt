@@ -2,6 +2,7 @@ package dev.henny.hha.client.vfx.fx.boss
 
 import dev.henny.hha.HhaEntities
 import dev.henny.hha.HhaSounds
+import dev.henny.hha.block.ArenaDeviceBlock
 import dev.henny.hha.client.anim.Ease
 import dev.henny.hha.client.anim.Spring
 import dev.henny.hha.client.vfx.Palette
@@ -25,6 +26,7 @@ import dev.henny.hha.logic.boss.BossDefense
 import net.minecraft.client.world.ClientWorld
 import net.minecraft.entity.Entity
 import net.minecraft.entity.LivingEntity
+import net.minecraft.util.math.BlockPos
 import net.minecraft.util.math.MathHelper
 import net.minecraft.util.math.Vec3d
 import org.joml.Matrix4f
@@ -32,6 +34,7 @@ import org.joml.Quaternionf
 import org.joml.Vector3f
 import java.util.Random
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
@@ -51,6 +54,10 @@ import kotlin.math.sqrt
  * | `ixion.spokes` | [IxionSpokes] | pos = Nabe, a = Startwinkel (Grad, atan2-Rahmen), b = Anteil der Runde, c = innen, d = außen, life, extra = `Zahl:Breite` |
  * | `tantalus.flood` | [TantalusFlood] | pos = Mitte, a = Radius, b = Höhe, c = Laufzeit (Ticks), life = Laufzeit + Ausklang |
  * | `tantalus.ebb` | [TantalusEbb] | pos = Boden unter ihm, entity = Tantalos, a = Radius, b = Art (0 zu ihm hin, 1 weicht, 2 steht c Ticks, dann weicht), life |
+ * | `guardian.post_fall` | [GuardianPostFall] | P21: pos = Kopf des Pfahls, dir = zum Kerkermeister, a = Abstand, entity = Kerkermeister, life |
+ * | `guardian.boulder_back` | [GuardianBoulderBack] | P21: pos = Fels, dir = Rücklauf, a = Länge, b = Ansage, life |
+ * | `guardian.fetter_break` | [GuardianFetterBreak] | P21: pos = Radmitte, entity = Ixion, a = gesprengte Fesseln, life |
+ * | `guardian.sluice` | [GuardianSluice] | P21: pos = Schleusenrad, dir = zur Beckenmitte, a = Länge, life (endet, sobald das Rad nicht mehr golden ist) |
  *
  * Dauer-Effekte ([FxAttach], einer je Wesen): [WardenLantern] (Laterne, Leuchten steigt in der Raserei),
  * [IxionWheel] (Glut-Torus und Funken am Feuerrad, Stärke aus der Aktion).
@@ -67,6 +74,11 @@ object GuardianFx {
         FxRegistry.register("ixion.spokes") { IxionSpokes(it) }
         FxRegistry.register("tantalus.flood") { TantalusFlood(it) }
         FxRegistry.register("tantalus.ebb") { TantalusEbb(it) }
+        // Überarbeitung 4 (P21): Signatur-Mechaniken.
+        FxRegistry.register("guardian.post_fall") { GuardianPostFall(it) }
+        FxRegistry.register("guardian.boulder_back") { GuardianBoulderBack(it) }
+        FxRegistry.register("guardian.fetter_break") { GuardianFetterBreak(it) }
+        FxRegistry.register("guardian.sluice") { GuardianSluice(it) }
         FxAttach.register(HhaEntities.WARDEN_OF_CHAINS) { WardenLantern(it) }
         FxAttach.register(HhaEntities.IXION) { IxionWheel(it) }
     }
@@ -486,7 +498,7 @@ class IxionWheel(private val entity: Entity) : FxEffect(LIFE) {
         return when (a) {
             IxionAction.ROLL_WINDUP -> floatArrayOf(0.85f, 0f, HALF_PI, 0f)
             IxionAction.ROLL -> floatArrayOf(1f, 0f, HALF_PI, 0f)
-            IxionAction.WOBBLE -> floatArrayOf(0.45f, WOBBLE_TILT * GuardianFx.smooth(age / 6f), HALF_PI, 0f)
+            IxionAction.WOBBLE, IxionAction.TILT -> floatArrayOf(0.45f, WOBBLE_TILT * GuardianFx.smooth(age / 6f), HALF_PI, 0f)
             IxionAction.SPOKES, BossDefense.ANTI_AIR -> floatArrayOf(0.9f, HALF_PI, 0f, 0f)
             IxionAction.SPARKS -> floatArrayOf(0.6f, 0f, 0f, 0f)
             IxionAction.FALLEN -> floatArrayOf(0.15f, HALF_PI, 0f, 1f)
@@ -801,5 +813,209 @@ class TantalusEbb(args: FxArgs) : FxEffect(args.life.coerceAtLeast(MIN_LIFE)) {
         const val POOL_ALPHA = 0.5f
         const val RIM_ALPHA = 0.3f
         const val RIM_BAND = 0.9f
+    }
+}
+
+// =====================================================================================================================
+// Überarbeitung 4 (P21): Signatur-Mechaniken der Wächter
+// =====================================================================================================================
+
+/**
+ * `guardian.post_fall`: Der umgelegte Kettenpfahl reißt den Kerkermeister zu Boden. Am Pfahl hebt sich ein flacher
+ * Staubring, unter dem Kerkermeister läuft ein einziger Stoßring aus. pos = Kopf des Pfahls, dir = zum Kerkermeister,
+ * a = Abstand, entity = Kerkermeister, life. Kein Gold (Gold zeigt die Rune des Fensters).
+ */
+class GuardianPostFall(args: FxArgs) : FxEffect(args.life.coerceAtLeast(MIN_LIFE)) {
+    private val owner = args.entity
+    private val palette = args.palette
+    private val seed = args.seed.toInt()
+    private val postGround = Vec3d(args.pos.x, FxLib.groundY(args.world, args.pos.x, args.pos.y, args.pos.z) + LIFT, args.pos.z)
+
+    override fun energy(f: FxFrame) {
+        val t = time(f)
+        val k = (t / life).coerceIn(0f, 1f)
+        val fade = 1f - GuardianFx.smooth(k)
+        // Staub am Pfahl: breitet sich weich aus.
+        FxDraw.flat(
+            f, postGround, FxLib.UP, DUST_RADIUS * Ease.outCubic(k.coerceAtLeast(0.05f)), FxLib.alpha(DUST, DUST_ALPHA * fade),
+            FxMode.DUST, progress = fade, seed = seed,
+        )
+        // Ein Stoßring unter ihm (der Aufprall).
+        val e = owner ?: return
+        if (e.isRemoved) return
+        val s = (t / SHOCK_TICKS).coerceIn(0f, 1f)
+        if (s >= 1f) return
+        val feet = e.getLerpedPos(f.tickDelta).add(0.0, LIFT, 0.0)
+        FxDraw.flat(
+            f, feet, FxLib.UP, SHOCK_RADIUS * Ease.outCubic(s), FxLib.alpha(palette.main, SHOCK_ALPHA * (1f - s)), FxMode.SHOCK,
+            inner = SHOCK_BAND, seed = seed + 1,
+        )
+    }
+
+    companion object {
+        const val MIN_LIFE = 16
+        const val LIFT = 0.05
+        const val DUST = 0xFF8A7E70.toInt()
+        const val DUST_RADIUS = 2.2f
+        const val DUST_ALPHA = 0.45f
+        const val SHOCK_TICKS = 14f
+        const val SHOCK_RADIUS = 4.5f
+        const val SHOCK_BAND = 0.6f
+        const val SHOCK_ALPHA = 0.55f
+    }
+}
+
+/**
+ * `guardian.boulder_back`: Der Fels rollt zurück. Ein goldenes Band liegt auf der Rücklauf-Linie (Ziel: Sisyphos), ein
+ * ruhiger Lichtpuls läuft während der Ansage genau einmal vom Fels zu ihm; danach verlischt das Band hinter dem Fels.
+ * pos = Fels (Boden), dir = Richtung, a = Länge, b = Ansage (Ticks), life = Ansage + Rollzeit + Ausklang.
+ */
+class GuardianBoulderBack(args: FxArgs) : FxEffect(args.life.coerceAtLeast(MIN_LIFE)) {
+    private val gold = Palette.of(Vfx.Style.GOLD)
+    private val seed = args.seed.toInt()
+    private val windup = args.b.coerceAtLeast(4f)
+    private val length = args.a.coerceAtLeast(1f)
+    private val points: List<Vec3d>
+
+    init {
+        val dir = FxLib.flat(args.dir)
+        val n = (length / STEP).toInt().coerceIn(2, MAX_POINTS)
+        points = List(n + 1) { i ->
+            val p = args.pos.add(dir.multiply(length * i.toDouble() / n))
+            Vec3d(p.x, FxLib.groundY(args.world, p.x, p.y + 2.0, p.z) + LIFT, p.z)
+        }
+    }
+
+    override fun energy(f: FxFrame) {
+        val t = time(f)
+        val appear = GuardianFx.smooth(t / FADE_IN)
+        val out = ((life - t) / FADE_OUT).coerceIn(0f, 1f)
+        // Nach der Ansage rollt der Fels mit dem Tempo des Servers: hinter ihm verlischt das Band.
+        val rolled = if (t <= windup) 0f else ((t - windup) * ROLL / length).coerceIn(0f, 1f)
+        val pulse = (t / windup).coerceIn(0f, 1f)
+        val a = appear * out
+        if (a <= 0.01f) return
+        FxDraw.strip(
+            f, points, FxLib.UP, width = { WIDTH },
+            color = { u ->
+                val ahead = if (u < rolled) 0f else 1f
+                val glow = (1f - abs(u - pulse) / PULSE_WIDTH).coerceIn(0f, 1f)
+                FxLib.alpha(FxLib.mix(gold.main, gold.core, glow * 0.7f), (BASE_ALPHA + PULSE_ALPHA * glow) * a * ahead)
+            },
+            mode = FxMode.RIBBON, seed = seed,
+        )
+    }
+
+    companion object {
+        const val MIN_LIFE = 20
+        const val STEP = 1.0f
+        const val MAX_POINTS = 48
+        const val LIFT = 0.06
+        const val WIDTH = 0.35f
+        const val FADE_IN = 5f
+        const val FADE_OUT = 8f
+        /** Wie der Server (`BossTimings.Sisyphus.ROLL_SPEED`), nur fürs Ausblenden hinter dem Fels. */
+        const val ROLL = 1.1f
+        const val PULSE_WIDTH = 0.18f
+        const val BASE_ALPHA = 0.35f
+        const val PULSE_ALPHA = 0.5f
+    }
+}
+
+/**
+ * `guardian.fetter_break`: Eine Fessel an Ixions Rad reißt. Ein goldener Schein an der Nabe, ein Runenring in der
+ * Radebene dreht aus und verglüht (Ziel erreicht). pos = Radmitte, entity = Ixion, a = gesprengte Fesseln (1–3: der
+ * Ring wird mit jeder etwas größer), life.
+ */
+class GuardianFetterBreak(args: FxArgs) : FxEffect(args.life.coerceAtLeast(MIN_LIFE)) {
+    private val owner = args.entity
+    private val fixed = args.pos
+    private val lift = owner?.let { args.pos.y - it.y } ?: 0.0
+    private val count = args.a.coerceIn(1f, 3f)
+    private val gold = Palette.of(Vfx.Style.GOLD)
+    private val seed = args.seed.toInt()
+
+    override fun energy(f: FxFrame) {
+        val t = time(f)
+        val k = (t / life).coerceIn(0f, 1f)
+        val drop = (1f - k).let { it * it }
+        val e = owner?.takeIf { !it.isRemoved }
+        val at = e?.getLerpedPos(f.tickDelta)?.add(0.0, lift, 0.0) ?: fixed
+        FxDraw.glow(f, at, GLOW * (0.7f + 0.1f * count), FxLib.alpha(gold.core, GLOW_ALPHA * drop), seed)
+        val facing = e?.let { GuardianFx.facing(it, f.tickDelta) } ?: Vec3d(1.0, 0.0, 0.0)
+        FxDraw.flat(
+            f, at, facing, RING * (0.6f + 0.4f * Ease.outCubic(k)) * (0.8f + 0.1f * count), FxLib.alpha(gold.main, RING_ALPHA * drop),
+            FxMode.RUNE, inner = RING * 0.8f, rotation = t * SPIN, progress = 1f - k, seed = seed + 1,
+        )
+    }
+
+    companion object {
+        const val MIN_LIFE = 16
+        const val GLOW = 1.4f
+        const val GLOW_ALPHA = 0.6f
+        const val RING = 2.2f
+        const val RING_ALPHA = 0.7f
+        const val SPIN = 0.05f
+    }
+}
+
+/**
+ * `guardian.sluice`: Wasser läuft aus der offenen Schleuse durch die Rinne ins Becken zu Tantalos, solange das Rad
+ * golden steht (Zustand 1). Ein ruhiges, fließendes Band am Boden; wird das Rad geschlossen oder geht es auf 0, blendet
+ * es aus und endet. pos = Radmitte, dir = zur Beckenmitte, a = Länge, life (Obergrenze).
+ */
+class GuardianSluice(args: FxArgs) : FxEffect(args.life.coerceAtLeast(MIN_LIFE)) {
+    private val palette = args.palette
+    private val seed = args.seed.toInt()
+    private val wheel = BlockPos.ofFloored(args.pos)
+    private val points: List<Vec3d>
+    private var shown = 0f
+    private var done = false
+
+    init {
+        val dir = FxLib.flat(args.dir)
+        val length = args.a.coerceAtLeast(1f)
+        val n = (length / STEP).toInt().coerceIn(2, MAX_POINTS)
+        points = List(n + 1) { i ->
+            val p = args.pos.add(dir.multiply(length * i.toDouble() / n))
+            Vec3d(p.x, FxLib.groundY(args.world, p.x, args.pos.y + 1.0, p.z) + LIFT, p.z)
+        }
+    }
+
+    private fun flowing(world: ClientWorld): Boolean {
+        val state = world.getBlockState(wheel)
+        return state.block is ArenaDeviceBlock && state.get(ArenaDeviceBlock.MODE) == ArenaDeviceBlock.READY
+    }
+
+    override fun tick(world: ClientWorld) {
+        val target = if (flowing(world)) 1f else 0f
+        shown += (target - shown) * FOLLOW
+        if (target == 0f && age > START_GRACE && shown < 0.02f) done = true
+    }
+
+    override fun expired(): Boolean = done || super.expired()
+
+    override fun energy(f: FxFrame) {
+        if (shown <= 0.01f) return
+        val t = time(f)
+        FxDraw.strip(
+            f, points, FxLib.UP, width = { u -> WIDTH * (1f - 0.35f * u) },
+            color = { u -> FxLib.alpha(FxLib.mix(palette.main, palette.core, 0.3f), ALPHA * shown * (1f - 0.5f * u)) },
+            mode = FxMode.RIBBON, seed = seed, scroll = -t * FLOW,
+        )
+    }
+
+    companion object {
+        const val MIN_LIFE = 20
+        /** So lange darf das Rad nach dem Start noch nicht golden sein (Blockupdate kommt evtl. nach dem Effekt). */
+        const val START_GRACE = 10
+        const val STEP = 1.0f
+        const val MAX_POINTS = 32
+        const val LIFT = 0.08
+        const val WIDTH = 0.4f
+        const val ALPHA = 0.6f
+        const val FOLLOW = 0.15f
+        /** Fließtempo (Blöcke je Tick, ruhig). */
+        const val FLOW = 0.08f
     }
 }

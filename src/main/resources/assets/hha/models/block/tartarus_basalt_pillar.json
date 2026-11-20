@@ -1,0 +1,7 @@
+{
+  "parent": "minecraft:block/cube_column",
+  "textures": {
+    "end": "hha:block/tartarus_basalt_pillar_top",
+    "side": "hha:block/tartarus_basalt_pillar"
+  }
+}

@@ -31,7 +31,9 @@ Choose your side: the radiant **Heaven Set** with golden trims and holy light, o
 - **Relics**: every piece of the Heaven and Hell sets drops exactly once per world, spread over the bosses; a second win gives ingots instead. Smithing the set pieces is off by default (`relic_crafting`)
 - **Enemies of Olympus**: Curetes with shields, griffins diving from their columns and golden automatons that wake up when you come close
 - **Boss presentation (third overhaul)**: every attack has its own smooth effect (light trails, rifts in the sky, real flying floor blocks, glowing cracks), hits turn the camera slightly instead of shaking it, and intros, phase changes and defeats play as staged, skippable cutscenes with a guided camera. Each boss has a theme per phase with smooth crossfades and a victory stinger. Screen effects such as Hekate's eclipse, Kronos' time stop and his gravity lens can be turned off (`/hhac toggle screen_fx`). Fight numbers are unchanged
-- Docs: [Olympus](docs/olymp.md), [Tartarus](docs/tartaros.md), [bosses in general](docs/bosse-allgemein.md) (German)
+- **Arenas, approaches and mechanics (fourth overhaul)**, inspired by HHA Blood and Void: arenas with cover against named attacks (line of sight), raised levels and parts that break away; sub-targets with their own bars (Bia, the anvil, Hades' fetter, Kampe's chain locks), arena devices (bells, grounding rods, chain posts, sluices), a fair stealth phase (Hekate's *Dark Hour*); the Olympus bridges became themed battle ways with gates and a pulse that grows louder, Hades' palace got a closed approach through a hall of judges to the hound gate. Every arena is repaired from its blueprint and restored after the fight; old worlds get the new Olympus automatically (`world_retrofit`)
+- **35 new decorative blocks** (Olympus marble, storm marble, bronze, storm cloud; Tartarus basalt, soul vein and ember basalt) in 32 px, with stonecutter variants ([docs](docs/bloecke.md))
+- Docs: [Olympus](docs/olymp.md), [Tartarus](docs/tartaros.md), [bosses in general](docs/bosse-allgemein.md), [blocks](docs/bloecke.md) (German)
 
 ## RPG mode
 
@@ -80,6 +82,8 @@ Requires JDK 21. The remapped jar is written to `build/libs/`.
 | `/hha boss start\|skip\|stop <boss>` | Start, skip or stop a boss fight at its island (OP) |
 | `/hha tp olymp\|tempel\|dreiweg\|schmiede\|stufen\|thron\|tartaros` | Travel to the stations (OP) |
 | `/hha olymp spawn <kurete\|griffin\|automaton>`, `/hha olymp bridges` | Test post in front of you, close all sealed bridges (OP) |
+| `/hha arena list\|show\|repair\|restore\|part`, `/hha world retrofit status\|run\|all` | Arena cover, levels and parts; repair from the blueprint; Olympus retrofit in old worlds (OP) |
+| `/hha approach`, `/hha deco give` | Progress on a battle way; all decorative blocks (OP) |
 | `/trust <player>` / `/untrust <player>` | Your abilities never harm trusted players |
 
 ## Good to know

@@ -101,9 +101,9 @@ object OlympusLayout {
     const val C_PATH_NORTHWEST = 1
     const val C_PATH_NORTHEAST = 2
 
-    /** Hekataion: Statue 3 × 3 (Mitte = [C].center), so hoch. */
+    /** Hekataion: Statue 3 × 3 (Mitte = [C].center), so hoch. Überarbeitung 4 (PLAN 3.2): 5 → 7, Deckung gegen den Blick. */
     const val HEKATAION_HALF = 1
-    const val HEKATAION_HEIGHT = 5
+    const val HEKATAION_HEIGHT = 7
 
     /**
      * Höllentor am Ende des Nordwest-Wegs, auf der 6 Blöcke tieferen Terrasse (Füße y = 134). Fußpunkt der Tormitte
@@ -174,11 +174,14 @@ object OlympusLayout {
     // F Thron des Zeus
     // ---------------------------------------------------------------------------------------------
 
-    /** Insel F; Thron im Norden außerhalb der Fläche, Siegel `boss_altar[boss=3]` davor. */
-    val F = Isle('F', "zeus", BlockPos(0, 232, -680), 50, 30, BlockPos(0, 232, -707), Vec3d(31.5, 232.0, -654.5), Vec3d(0.5, 232.0, -703.5))
+    /**
+     * Insel F; Thron im Norden außerhalb der Fläche, Siegel `boss_altar[boss=3]` davor. Überarbeitung 4 (PLAN 3.5): Altar
+     * und Erscheinungsort liegen auf der Thronbühne (+3, y 235); der Kern bleibt auf y 232, die Terrasse liegt auf +2.
+     */
+    val F = Isle('F', "zeus", BlockPos(0, 232, -680), 50, 30, BlockPos(0, 235, -707), Vec3d(31.5, 232.0, -654.5), Vec3d(0.5, 235.0, -703.5))
 
-    /** Thron (Sitzfläche). */
-    val THRONE = BlockPos(0, 233, -714)
+    /** Thron (Sitzfläche). Überarbeitung 4 (PLAN 3.5): auf der Thronbühne, Sitz bei y 236. */
+    val THRONE = BlockPos(0, 236, -714)
 
     /** Sechs Blitzableiter-Pfeiler auf Ring 21, Winkel 0°, 60° … 300°; je 5 Blöcke gewachstes Kupfer, oben ein Blitzableiter. */
     const val PILLAR_RING = 21.0
@@ -186,10 +189,13 @@ object OlympusLayout {
     const val PILLAR_HEIGHT = 5
     val PILLAR_ANGLES = doubleArrayOf(0.0, 60.0, 120.0, 180.0, 240.0, 300.0)
 
-    /** Fuß (unterster Kupferblock, y = Boden) des Pfeilers [i]. */
+    /**
+     * Fuß des Pfeilers [i]. Überarbeitung 4 (PLAN 3.5): Der Fuß steht auf der Terrasse (+2, y 234) statt auf dem Kernboden;
+     * Sockel, Kern und Ableiter beschreibt `OlympusArenas` (Blitzpfeiler 3 × 3).
+     */
     fun pillar(i: Int): BlockPos {
         val a = Math.toRadians(PILLAR_ANGLES[i])
-        return BlockPos((F.center.x + PILLAR_RING * cos(a)).roundToInt(), F.center.y, (F.center.z + PILLAR_RING * sin(a)).roundToInt())
+        return BlockPos((F.center.x + PILLAR_RING * cos(a)).roundToInt(), F.center.y + 2, (F.center.z + PILLAR_RING * sin(a)).roundToInt())
     }
 
     val PILLARS: List<BlockPos> = (0 until PILLAR_COUNT).map(::pillar)

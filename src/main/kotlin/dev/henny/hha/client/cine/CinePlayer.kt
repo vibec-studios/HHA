@@ -138,6 +138,7 @@ object CinePlayer {
             Cine.OP_CLEAR_VFX -> dev.henny.hha.client.vfx.VfxManager.clear()
             Cine.OP_CUT -> cut()
             Cine.OP_PHASE_BAR -> PhaseBar.handle(n, payload.texts)
+            Cine.OP_SUB_BARS -> PhaseBar.handleSub(n, payload.texts)
             Cine.OP_SKIP_VOTES -> {
                 skipVotes = n[0].toInt()
                 skipTotal = n[1].toInt()

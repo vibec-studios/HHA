@@ -40,15 +40,43 @@ import dev.henny.hha.stage.stage
  * | 24–104 | Bogen um den Knienden | – |
  * | 104–158 | **Schnitt** auf Bia | 112 `bia.awake` als Erstarren, Erzähler-Zeile |
  * | 158–200 | zurück in die Augen | – |
+ *
+ * **Überarbeitung 4 (P17): Bia als Teilziel.** Ist ihre Leiste leer, zerspringt sie (`kratos.bia_break`); danach
+ * laufen Phasenwechsel und Niederlage ohne sie (`…_alone`, die Bia-Einstellungen sind durch Kratos ersetzt).
+ *
+ * `kratos.bia_break` (80 Ticks = 4 s, überspringbar; der Server setzt den Endzustand in `finish`):
+ * | Ticks | Kamera | Spuren / Server |
+ * | --- | --- | --- |
+ * | 0–12 | aus den Augen auf Bia | Kratos hält inne (Fenster und Ansage enden) |
+ * | 12–34 | Bia von vorn, zieht zurück | 16 Statue zerspringt `kratos.bia_break`, Sockel zu Trümmern (Server); Ruck, Ton |
+ * | 34–72 | **Schnitt** auf Kratos, tief von vorn | 30 Aktion `CMD_COME` (Faust), 40 Zeile „bia_break“ (Server); 70 Ruck des Brüllens |
+ * | 72–80 | zurück in die Augen | – |
+ *
+ * `kratos.phase2_alone` (80 Ticks): wie `kratos.phase2` bis 36, dann statt Bias Sprung eine langsame Fahrt auf ihn.
+ * `kratos.defeat_alone` (200 Ticks): wie `kratos.defeat`, 104–158 nah am Knienden statt Bia, Erzähler-Zeile „defeat_alone“.
  */
 object KratosStages {
     const val INTRO = "kratos.intro"
     const val PHASE2 = "kratos.phase2"
     const val DEFEAT = "kratos.defeat"
+    const val BIA_BREAK = "kratos.bia_break"
+    const val PHASE2_ALONE = "kratos.phase2_alone"
+    const val DEFEAT_ALONE = "kratos.defeat_alone"
 
     const val INTRO_LENGTH = 240
     const val PHASE2_LENGTH = 120
     const val DEFEAT_LENGTH = 200
+    const val BREAK_LENGTH = 80
+    const val PHASE2_ALONE_LENGTH = 80
+    const val DEFEAT_ALONE_LENGTH = DEFEAT_LENGTH
+
+    // --- Bias Bruch: Zeitmarken, die auch der Server liest ------------------------------------------------------
+    /** Die Statue zerspringt (Server: Effekt, Bia weg, Sockel zu Trümmern). */
+    const val BREAK_SHATTER = 16
+    /** Kratos ballt die Faust (Aktion `CMD_COME`; deren Ruck liegt 40 Ticks später, siehe `KratosTimings.COME_HIT`). */
+    const val BREAK_ROAR_ACT = 30
+    const val BREAK_ROAR = BREAK_ROAR_ACT + 40
+    const val BREAK_LINE = 40
 
     // --- Auftritt: Zeitmarken, die auch der Server liest ---------------------------------------------------------
     /** So lange darf er die Treppe herab schreiten (danach steht er, auch wenn er nicht angekommen ist). */
@@ -89,6 +117,56 @@ object KratosStages {
         StageScripts.register(intro())
         StageScripts.register(phase2())
         StageScripts.register(defeat())
+        StageScripts.register(biaBreak())
+        StageScripts.register(phase2Alone())
+        StageScripts.register(defeatAlone())
+    }
+
+    /** P17: Bia zerspringt, Kratos brüllt (Darsteller 1 = Bia, solange sie steht; danach gilt ihr letzter Ort). */
+    private fun biaBreak() = stage(BIA_BREAK, BREAK_LENGTH) {
+        shot(0, 12, cam = listOf(Key.Last, Key.ActorRel(1, 5.2, -1.6, 1.4)), look = listOf(Key.Last, Key.Actor(1, 2.0)),
+            fov = 70f to 58f, ease = EaseKind.OUT)
+        shot(12, 34, cam = listOf(Key.ActorRel(1, 5.2, -1.6, 1.4), Key.ActorRel(1, 6.4, -2.4, 1.9)), look = listOf(Key.Actor(1, 1.8)),
+            fov = 58f to 62f, ease = EaseKind.OUT, handheld = 0.8f)
+        shot(34, 72, cam = listOf(Key.ActorRel(0, 4.8, 1.3, 1.2), Key.ActorRel(0, 4.0, 0.8, 1.5)), look = listOf(Key.Actor(0, 3.3)),
+            fov = 56f to 50f, ease = EaseKind.LINEAR, cut = true, handheld = 0.7f)
+        shot(72, BREAK_LENGTH, cam = listOf(Key.Last, Key.Eye), look = listOf(Key.Last, Key.EyeLook), ease = EaseKind.SMOOTH, handheld = 0f)
+
+        kick(BREAK_SHATTER, pitch = 1.6f, roll = 0.8f, ticks = 6)
+        sound(BREAK_SHATTER, "hha:boss.crack", volume = 1f, pitch = 0.7f)
+        sound(BREAK_SHATTER + 2, "hha:boss.thud", volume = 0.9f, pitch = 0.8f)
+        kick(BREAK_ROAR, pitch = 1.2f, ticks = 6)
+        sound(BREAK_ROAR, "hha:boss.thud", volume = 0.8f, pitch = 0.6f)
+        mark(BREAK_SHATTER, "shatter")
+        mark(BREAK_ROAR, "roar")
+    }
+
+    /** P17: Phasenwechsel ohne Bia: Schild weg wie gewohnt, dann eine langsame Fahrt auf ihn statt Bias Sprung. */
+    private fun phase2Alone() = stage(PHASE2_ALONE, PHASE2_ALONE_LENGTH) {
+        shot(0, 16, cam = listOf(Key.Last, Key.ActorRel(0, 5.2, -2.6, 2.4)), look = listOf(Key.Last, Key.Actor(0, 2.8)),
+            fov = 70f to 60f, ease = EaseKind.OUT)
+        shot(16, 36, cam = listOf(Key.ActorRel(0, 2.6, -5.4, 1.3), Key.ActorRel(0, 2.9, -5.8, 1.5)),
+            look = listOf(Key.ActorRel(0, 0.6, -2.4, 0.6)), fov = 60f to 64f, ease = EaseKind.OUT, cut = true, handheld = 1.4f)
+        shot(36, 64, cam = listOf(Key.ActorRel(0, 5.4, 1.8, 2.0), Key.ActorRel(0, 4.0, 1.0, 2.6)), look = listOf(Key.Actor(0, 3.0)),
+            fov = 58f to 52f, ease = EaseKind.SMOOTH, cut = true, handheld = 0.5f)
+        shot(64, PHASE2_ALONE_LENGTH, cam = listOf(Key.Last, Key.Eye), look = listOf(Key.Last, Key.EyeLook), ease = EaseKind.SMOOTH, handheld = 0f)
+
+        kick(16, pitch = 1.0f, yaw = -2.2f, ticks = 7)
+        mark(16, "shield")
+    }
+
+    /** P17: Niederlage ohne Bia: statt der erstarrenden Statue nah an den Knienden, Erzähler-Zeile „defeat_alone“. */
+    private fun defeatAlone() = stage(DEFEAT_ALONE, DEFEAT_ALONE_LENGTH) {
+        shot(0, 24, cam = listOf(Key.Last, Key.ActorRel(0, 6.5, 2.8, 2.6)), look = listOf(Key.Last, Key.Actor(0, 2.6)),
+            fov = 70f to 60f, ease = EaseKind.OUT)
+        shot(24, 104, cam = listOf(Key.ActorRel(0, 6.5, 2.8, 2.6), Key.ActorRel(0, 5.6, -3.0, 1.5)), look = listOf(Key.Actor(0, 1.9)),
+            fov = 60f to 54f, arc = true, ease = EaseKind.SMOOTH, handheld = 0.6f)
+        shot(104, 158, cam = listOf(Key.ActorRel(0, 3.0, -2.4, 1.2), Key.ActorRel(0, 2.6, -1.8, 1.0)), look = listOf(Key.Actor(0, 1.6)),
+            fov = 52f to 48f, ease = EaseKind.LINEAR, cut = true, handheld = 0.5f)
+        shot(158, DEFEAT_ALONE_LENGTH, cam = listOf(Key.Last, Key.Eye), look = listOf(Key.Last, Key.EyeLook), ease = EaseKind.SMOOTH, handheld = 0f)
+
+        caption(DEFEAT_PETRIFY + 6, Cine.SPEAKER_NARRATOR, "$KEY.line.defeat_alone")
+        mark(DEFEAT_PETRIFY, "alone")
     }
 
     private fun intro() = stage(INTRO, INTRO_LENGTH) {

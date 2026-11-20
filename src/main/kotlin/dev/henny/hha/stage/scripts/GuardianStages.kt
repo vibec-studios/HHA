@@ -21,7 +21,7 @@ import dev.henny.hha.stage.stage
  * | --- | --- | --- |
  * | `warden.intro` | 150 | aus den Augen hoch vor ihn, Bogen um ihn herum, Nahe aufs Gesicht beim Brüllen (88), zurück |
  * | `sisyphus.intro` | 160 | hinter ihm am Fuß des Hangs, die Kamera schleicht mit, während er den Fels hinaufschiebt; oben von vorn beim Absetzen (132) |
- * | `ixion.intro` | 140 | weite Ansicht, flacher Bogen um das Rad, das ab 40 andreht und glüht; Nahe auf ihn |
+ * | `ixion.intro` | 140 | weite Ansicht von außen, flacher Bogen über dem Ring, das Rad dreht ab 40 an und glüht; Nahe auf ihn |
  * | `tantalus.intro` | 140 | er kniet und greift nach dem Wasser (20), es weicht (50), Hitzeflimmern, er richtet sich brüllend auf (86) |
  * | `guardian.defeat` | 120 | halber Bogen um den Ort des Sieges; das Kettenglied glüht auf und springt bei 70 (Funken, `boss.chain`) |
  */
@@ -67,7 +67,8 @@ object GuardianStages {
         shot(25, 110,
             cam = listOf(Key.ActorRel(0, -5.0, 3.5, 2.2), Key.ActorRel(0, -2.0, 5.5, 2.8), Key.ActorRel(0, 1.5, 5.0, 3.4)),
             look = listOf(Key.Actor(0, 3.0)), fov = 64f to 60f, ease = EaseKind.LINEAR, follow = 0.25f)
-        shot(110, 135, cam = listOf(Key.Last, Key.ActorRel(0, 6.5, -2.0, 2.4)), look = listOf(Key.Last, Key.Actor(0, 3.2)),
+        // P21: einen Block höher als vorher, sonst streift die Kamera die Feuerschale des neuen Gipfelaltars.
+        shot(110, 135, cam = listOf(Key.Last, Key.ActorRel(0, 6.5, -2.0, 3.4)), look = listOf(Key.Last, Key.Actor(0, 3.2)),
             fov = 60f to 54f, ease = EaseKind.SMOOTH)
         shot(135, 160, cam = listOf(Key.Last, Key.Eye), look = listOf(Key.Last, Key.EyeLook), handheld = 0f)
 
@@ -80,10 +81,12 @@ object GuardianStages {
     }
 
     private fun ixion() = stage(IXION, 140) {
-        shot(0, 30, cam = listOf(Key.Eye, Key.ActorRel(0, 9.0, 3.0, 2.0)), look = listOf(Key.EyeLook, Key.Actor(0, 2.0)), fov = 70f to 66f)
-        shot(30, 95, cam = listOf(Key.ActorRel(0, 9.0, 3.0, 2.0), Key.ActorRel(0, 6.0, -4.5, 1.0)), look = listOf(Key.Actor(0, 1.9)),
+        // Überarbeitung 4 (P21): Die Kamera bleibt außen über dem Ring (vorher fuhr sie durch Rad und Streben in der
+        // Mitte); man sieht ihn vor dem großen Rad. Geprüft gegen den Bauplan für 24 Startrichtungen (Bericht P21).
+        shot(0, 30, cam = listOf(Key.Eye, Key.ActorRel(0, -7.0, 3.0, 3.5)), look = listOf(Key.EyeLook, Key.Actor(0, 2.0)), fov = 70f to 66f)
+        shot(30, 95, cam = listOf(Key.ActorRel(0, -7.0, 3.0, 3.5), Key.ActorRel(0, -5.0, -4.5, 3.5)), look = listOf(Key.Actor(0, 1.9)),
             fov = 66f to 56f, arc = true, follow = 0.2f)
-        shot(95, 118, cam = listOf(Key.Last, Key.ActorRel(0, 4.5, -1.0, 2.4)), look = listOf(Key.Last, Key.Actor(0, 2.2)),
+        shot(95, 118, cam = listOf(Key.Last, Key.ActorRel(0, -4.0, -1.0, 3.2)), look = listOf(Key.Last, Key.Actor(0, 2.2)),
             fov = 56f to 52f, ease = EaseKind.OUT, handheld = 1.3f)
         shot(118, 140, cam = listOf(Key.Last, Key.Eye), look = listOf(Key.Last, Key.EyeLook), handheld = 0f)
 

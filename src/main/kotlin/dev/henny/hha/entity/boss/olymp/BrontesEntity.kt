@@ -10,8 +10,11 @@ import dev.henny.hha.logic.Vfx
 import dev.henny.hha.logic.boss.BossDefense
 import dev.henny.hha.logic.boss.BossFx
 import dev.henny.hha.logic.boss.Cine
+import dev.henny.hha.logic.boss.Cover
 import dev.henny.hha.logic.boss.Telegraph
+import dev.henny.hha.logic.boss.sig.BrontesAnvil
 import dev.henny.hha.logic.boss.timings.BrontesTimings
+import dev.henny.hha.world.olymp.OlympusArenas
 import dev.henny.hha.world.olymp.OlympusLayout
 import net.minecraft.entity.Entity
 import net.minecraft.entity.EntityType
@@ -50,6 +53,12 @@ object BrontesAction {
     const val TONGS_UP = 9
     const val RISE = 10
     const val YIELD = 11
+
+    /** Überarbeitung 4 (P16): Der Hammer steckt nach echtem Fehlschlag, er zerrt mit beiden Armen (offen). */
+    const val STUCK = 12
+
+    /** Überarbeitung 4 (P16): Der Amboss ist gebrochen, er taumelt (offen). */
+    const val STAGGER = 13
 }
 
 /**
@@ -75,6 +84,17 @@ object BrontesAction {
  * und glühende Risse am Hammer, Kamera-Ruck statt Rütteln, Hitzeflimmern am Blasebalg und Stoß-Pass am Keil (die
  * einzigen zwei Bildschirm-Pässe des Kampfs), Szenen `brontes.intro`/`brontes.phase2`/`brontes.defeat` als
  * Bühnen-Skripte (`stage/scripts/BrontesStages`). Alle Zahlen der Darstellung stehen unten im `companion`.
+ *
+ * Überarbeitung 4 (P16, PLAN 4.2 „Hammer steckt, Amboss bricht“; Logik in [BrontesAnvil]):
+ * - **Hammer steckt** nach echtem Fehlschlag (vier Bedingungen, [BrontesAnvil.stuckAllowed]): `STUCK`, 60 offen mit
+ *   Rune am Hammerkopf, 16 Ticks vor dem Ende roter Ring r 2,6, beim Herausreißen Splitter 8 (`LOW`). Sonst „steht 28“.
+ * - **Amboss als Teilziel** (Unterleiste, 3 Kerben): Endet die Hammerlinie am Amboss und stand jemand gedeckt dahinter,
+ *   reißt er; beim dritten Riss bricht er (deckt nicht mehr), Brontes taumelt 100 offen (`STAGGER`). Phase II bringt
+ *   einen neuen.
+ * - **Deckung über den Vertrag** (`Cover`): Amboss gegen Hammer/Rundschwung, Kokillen gegen Blasebalg/Rundschwung;
+ *   goldene Rune an der schützenden Deckung während der Ansage.
+ * - **Höhenband:** Roste und Glutringe nur auf dem Kern; Hammer, Riss, Rundschwung, Blasebalg, Glutwurf, Keil bis
+ *   Bühnenhöhe + 3. Glutwurf bevorzugt, wer länger als 100 Ticks auf einer Essebühne steht.
  */
 class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBossEntity(type, world) {
 
@@ -98,8 +118,19 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         var cold = false
     }
 
-    /** Ein Hammerhieb: Richtung, Linie am Boden (am Amboss gekürzt), Länge, ob ein Block (der Amboss) ihn aufhielt. */
-    private class Blow(val dir: Vec3d, val from: Vec3d, val to: Vec3d, val length: Double, val blocked: Boolean)
+    /**
+     * Ein Hammerhieb: Richtung, Linie am Boden (am Amboss gekürzt), Länge, ob ein Block ihn aufhielt und welcher
+     * ([blocker]: ID der Vertragsdeckung, [WALL] für anderes, `null` = frei).
+     */
+    private class Blow(val dir: Vec3d, val from: Vec3d, val to: Vec3d, val length: Double, val blocker: String?, val hasSpec: Boolean) {
+        val blocked: Boolean get() = blocker != null
+
+        /** Endete die Linie am Amboss? Ohne Vertrag (Test-Arena) zählt wie bisher jeder Block als Amboss. */
+        val atAnvil: Boolean get() = blocker != null && (!hasSpec || blocker == BrontesAnvil.ANVIL_ID)
+    }
+
+    /** Was ein Hammerschlag bewirkt hat: getroffene Spieler, ob er einen Rohling zerschlug, wo der Kopf aufschlug. */
+    private class Fell(val struck: List<ServerPlayerEntity>, val shattered: Boolean, val head: Vec3d)
 
     private val ingots = ArrayList<Ingot>()
     private var attackCount = 0
@@ -116,6 +147,15 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
 
     /** Sieg-Stinger schon gesendet (sonst holt der Endzustand der Szene ihn nach, z. B. nach dem Überspringen). */
     private var stingerSent = false
+
+    /** Der Amboss als Teilziel (P16); erst am Server und erst bei Bedarf angelegt. */
+    private var anvilState: BrontesAnvil.Anvil? = null
+
+    /** Welt-Tick des letzten Steckens (Bedingung (d)). */
+    private var lastStuck = Long.MIN_VALUE / 2
+
+    /** Seit wann (Welt-Tick) ein Spieler auf einer Essebühne steht (Glutwurf bevorzugt ihn nach 100 Ticks). */
+    private val stageSince = HashMap<UUID, Long>()
 
     init {
         kit.stats(BrontesTimings.HEALTH, BrontesTimings.ARMOR, BrontesTimings.ATTACK, BrontesTimings.SPEED)
@@ -192,6 +232,8 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         kit.act(0)
         Cine.music(viewers(), HhaSounds.THEME_BRONTES_2)
         nextGrate = sw.time + BrontesTimings.GRATE_FIRST
+        // P16: Er holt einen neuen Amboss aus der Esse (auch wenn die Szene übersprungen wurde).
+        anvil().renew()
     })
 
     /** Phase II „Die Esse brennt“: Er dreht sich zur Esse und facht sie mit dem Blasebalg an. Kein Treffer. */
@@ -233,6 +275,7 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         val t = BrontesTimings
         over = true
         clearIngots()
+        anvilState?.close()
         stopMoving()
         hold(null)
         kit.act(BrontesAction.YIELD)
@@ -261,8 +304,14 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
 
     override fun remove(reason: Entity.RemovalReason) {
         clearScreenPasses()
+        // Jeder Ausgang (Sieg, Abbruch, leere Arena, `boss stop`, Serverstopp, Entladen) endet hier: Leiste weg. Die
+        // Ambossblöcke stellt `Arenas.close` aus dem Bauplan wieder her (nur über `arena.edits` geändert).
+        if (!entityWorld.isClient) anvilState?.close()
         super.remove(reason)
     }
+
+    /** Der Amboss dieses Kampfes (nur am Server aufrufen). */
+    private fun anvil(): BrontesAnvil.Anvil = anvilState ?: BrontesAnvil.Anvil(sw, { arena }, { viewers() }).also { anvilState = it }
 
     /** Beendet Blasebalg-Flimmern und Keil-Stoß bei allen in Reichweite (jeder Kampfausgang, Prüfung R1-m1). */
     private fun clearScreenPasses() {
@@ -305,7 +354,11 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
     // Hammerschlag, Doppelschlag, Riss, Fehlschlag
     // ---------------------------------------------------------------------------------------------
 
-    /** Hammerschlag (Phase II: Doppelschlag). Trifft er einen glühenden Rohling, folgt der Fehlschlag. */
+    /**
+     * Hammerschlag (Phase II: Doppelschlag). Trifft er einen glühenden Rohling, folgt der Fehlschlag. Danach je Schlag
+     * ([afterBlow]): Riss im Amboss, wenn jemand gedeckt dahinter stand; sonst „Hammer steckt“ nach echtem Fehlschlag;
+     * sonst wie bisher „steht 28“ ohne Rune.
+     */
     private fun hammer(target: ServerPlayerEntity): Sequence<Unit> = sequence {
         val t = BrontesTimings
         attackCount++
@@ -314,15 +367,25 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         hold(dir)
         kit.act(if (double) BrontesAction.DOUBLE_HAMMER else BrontesAction.HAMMER)
         telegraph.sound(HhaSounds.CHARGE, entityPos, 2f, 0.5f)
-        val group = telegraph.boss()
+        // Höhenband bis Bühnenhöhe + 3: Hammer und Riss erreichen die Essebühnen (P16 Schritt 5).
+        val group = telegraph.boss().band(defaultFloor(), above = t.STAGE_BAND_ABOVE)
         var blow = blow(dir)
-        var line = group.line(blow.from, blow.to, t.HAMMER_WIDTH, t.HAMMER_W, Telegraph.Pace.HEAVY)
+        var line = hammerLine(group, blow, t.HAMMER_W, Telegraph.Pace.HEAVY)
+        markCover(OlympusArenas.BRONTES_HAMMER, hammerSource(), line.ticks)
         if (double) {
             wait(line.ticks)
             // Erster Hieb: Ruck 2,5° (die Ansage des zweiten beginnt erst danach im selben Tick).
-            if (falls(blow, line, ingotIn(blow), KICK_HAMMER)) {
+            val first = falls(blow, line, ingotIn(blow), KICK_HAMMER)
+            if (first.shattered) {
                 group.end()
                 yieldAll(blinded())
+                return@sequence
+            }
+            // Auch der erste Hieb kann stecken bleiben oder den Amboss brechen (Briefing: „jeder Schlag des Doppelschlags“).
+            val next = afterBlow(blow, first, target, null, 0f)
+            if (next != null) {
+                group.end()
+                yieldAll(next)
                 return@sequence
             }
             // Er reißt den Hammer sofort wieder hoch; der zweite Hieb hat seine eigene Ansage.
@@ -330,7 +393,8 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
             dir = turnToward(dir, aim, t.DOUBLE_MAX_TURN)
             hold(dir)
             blow = blow(dir)
-            line = group.line(blow.from, blow.to, t.HAMMER_WIDTH, t.DOUBLE_GAP, Telegraph.Pace.FOLLOW_UP)
+            line = hammerLine(group, blow, t.DOUBLE_GAP, Telegraph.Pace.FOLLOW_UP)
+            markCover(OlympusArenas.BRONTES_HAMMER, hammerSource(), line.ticks)
         }
         // Kurz vor dem Treffer: Liegt ein glühender Rohling in der Linie, zerschlägt der Hammer ihn, der Riss entfällt.
         // Sonst erscheint die Riss-Ansage jetzt (W 10) und trifft 8 Ticks nach dem Hammer.
@@ -340,29 +404,138 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         wait(line.remaining)
         // Ruck am Hammer nur ohne laufende Riss-Ansage (sonst verworfen, PLAN 2.2); dann kommt er mit dem Riss.
         val kick = if (double) KICK_DOUBLE_2 else KICK_HAMMER
-        if (falls(blow, line, bait, if (crack == null) kick else 0f)) {
+        val fell = falls(blow, line, bait, if (crack == null) kick else 0f)
+        if (fell.shattered) {
             group.end()
             yieldAll(blinded())
             return@sequence
         }
-        // Der Hammer steckt (F 28): Er zerrt ihn aus dem Boden.
+        val next = afterBlow(blow, fell, target, crack, kick)
+        if (next != null) {
+            group.end()
+            yieldAll(next)
+            return@sequence
+        }
+        // Der Hammer steht (F 28, ohne Rune): Er zerrt ihn aus dem Boden.
         var tail = if (double) t.DOUBLE_END - t.DOUBLE_HIT2 else t.HAMMER_END - t.HAMMER_HIT
         if (crack != null) {
-            // Der Riss frisst sich unter seiner Ansage vom Hammerkopf weiter und erreicht das Ende mit dem Treffer.
             val until = crack.remaining
-            BossFx.crack(sw, danger, crack.from, blow.dir, crack.from.distanceTo(crack.to).toFloat(), life = until + CRACK_FX_HOLD, grow = until)
-            wait(until)
+            yieldAll(crackRuns(crack, blow.dir, kick))
             tail -= until
-            cracks(crack, blow.dir, kick)
         }
         wait(tail)
         kit.act(0)
     }
 
+    /**
+     * Nach einem Hammerschlag ohne Fehlschlag: (1) Endete die Linie am Amboss und stand jemand gedeckt dahinter, reißt
+     * der Amboss ([BrontesAnvil.Anvil.crack]); beim Bruch folgt das Taumeln. (2) Sonst, wenn alle vier Bedingungen
+     * gelten ([BrontesAnvil.stuckAllowed]), steckt der Hammer. `null` = weiter wie bisher (zweiter Hieb bzw. „steht 28“).
+     */
+    private fun afterBlow(blow: Blow, fell: Fell, target: ServerPlayerEntity, crack: Telegraph.Line?, kick: Float): Sequence<Unit>? {
+        if (blow.atAnvil) {
+            val behind = shelteredBehind(blow)
+            if (behind.isEmpty()) return null
+            for (player in behind) Cover.status(player, true)
+            return when (anvil().crack()) {
+                BrontesAnvil.Crack.BROKEN -> anvilBroken()
+                BrontesAnvil.Crack.CRACKED -> {
+                    hint("hha.brontes.hint.anvil_crack")
+                    null
+                }
+                BrontesAnvil.Crack.NONE -> null
+            }
+        }
+        // (c): Lage des Ziels beim Treffer, nur wenn es noch mitkämpft.
+        val present = alive(target) && fighters().any { it === target }
+        val ok = BrontesAnvil.stuckAllowed(
+            struckAnyone = fell.struck.isNotEmpty(),
+            endedAtAnvil = blow.atAnvil,
+            hitIngot = fell.shattered,
+            sideways = if (present) sideways(target.entityPos, entityPos, blow.dir) else null,
+            distance = if (present) flatDistance(target) else null,
+            now = sw.time, lastStuck = lastStuck,
+        )
+        return if (ok) stuck(blow, fell.head, crack, kick) else null
+    }
+
+    /**
+     * Hammer steckt (P16 Schritt 1): Pose `STUCK`, offen [BrontesTimings.STUCK_F] × 1,8 mit goldener Rune am Hammerkopf.
+     * Ein angesagter Riss läuft nebenher weiter. 16 Ticks vor dem Ende roter Ring r 2,6 um den Kopf (`HEAVY`), beim
+     * Herausreißen Splitter 8 (`LOW`, Band der Fläche unter dem Kopf). Danach derselbe Nachlauf wie nach „steht 28“.
+     */
+    private fun stuck(blow: Blow, head: Vec3d, crack: Telegraph.Line?, kick: Float): Sequence<Unit> = sequence {
+        val t = BrontesTimings
+        lastStuck = sw.time
+        kit.act(BrontesAction.STUCK)
+        hint("hha.brontes.hint.stuck")
+        say("hha.brontes.line.stuck")
+        telegraph.sound(HhaSounds.ARENA_STUCK, head, 2.2f, 0.75f)
+        BossFx.play(sw, FX_STUCK, danger, head, blow.dir, a = t.SPLINTER_RADIUS, life = t.STUCK_F)
+        open(t.STUCK_F, DuelBossEntity.OPEN_FACTOR, at = head)
+        if (crack != null) launch(crackRuns(crack, blow.dir, kick))
+        // Erreicht sein Leben die Schwelle der Phase, endet das Fenster früher (danach Phasenwechsel bzw. Sieg).
+        if (window(t.STUCK_RIP - t.SPLINTER_W) { finishing() }) {
+            close()
+            kit.act(0)
+            return@sequence
+        }
+        val group = telegraph.boss(pace = Telegraph.Pace.HEAVY).band(floorOf(head))
+        val ring = group.ring(head, t.SPLINTER_RADIUS, t.SPLINTER_W, pace = Telegraph.Pace.HEAVY)
+        telegraph.sound(HhaSounds.CHARGE, head, 1.6f, 0.6f)
+        wait(ring.ticks)
+        close()
+        for (player in ring.hits(fighters())) {
+            if (strike(player, t.SPLINTER_DAMAGE, BossDefense.Reach.LOW, ring)) knock(player, player.entityPos.subtract(head), 0.4, 0.3)
+        }
+        BossFx.debris(sw, head, t.SPLINTER_RADIUS, SPLINTER_DEBRIS)
+        BossFx.sparks(sw, danger, head.add(0.0, 0.3, 0.0), UP, SPLINTER_SPARKS, SPLINTER_SPARK_SPEED, SPLINTER_SPARK_LIFE)
+        telegraph.sound(SoundEvents.BLOCK_DEEPSLATE_BREAK, head, 2.2f, 0.7f)
+        BossFx.kick(sw, head, KICK_SPLINTER, ticks = KICK_TICKS)
+        wait(t.STUCK_TAIL)
+        kit.act(0)
+    }
+
+    /** Der Amboss ist gebrochen (dritter Riss): Er taumelt, 100 offen (goldene Rune an ihm). */
+    private fun anvilBroken(): Sequence<Unit> = sequence {
+        val t = BrontesTimings
+        stopMoving()
+        hold(null)
+        kit.act(BrontesAction.STAGGER)
+        hint("hha.brontes.hint.anvil_break")
+        say("hha.brontes.line.anvil_break")
+        // Einen Tick später, damit Hammer- und Bruchklang nicht dem Ton-Budget zum Opfer fallen.
+        wait(1)
+        open(t.ANVIL_BREAK_F, DuelBossEntity.OPEN_FACTOR)
+        window(t.ANVIL_BREAK_F - 1) { finishing() }
+        close()
+        kit.act(0)
+    }
+
+    /** Spieler, die der Amboss gegen diesen Hieb gedeckt hat: in der ungekürzten Linie (bis zur Risslänge) und gedeckt. */
+    private fun shelteredBehind(blow: Blow): List<ServerPlayerEntity> {
+        val t = BrontesTimings
+        val full = entityPos.add(blow.dir.multiply(t.CRACK_LENGTH.toDouble()))
+        val src = hammerSource()
+        return fighters().filter { p ->
+            Telegraph.inLine(p.entityPos, blow.from, full, t.HAMMER_WIDTH.toDouble(), p.width * 0.5) && covered(p, OlympusArenas.BRONTES_HAMMER, src)
+        }
+    }
+
     /** Hieb in [dir] ab seiner Mitte, höchstens [BrontesTimings.HAMMER_LENGTH] weit, am Amboss gekürzt. */
     private fun blow(dir: Vec3d): Blow {
-        val (length, blocked) = reachAlong(entityPos, dir, BrontesTimings.HAMMER_LENGTH.toDouble())
-        return Blow(dir, ground(entityPos), ground(entityPos.add(dir.multiply(length))), length, blocked)
+        val (length, blocker) = reachAlong(entityPos, dir, BrontesTimings.HAMMER_LENGTH.toDouble())
+        val end = entityPos.add(dir.multiply(length))
+        // Endet die Linie auf einer Essebühne, bleibt die Trefferform flach auf dem Kern; die Bühne zeigt ein Echo.
+        val to = if (onLevel(end)) floorPoint(end) else ground(end)
+        return Blow(dir, ground(entityPos), to, length, blocker, arena?.spec != null)
+    }
+
+    /** Hammer- bzw. Risslinie samt Echo auf den Essebühnen, die sie überquert (Pflicht 3: der Client zeichnet flach). */
+    private fun hammerLine(group: Telegraph.Fight.Group, blow: Blow, ticks: Int, pace: Telegraph.Pace): Telegraph.Line {
+        val line = group.line(blow.from, blow.to, BrontesTimings.HAMMER_WIDTH, ticks, pace)
+        echoOnLevels(group, blow.from, blow.to, BrontesTimings.HAMMER_WIDTH, ticks, pace)
+        return line
     }
 
     /** Der Riss läuft vom Ende des Hammers weiter bis [BrontesTimings.CRACK_LENGTH] (eigene Ansage, auch am Amboss gekürzt). */
@@ -372,20 +545,32 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         val (extra, _) = reachAlong(start, blow.dir, (t.CRACK_LENGTH - t.HAMMER_LENGTH).toDouble())
         if (extra < 1.0) return null
         val end = start.add(blow.dir.multiply(extra))
-        return group.line(ground(start), ground(end), t.CRACK_WIDTH, t.CRACK_W + t.CRACK_LEAD, Telegraph.Pace.FOLLOW_UP)
+        val from = if (onLevel(start)) floorPoint(start) else ground(start)
+        val to = if (onLevel(end)) floorPoint(end) else ground(end)
+        val line = group.line(from, to, t.CRACK_WIDTH, t.CRACK_W + t.CRACK_LEAD, Telegraph.Pace.FOLLOW_UP)
+        echoOnLevels(group, from, to, t.CRACK_WIDTH, t.CRACK_W + t.CRACK_LEAD, Telegraph.Pace.FOLLOW_UP)
+        return line
+    }
+
+    /** Der Riss frisst sich unter seiner Ansage vom Hammerkopf weiter und erreicht das Ende mit dem Treffer. */
+    private fun crackRuns(crack: Telegraph.Line, dir: Vec3d, kick: Float): Sequence<Unit> = sequence {
+        val until = crack.remaining
+        BossFx.crack(sw, danger, crack.from, dir, crack.from.distanceTo(crack.to).toFloat(), life = until + CRACK_FX_HOLD, grow = until)
+        wait(until)
+        cracks(crack, dir, kick)
     }
 
     /**
-     * Der Hammer fällt: Treffer, Einschlag, Amboss-Klang. Zerschlägt er einen Rohling, ist das der Fehlschlag (true).
-     * [kick] = Nicken des Kamera-Rucks in Grad, 0 = keiner (wenn gleich danach eine Ansage läuft, z. B. der Riss).
+     * Der Hammer fällt: Treffer, Einschlag, Amboss-Klang. Zerschlägt er einen Rohling, ist das der Fehlschlag
+     * ([Fell.shattered]). [kick] = Nicken des Kamera-Rucks in Grad, 0 = keiner (wenn gleich danach eine Ansage läuft).
      */
-    private fun falls(blow: Blow, line: Telegraph.Line, bait: Ingot?, kick: Float): Boolean {
+    private fun falls(blow: Blow, line: Telegraph.Line, bait: Ingot?, kick: Float): Fell {
         val t = BrontesTimings
         val reach = min(blow.length, t.HAMMER_HEAD)
         val head = ground(entityPos.add(blow.dir.multiply(reach)))
         val struck = line.hits(fighters())
         for (player in struck) {
-            strike(player, t.HAMMER_DAMAGE)
+            strike(player, t.HAMMER_DAMAGE, BossDefense.Reach.BODY, line)
             knock(player, blow.dir, 0.5, 0.35)
         }
         // Am Amboss gekürzt: Risse und Trümmer bleiben vor ihm (kein Bild deutet eine Trefferfläche dahinter an).
@@ -398,10 +583,10 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         // Tiefer Schlag zum Ruck (zweiter Ton des Ticks); beim Fehlschlag gehört der Platz dem Zersplittern.
         if (bait == null) telegraph.sound(HhaSounds.THUD, head, 2.6f, 0.8f)
         if (kick > 0f) BossFx.kick(sw, head, kick, ticks = KICK_TICKS)
-        if (blow.blocked) hint("hha.brontes.hint.anvil")
-        val ingot = bait?.takeIf { it.bolt.alive } ?: return false
+        if (blow.atAnvil) hint("hha.brontes.hint.anvil")
+        val ingot = bait?.takeIf { it.bolt.alive } ?: return Fell(struck, false, head)
         shatter(ingot)
-        return true
+        return Fell(struck, true, head)
     }
 
     /**
@@ -484,21 +669,28 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
     // Rundschwung, Blasebalg
     // ---------------------------------------------------------------------------------------------
 
-    /** Rundschwung (nah): Kegel 100° halb, Radius 7. Wer hinter dem Amboss steht, ist gedeckt. */
+    /**
+     * Rundschwung (nah): Kegel 100° halb, Radius 7. Wer hinter dem Amboss oder einer Kokille steht, ist gedeckt
+     * (`brontes.sweep`, Rune an der Deckung während der Ansage).
+     */
     private fun swing(target: ServerPlayerEntity): Sequence<Unit> = sequence {
         val t = BrontesTimings
         attackCount++
         val dir = dirTo(target.entityPos)
         hold(dir)
         kit.act(BrontesAction.SWING)
-        val cone = telegraph.cone(ground(entityPos), dir, t.SWING_RADIUS, t.SWING_HALF_ANGLE, t.SWING_W, Telegraph.Pace.HEAVY)
+        val group = telegraph.boss().band(defaultFloor(), above = t.STAGE_BAND_ABOVE)
+        val cone = group.cone(ground(entityPos), dir, t.SWING_RADIUS, t.SWING_HALF_ANGLE, t.SWING_W, Telegraph.Pace.HEAVY)
+        val src = hammerSource()
+        markCover(OlympusArenas.BRONTES_SWEEP, src, cone.ticks)
         telegraph.sound(HhaSounds.WHOOSH, entityPos, 2f, 0.5f)
         wait(cone.ticks)
         val inside = cone.hits(fighters())
-        val struck = inside.filter { !covered(it) }
+        val struck = inside.filter { !covered(it, OlympusArenas.BRONTES_SWEEP, src) }
         if (struck.size < inside.size) hint("hha.brontes.hint.anvil")
+        for (player in inside) if (player !in struck) Cover.status(player, true)
         for (player in struck) {
-            strike(player, t.SWING_DAMAGE)
+            strike(player, t.SWING_DAMAGE, BossDefense.Reach.BODY, cone)
             knock(player, dirTo(player.entityPos), t.SWING_KNOCK, t.SWING_LIFT)
         }
         // Glutband am Hammerkopf statt Sichel (der Effekt folgt dem Hammer im Modell).
@@ -512,7 +704,10 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         kit.act(0)
     }
 
-    /** Blasebalg (fern): Kegel 35° halb, Radius 16, 6 Blöcke Schub nach hinten. Der Amboss deckt hier nicht. */
+    /**
+     * Blasebalg (fern): Kegel 35° halb, Radius 16, 6 Blöcke Schub nach hinten. Der Amboss deckt hier nicht, wohl aber
+     * eine Kokille (`brontes.bellows`, Strahl vom Mund): Wer dahinter steht, wird weder geschoben noch verletzt.
+     */
     private fun bellows(target: ServerPlayerEntity): Sequence<Unit> = sequence {
         val t = BrontesTimings
         attackCount++
@@ -520,11 +715,19 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         hold(dir)
         kit.act(BrontesAction.BELLOWS)
         val apex = ground(entityPos)
-        val cone = telegraph.cone(apex, dir, t.BELLOWS_RADIUS, t.BELLOWS_HALF_ANGLE, t.BELLOWS_W, Telegraph.Pace.HEAVY)
+        val group = telegraph.boss().band(defaultFloor(), above = t.STAGE_BAND_ABOVE)
+        val cone = group.cone(apex, dir, t.BELLOWS_RADIUS, t.BELLOWS_HALF_ANGLE, t.BELLOWS_W, Telegraph.Pace.HEAVY)
+        markCover(OlympusArenas.BRONTES_BELLOWS, mouthPoint(), cone.ticks)
         telegraph.sound(HhaSounds.WHOOSH, entityPos, 2f, 0.4f)
         wait(cone.ticks)
+        val mouth = mouthPoint()
         for (player in cone.hits(fighters())) {
-            strike(player, t.BELLOWS_DAMAGE)
+            if (covered(player, OlympusArenas.BRONTES_BELLOWS, mouth)) {
+                Cover.status(player, true)
+                hint("hha.brontes.hint.mold")
+                continue
+            }
+            strike(player, t.BELLOWS_DAMAGE, BossDefense.Reach.BODY, cone)
             knock(player, dirTo(player.entityPos), t.BELLOWS_KNOCK, t.BELLOWS_LIFT)
         }
         // Funkenstrom aus dem Mund in den Kegel und schwaches Hitzeflimmern (erste der zwei Pass-Stellen des Kampfs).
@@ -553,9 +756,13 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         return attackCount + 1 - lastToss >= BrontesTimings.TOSS_EVERY && ingots.size < BrontesTimings.INGOT_MAX
     }
 
-    /** Glutwurf: Er zieht einen Rohling aus der Esse und wirft ihn im Bogen; Kreis am Ziel, W 22, `SKY`. */
-    private fun toss(target: ServerPlayerEntity): Sequence<Unit> = sequence {
+    /**
+     * Glutwurf: Er zieht einen Rohling aus der Esse und wirft ihn im Bogen; Kreis am Ziel, W 22, `SKY`. Steht jemand
+     * länger als [BrontesTimings.STAGE_CAMP_TICKS] auf einer Essebühne, wirft er bevorzugt auf ihn (P16 Schritt 5).
+     */
+    private fun toss(chosen: ServerPlayerEntity): Sequence<Unit> = sequence {
         val t = BrontesTimings
+        val target = stageCamper() ?: chosen
         attackCount++
         lastToss = attackCount
         hold(dirTo(target.entityPos))
@@ -570,7 +777,8 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         }
         val spot = ground(if (alive(target)) target.entityPos else entityPos.add(facing().multiply(8.0)))
         hold(dirTo(spot))
-        val ring = telegraph.ring(spot, t.TOSS_RADIUS, t.TOSS_W, pace = Telegraph.Pace.PROJECTILE)
+        // Trifft Kern und Bühnen (Band bis Bühnenhöhe + 3); der Kreis liegt auf dem Boden unter dem Ziel.
+        val ring = telegraph.boss().band(defaultFloor(), above = t.STAGE_BAND_ABOVE).ring(spot, t.TOSS_RADIUS, t.TOSS_W, pace = Telegraph.Pace.PROJECTILE)
         wait(t.TOSS_RELEASE - lead)
         val from = leftHand()
         val bolt = prop(ScriptedBolt.spawn(sw, self, HermesBoltEntity.INGOT, 1f, from))
@@ -587,7 +795,7 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         // Einschlag: ein Flächeneffekt, ein Klang. Der Rohling bleibt glühend liegen.
         val struck = ring.hits(fighters())
         for (player in struck) {
-            strike(player, t.TOSS_DAMAGE, BossDefense.Reach.SKY)
+            strike(player, t.TOSS_DAMAGE, BossDefense.Reach.SKY, ring)
             knock(player, player.entityPos.subtract(spot), 0.4, 0.4)
         }
         BossFx.play(sw, FX_SPLASH, danger, spot, a = t.TOSS_RADIUS, life = SPLASH_FX_LIFE, impact = true)
@@ -609,6 +817,33 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
     override fun tickBody() {
         tickIngots()
         tickGrates()
+        if (!over) {
+            anvil().tick()
+            tickStageCampers()
+        }
+    }
+
+    /** Merkt, wer seit wann auf einer Essebühne steht (Vertragsebene, Füße auf ihrer Höhe). */
+    private fun tickStageCampers() {
+        val a = arena ?: return
+        if (a.spec == null) return
+        val now = sw.time
+        val present = HashSet<UUID>()
+        for (player in fighters()) {
+            val level = a.levelAt(player.entityPos) ?: continue
+            if (player.y < level.floorY - STAGE_FEET_SLACK) continue
+            present.add(player.uuid)
+            stageSince.putIfAbsent(player.uuid, now)
+        }
+        stageSince.keys.retainAll(present)
+    }
+
+    /** Wer am längsten (mindestens [BrontesTimings.STAGE_CAMP_TICKS]) auf einer Essebühne steht, sonst `null`. */
+    private fun stageCamper(): ServerPlayerEntity? {
+        val now = sw.time
+        return fighters()
+            .filter { p -> stageSince[p.uuid]?.let { now - it >= BrontesTimings.STAGE_CAMP_TICKS } == true }
+            .minByOrNull { stageSince[it.uuid] ?: now }
     }
 
     private fun tickIngots() {
@@ -676,6 +911,8 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         val floor = defaultFloor()
         val hot = pickHot()
         lastHot = hot
+        // Bodenangriff: nur im Höhenband des Kerns (die Essebühnen +2 sind sicher, Pflicht 3).
+        group.band(floor)
         for (i in hot) group.cone(mid, sectorDir(i), OlympusLayout.GRATE_OUTER.toFloat(), HALF_SECTOR.toFloat(), t.GRATE_W)
         for (i in 0 until OlympusLayout.GRATE_SECTORS) if (i !in hot) rim(group, mid, i, t.GRATE_W + t.GRATE_BURN)
         // Glut unter den heißen Gittern: wächst unter der Ansage, brennt mit ihr (kein Flächeneffekt eines Treffers).
@@ -698,6 +935,7 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
             if (k % 3 == 0) embers(mid, hot)
             if (k % t.GRATE_DAMAGE_INTERVAL == 0) {
                 for (player in fighters()) {
+                    if (!Telegraph.inBand(player.y, floor - BAND_BELOW, floor + BAND_ABOVE)) continue
                     if (hot.none { inSector(player, mid, it) }) continue
                     strike(player, t.GRATE_DAMAGE, BossDefense.Reach.LOW, floor)
                 }
@@ -782,15 +1020,19 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         say("hha.brontes.line.wedge")
         hint("hha.brontes.hint.forge")
         val base = floorPoint(c)
-        val group = telegraph.boss()
+        // Glutringe: Bodenangriff im Band des Kerns (die Essebühnen sind sicher).
+        val group = telegraph.boss().band(defaultFloor())
         val rings = floatArrayOf(t.FORGE_RING_1, t.FORGE_RING_2, t.FORGE_RING_3)
+        // P16 Schritt 3: Ist der Amboss gebrochen, schlägt er auf den Stumpf – leiser, gleiche Mechanik.
+        val stump = anvil().broken
         for (k in rings.indices) {
             val ring = group.ring(base, rings[k], t.FORGE_W)
             if (k == 0) telegraph.sound(HhaSounds.FORGE, entityPos, 2.2f, 0.8f)
             wait(ring.ticks)
-            telegraph.sound(HhaSounds.ANVIL, c, 2.6f, 0.7f + 0.08f * k)
+            if (stump) telegraph.sound(HhaSounds.THUD, c, STUMP_VOLUME, STUMP_PITCH + 0.06f * k)
+            else telegraph.sound(HhaSounds.ANVIL, c, 2.6f, 0.7f + 0.08f * k)
             // Je Ambossschlag ein Ruck, steigend 1,5° / 2° / 2,5° (vor der nächsten Ring-Ansage im selben Tick).
-            BossFx.kick(sw, c, FORGE_KICKS[k], ticks = KICK_TICKS)
+            BossFx.kick(sw, c, FORGE_KICKS[k] * if (stump) STUMP_KICK else 1f, ticks = KICK_TICKS)
             launch(forgeWave(base, rings[k]))
             group.hold(waveTicks(rings[k]) + 2)
             if (finishing()) {
@@ -816,7 +1058,8 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         }
         val spot = ground(if (alive(target)) target.entityPos else entityPos.add(facing().multiply(10.0)))
         hold(dirTo(spot))
-        val ring = group.ring(spot, t.WEDGE_RADIUS, t.WEDGE_W, pace = Telegraph.Pace.AREA)
+        // Der Keil trifft Kern und Bühnen (Band bis Bühnenhöhe + 3).
+        val ring = group.band(defaultFloor(), above = t.STAGE_BAND_ABOVE).ring(spot, t.WEDGE_RADIUS, t.WEDGE_W, pace = Telegraph.Pace.AREA)
         telegraph.sound(HhaSounds.CHARGE, entityPos, 2.2f, 0.7f)
         wait(t.WEDGE_RELEASE - lead)
         // Abwurf: ab jetzt leere Hände, offen.
@@ -834,7 +1077,7 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
         }
         val struck = ring.hits(fighters())
         for (player in struck) {
-            strike(player, t.WEDGE_DAMAGE, BossDefense.Reach.SKY)
+            strike(player, t.WEDGE_DAMAGE, BossDefense.Reach.SKY, ring)
             knock(player, player.entityPos.subtract(spot), 0.7, 0.5)
         }
         // Glutsäule und Stoß-Pass (zweite der zwei Pass-Stellen des Kampfs), echte Brocken, Ruck.
@@ -873,6 +1116,7 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
             val front = radius * step.toDouble() / travel
             for (player in fighters()) {
                 if (player.uuid in passed) continue
+                if (!Telegraph.inBand(player.y, floor - BAND_BELOW, floor + BAND_ABOVE)) continue
                 val d = flat(player.entityPos, center)
                 if (d > front + player.width * 0.5 || d > radius + player.width * 0.5) continue
                 passed.add(player.uuid)
@@ -908,26 +1152,90 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
     }
 
     /**
-     * Wie weit ein Hieb von [origin] in [dir] reicht, bevor ihn ein Block aufhält (der Amboss, Sichtlinie in
-     * [BrontesTimings.COVER_HEIGHT] über dem Boden): Länge und ob er aufgehalten wurde.
+     * Wie weit ein Hieb von [origin] in [dir] reicht, bevor ihn ein Block aufhält (Sichtlinie in
+     * [BrontesTimings.COVER_HEIGHT] über dem Boden): Länge und was ihn aufhielt (`null` = nichts, sonst ID der
+     * Vertragsdeckung oder [WALL]). Die Kante einer Essebühne hält ihn nicht auf: Er läuft auf ihrer Höhe weiter
+     * (Hammer und Riss erreichen die Bühnen, P16 Schritt 5).
      */
-    private fun reachAlong(origin: Vec3d, dir: Vec3d, max: Double): Pair<Double, Boolean> {
-        val y = defaultFloor() + BrontesTimings.COVER_HEIGHT
-        val start = Vec3d(origin.x, y, origin.z)
-        val hit = sw.raycast(RaycastContext(start, start.add(dir.multiply(max)), RaycastContext.ShapeType.COLLIDER, RaycastContext.FluidHandling.NONE, self))
-        if (hit.type != HitResult.Type.BLOCK) return max to false
-        return (flat(start, hit.pos) - 0.2).coerceIn(0.0, max) to true
+    private fun reachAlong(origin: Vec3d, dir: Vec3d, max: Double): Pair<Double, String?> {
+        val spec = arena?.spec
+        var y = defaultFloor() + BrontesTimings.COVER_HEIGHT
+        var start = Vec3d(origin.x, y, origin.z)
+        var travelled = 0.0
+        repeat(MAX_LEVEL_STEPS) {
+            val hit = sw.raycast(RaycastContext(start, start.add(dir.multiply(max - travelled)), RaycastContext.ShapeType.COLLIDER, RaycastContext.FluidHandling.NONE, self))
+            if (hit.type != HitResult.Type.BLOCK) return max to null
+            val d = travelled + flat(start, hit.pos)
+            val beyond = hit.pos.add(dir.multiply(LEVEL_PROBE))
+            val level = spec?.levels?.firstOrNull { it.zone.contains(beyond.x, beyond.z) }
+            val stepY = level?.let { it.floorY + BrontesTimings.COVER_HEIGHT }
+            if (stepY == null || stepY <= y + 0.01 || d >= max) {
+                val blocker = spec?.let { Cover.spotAt(it, hit.pos)?.id } ?: WALL
+                return (d - 0.2).coerceIn(0.0, max) to blocker
+            }
+            y = stepY
+            travelled = d
+            start = Vec3d(hit.pos.x, y, hit.pos.z)
+        }
+        return travelled.coerceIn(0.0, max) to WALL
     }
 
-    /** Steht [player] am Boden hinter dem Amboss (Sichtlinie von ihm aus blockiert)? Dann deckt ihn der Amboss. */
-    private fun covered(player: ServerPlayerEntity): Boolean {
+    /**
+     * Ist [player] gegen [attack] von [source] aus gedeckt? Mit Vertrag über `Cover.shelter` (echter Raycast; Amboss
+     * gegen Hammer und Rundschwung, Kokillen gegen Blasebalg und Rundschwung – ein gebrochener Amboss deckt nicht, weil
+     * die Welt ihn nicht mehr hat). Wer oben auf dem Amboss oder einer Bühne steht, ist nicht gedeckt. Ohne Vertrag
+     * (Test-Arena) wie bisher: Strahl in 0,9 Höhe, der Blasebalg bläst um alles herum.
+     */
+    private fun covered(player: ServerPlayerEntity, attack: String, source: Vec3d): Boolean {
         val floor = defaultFloor()
         if (player.y - floor > BrontesTimings.COVER_MAX_FEET) return false
+        val spec = arena?.spec
+        if (spec != null) return Cover.shelter(sw, source, player, spec, attack) != null
+        if (attack == OlympusArenas.BRONTES_BELLOWS) return false
         val y = floor + BrontesTimings.COVER_HEIGHT
         val hit = sw.raycast(
             RaycastContext(Vec3d(x, y, z), Vec3d(player.x, y, player.z), RaycastContext.ShapeType.COLLIDER, RaycastContext.FluidHandling.NONE, self),
         )
         return hit.type == HitResult.Type.BLOCK
+    }
+
+    /** Ursprung von Hammer und Rundschwung für die Deckung: er selbst, in der Höhe, in der der Hammer fegt. */
+    private fun hammerSource(): Vec3d = Vec3d(x, defaultFloor() + BrontesTimings.COVER_HEIGHT, z)
+
+    /** Goldene Rune an der Deckung, die gerade jemanden gegen [attack] schützt, solange die Ansage läuft. */
+    private fun markCover(attack: String, source: Vec3d, ticks: Int) {
+        val spec = arena?.spec ?: return
+        Cover.mark(telegraph, spec, attack, source, ticks)
+    }
+
+    /** Liegt [pos] auf einer Essebühne (Vertragsebene)? */
+    private fun onLevel(pos: Vec3d): Boolean = arena?.spec?.levels?.any { it.zone.contains(pos.x, pos.z) } == true
+
+    /**
+     * Zweite Form derselben Gruppe auf der Höhe jeder Ebene, die die Linie [from] → [to] überquert (nur der Teil auf
+     * der Ebene). Nur Bild: Treffer prüft die Hauptlinie samt Höhenband.
+     */
+    private fun echoOnLevels(group: Telegraph.Fight.Group, from: Vec3d, to: Vec3d, width: Float, ticks: Int, pace: Telegraph.Pace) {
+        val levels = arena?.spec?.levels ?: return
+        val length = flat(from, to)
+        if (length < 0.5) return
+        val steps = ceil(length / ECHO_STEP).toInt()
+        for (level in levels) {
+            var runStart = -1
+            for (i in 0..steps + 1) {
+                val inside = i <= steps && from.lerp(to, i.toDouble() / steps).let { level.zone.contains(it.x, it.z) }
+                if (inside && runStart < 0) runStart = i
+                if (!inside && runStart >= 0) {
+                    val a = from.lerp(to, runStart.toDouble() / steps)
+                    val b = from.lerp(to, (i - 1).toDouble() / steps)
+                    if (flat(a, b) >= ECHO_MIN) {
+                        val ly = level.floorY + 0.05
+                        group.line(Vec3d(a.x, ly, a.z), Vec3d(b.x, ly, b.z), width, ticks, pace)
+                    }
+                    runStart = -1
+                }
+            }
+        }
     }
 
     /** Waagerechter Abstand von [pos] zur Linie ab [from] in Richtung [dir] (normiert). */
@@ -971,6 +1279,33 @@ class BrontesEntity(type: EntityType<out BrontesEntity>, world: World) : DuelBos
 
         /** Außerhalb des Olymp (Test-Arena) liegt die gedachte Esse so weit nördlich der Mitte. */
         private const val FORGE_TEST_DISTANCE = 21.0
+
+        // --- Überarbeitung 4 (P16): Regeln und Darstellung der Signatur (Kampfzahlen in BrontesTimings) -------------
+        /** Hieb aufgehalten von einem Block, der keine Vertragsdeckung ist. */
+        const val WALL = "wall"
+        /** Hammerlinie über Bühnenkanten: höchstens so viele Stufen, Prüfpunkt so weit hinter dem Treffer. */
+        private const val MAX_LEVEL_STEPS = 3
+        private const val LEVEL_PROBE = 0.3
+        /** Echo auf Ebenen: Abtastschritt entlang der Linie, kürzeste gezeigte Strecke. */
+        private const val ECHO_STEP = 0.5
+        private const val ECHO_MIN = 1.0
+        /** Höhenband der Bodenangriffe (Standard von `band`): so weit unter / über dem Kern. */
+        private const val BAND_BELOW = 1.0
+        private const val BAND_ABOVE = 3.0
+        /** Auf einer Bühne zählt, wessen Füße höchstens so weit unter ihrer Höhe sind (Stufenkante). */
+        private const val STAGE_FEET_SLACK = 0.5
+        /** Effekt „Hammer steckt“ (Client `BrontesFx`). */
+        private const val FX_STUCK = "brontes.stuck"
+        /** Splitter beim Herausreißen: Brocken, Funken, Ruck. */
+        const val SPLINTER_DEBRIS = 6
+        const val SPLINTER_SPARKS = 10
+        const val SPLINTER_SPARK_SPEED = 0.45f
+        const val SPLINTER_SPARK_LIFE = 16
+        const val KICK_SPLINTER = 1.2f
+        /** Keil auf dem Stumpf (Amboss gebrochen): leiserer, dumpfer Schlag, halber Ruck. */
+        const val STUMP_VOLUME = 1.6f
+        const val STUMP_PITCH = 0.55f
+        const val STUMP_KICK = 0.5f
 
         // --- Überarbeitung 3: reine Darstellung (keine Kampfzahl) ---------------------------------------------------
         /** Bühnen-Skripte (`stage/scripts/BrontesStages`). */

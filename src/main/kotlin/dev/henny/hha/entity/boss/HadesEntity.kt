@@ -58,6 +58,9 @@ object HadesPose {
 
     /** Das Urteil. */
     const val JUDGE = 20
+
+    /** Er hält die Fessel (Überarbeitung 4, P19): Kette straff, Gewicht nach hinten, sonst nichts. */
+    const val HOLD = 21
 }
 
 /** Hades selbst. Wie alle Boss-Wesen ohne eigene KI: Der Kampf bewegt ihn. */

@@ -30,6 +30,7 @@ import kotlin.math.sin
  * | [STREAK] `hermes.streak` | gerade Lichtbahn eines Stoßes: Kopf sitzt **am Läufer** (Lage des Wesens auf der Bahn), der Schweif läuft getrennt hinterher, holt am Ende auf; dort 6 Funken |
  * | [LANE] `hermes.lane` | Kielwasser einer Caduceus-Schlange genau auf den Stützpunkten der Bahn, die der Server fliegt |
  * | [STAR] `hermes.star` | kurzer Lichtstern (Ziel des Blinzelns) |
+ * | [GUST] `hermes.gust` | Windstoß der Botenglocken (Überarbeitung 4, P14): drei geschwungene Luftbänder laufen die dritte Linie entlang auf Hermes zu, verwehen dort |
  *
  * Alles weich: stetige Zeit, Smoothstep/Ease-Kurven, keine Zeit- oder Alpha-Stufen, kein Blinken.
  */
@@ -38,11 +39,13 @@ object HermesFx {
     const val STREAK = "hermes.streak"
     const val LANE = "hermes.lane"
     const val STAR = "hermes.star"
+    const val GUST = "hermes.gust"
 
     fun init() {
         FxRegistry.register(STREAK) { StreakFx(it) }
         FxRegistry.register(LANE) { LaneFx(it) }
         FxRegistry.register(STAR) { StarFx(it) }
+        FxRegistry.register(GUST) { GustFx(it) }
     }
 
     /** Liest die Punkte aus `extra` (`x,y,z;x,y,z;…`, `Locale.ROOT`); kaputte Einträge fallen weg. */
@@ -341,5 +344,93 @@ private class StarFx(args: FxArgs) : FxEffect(max(args.life, 4)) {
         const val ALPHA = 0.7f
         const val DIAGONAL = 0.5f
         const val RAY_WIDTH = 0.07f
+    }
+}
+
+// -------------------------------------------------------------------------------------------------------------------
+// hermes.gust
+// -------------------------------------------------------------------------------------------------------------------
+
+/**
+ * Windstoß der Botenglocken (Überarbeitung 4, P14, `HermesBells.State.gust`): drei schmale Luftbänder, nebeneinander
+ * und leicht gegeneinander geschwungen, laufen in `b` Ticks von `pos` (Glockenseite) nach `dir` (Hermes). Der Kopf jedes
+ * Bandes folgt einer weichen Kurve (outCubic), der Schweif hängt [TAIL] der Bahn dahinter; am Ziel verwehen sie in
+ * [FADE] Ticks und ein weicher Schein bleibt kurz stehen. Ruhig: keine Funkenregen, kein Blinken.
+ *
+ * Kodierung: pos = Anfang (absolut), dir = Ende (absolut), a = Breite der Bahn, b = Laufzeit, life = b + Ausklang.
+ */
+private class GustFx(args: FxArgs) : FxEffect(max(args.life, 6)) {
+    private val palette = args.palette
+    private val from = args.pos
+    private val to = if (args.dir.lengthSquared() <= 1.0001 && args.pos.lengthSquared() > 4.0) args.pos.add(args.dir.multiply(DEMO_LENGTH)) else args.dir
+    private val spread = args.a.coerceIn(0.3f, 3f)
+    private val travel = args.b.coerceAtLeast(2f)
+    private val seed = args.seed.toInt()
+    private val way = FxLib.unit(to.subtract(from), FxLib.UP)
+    private val side = FxLib.unit(way.crossProduct(FxLib.UP), Vec3d(1.0, 0.0, 0.0))
+
+    /** Kopf (0..1) zur Zeit [t]. */
+    private fun head(t: Float): Float = Ease.outCubic(t / travel)
+
+    /** Deckkraft: weich auf, am Ziel weich aus. */
+    private fun alpha(t: Float): Float = Ease.outCubic(t / RISE) * (1f - Ease.inOut((t - travel) / FADE))
+
+    /** Punkt des Bandes [band] bei Anteil [s] der Bahn: seitlich versetzt, sanft geschwungen, leicht steigend. */
+    private fun point(band: Int, s: Float, t: Float): Vec3d {
+        val offset = (band - 1) * spread * LANE_SHARE
+        val swing = sin((s * SWING_WAVES + band * 0.7f + t * SWING_SPEED) * PI_F) * spread * SWING * (1f - abs(band - 1) * 0.35f)
+        val lift = sin(s * PI_F) * LIFT + band * 0.08f
+        return from.lerp(to, s.toDouble()).add(side.multiply((offset + swing).toDouble())).add(0.0, lift.toDouble(), 0.0)
+    }
+
+    override fun energy(f: FxFrame) {
+        val t = time(f)
+        val a = alpha(t)
+        if (a <= 0.01f) return
+        val h = head(t)
+        val tail = (h - TAIL).coerceAtLeast(0f)
+        if (h - tail < 1e-3f) return
+        for (band in 0 until BANDS) {
+            val points = List(POINTS) { i -> point(band, tail + (h - tail) * i / (POINTS - 1f), t) }
+            val w = if (band == 1) WIDTH else WIDTH * 0.7f
+            FxDraw.ribbon(
+                f, points,
+                width = { s -> w * (0.1f + 0.9f * Ease.outQuad(s)) },
+                color = { s -> FxLib.alpha(FxLib.mix(palette.edge, palette.main, s), a * ALPHA * s) },
+                mode = FxMode.RIBBON, scroll = t * 0.15f, seed = seed + band,
+            )
+            FxDraw.ribbon(
+                f, points,
+                width = { s -> w * 0.35f * s },
+                color = { s -> FxLib.alpha(palette.core, a * ALPHA * 0.8f * s) },
+                mode = FxMode.RIBBON, scroll = t * 0.15f, seed = seed + band + 7,
+            )
+        }
+    }
+
+    override fun over(f: FxFrame) {
+        val t = time(f)
+        val a = alpha(t)
+        if (a <= 0.01f) return
+        FxDraw.glow(f, point(1, head(t), t), GLOW * spread, FxLib.alpha(palette.core, GLOW_ALPHA * a), seed)
+    }
+
+    companion object {
+        const val DEMO_LENGTH = 12.0
+        const val BANDS = 3
+        const val POINTS = 16
+        const val TAIL = 0.4f
+        const val RISE = 3f
+        const val FADE = 9f
+        const val LANE_SHARE = 0.45f
+        const val SWING = 0.18f
+        const val SWING_WAVES = 2.2f
+        const val SWING_SPEED = 0.06f
+        const val LIFT = 0.35f
+        const val WIDTH = 0.16f
+        const val ALPHA = 0.6f
+        const val GLOW = 1.2f
+        const val GLOW_ALPHA = 0.4f
+        const val PI_F = Math.PI.toFloat()
     }
 }

@@ -11,14 +11,15 @@ import dev.henny.hha.entity.boss.HermesEntity
 import dev.henny.hha.entity.boss.SerpentEntity
 import dev.henny.hha.logic.Fx
 import dev.henny.hha.logic.Vfx
+import dev.henny.hha.logic.boss.sig.HermesBells
+import dev.henny.hha.logic.boss.timings.HermesSigTimings
 import dev.henny.hha.logic.world.OlympusPath
 import dev.henny.hha.logic.world.OlympusProgress
+import dev.henny.hha.world.olymp.OlympusArenas
 import dev.henny.hha.world.olymp.OlympusLayout
 import net.minecraft.entity.Entity
 import net.minecraft.entity.EntityType
 import net.minecraft.entity.SpawnReason
-import net.minecraft.entity.boss.BossBar
-import net.minecraft.entity.boss.ServerBossBar
 import net.minecraft.entity.damage.DamageSource
 import net.minecraft.entity.effect.StatusEffectInstance
 import net.minecraft.entity.effect.StatusEffects
@@ -33,6 +34,7 @@ import net.minecraft.util.math.BlockPos
 import net.minecraft.util.math.MathHelper
 import net.minecraft.util.math.Vec3d
 import java.util.UUID
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.max
@@ -91,7 +93,15 @@ class HermesFight(
         add(summoner.uuid)
         Cine.rejoin(summoner, this@HermesFight)
     }
-    private val bossBar = ServerBossBar(Text.translatable("entity.hha.hermes"), BossBar.Color.YELLOW, BossBar.Style.NOTCHED_10)
+    /**
+     * Lebensleiste im HHA-Stil (Überarbeitung 4, PLAN 4.2 Soll): `Cine.phaseBar` mit vier Abschnitten (Stages), Farbe
+     * = Gefahrenfarbe der Stage. Ersetzt die Vanilla-Bossleiste. [barShown] wie früher `bossBar.isVisible`.
+     */
+    private var barShown = false
+    private var lastBar = ""
+
+    /** Botenglocken und brechende Säulen (Signatur, `sig/HermesBells`). */
+    val bells = HermesBells.State(this)
 
     var boss: HermesEntity? = null
         private set
@@ -200,8 +210,7 @@ class HermesFight(
                 Cine.rejoin(player, this)
             }
         }
-        for (player in players()) bossBar.addPlayer(player)
-        bossBar.isVisible = false
+        barShown = false
         script = cutscenes.prologue().iterator()
     }
 
@@ -346,11 +355,125 @@ class HermesFight(
     /** Spieler mit den Füßen auf dem Forum (für Bodenwellen, über die man springen kann): [BossDefense.Reach.LOW]. */
     fun grounded(player: ServerPlayerEntity): Boolean = BossDefense.reaches(player, arena.floorY, BossDefense.Reach.LOW)
 
+    /**
+     * Zieht [pos] waagerecht auf das Forum: höchstens [margin] vom Rand. Der Rand ist die Außenkante (Grenze 23 bei
+     * [margin] 3, wie bisher) bzw. an einem abgestürzten Bogen die Kernkante 21,5 (Überarbeitung 4, P14: dort ist kein
+     * Boden mehr).
+     */
     fun clampToArena(pos: Vec3d, margin: Double = 3.0): Vec3d {
         val flat = pos.subtract(center).let { Vec3d(it.x, 0.0, it.z) }
-        val limit = HermesArena.RADIUS - margin
+        val angle = Math.toDegrees(atan2(flat.z, flat.x))
+        val edge = arena.edgeAt(angle)
+        val limit = (if (edge < HermesArena.RADIUS) edge else HermesArena.RADIUS.toDouble()) - margin
         val clamped = if (flat.length() > limit) flat.normalize().multiply(limit) else flat
         return Vec3d(center.x + clamped.x, pos.y, center.z + clamped.z)
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Höhenband (Überarbeitung 4, PLAN 7.5, Briefing P14 Schritt 7): Kern und Empore (+2)
+    // ---------------------------------------------------------------------------------------------
+
+    /** Steht [player] gerade auf der Empore? */
+    fun onGallery(player: ServerPlayerEntity): Boolean =
+        arena.onGallery(player.x, player.z) && player.y >= arena.galleryY - GALLERY_TOLERANCE
+
+    /** [pos] auf die Höhe der Fläche darunter: Empore (noch vorhanden) oder Kernboden. */
+    fun atLevel(pos: Vec3d, lift: Double = 0.0): Vec3d =
+        Vec3d(pos.x, (if (arena.onGallery(pos.x, pos.z)) arena.galleryY else arena.floorY) + lift, pos.z)
+
+    /** Band „Kern“: trifft nur auf dem Kernboden (bis [GROUND_ABOVE] darüber); die Empore (+2) liegt darüber. */
+    fun <S : Telegraph.Shape> core(shape: S): S {
+        shape.band(arena.floorY, BAND_BELOW, GROUND_ABOVE)
+        return shape
+    }
+
+    /** Band „beides“: Kern und Empore (bis [BOTH_ABOVE] = Empore + 3). */
+    fun <S : Telegraph.Shape> both(shape: S): S {
+        shape.band(arena.floorY, BAND_BELOW, BOTH_ABOVE)
+        return shape
+    }
+
+    /** Steht noch irgendein Bogen der Empore? Sonst braucht kein Angriff eine zweite Form. */
+    private val galleryLeft: Boolean get() = arena.lost.size < OlympusArenas.FORUM_ARCS.size
+
+    /**
+     * Zweite Form auf der anderen Ebene (der Client zeichnet flach): Reicht [ring] über die Kernkante (21,5), zeigt ein
+     * Ring derselben Größe auf der anderen Höhe den Teil jenseits der Kante (innen ausgespart bis |21,5 − Abstand|).
+     * Gehört zur selben Gruppe, Band „beides“.
+     */
+    fun echoRing(group: Telegraph.Fight.Group, ring: Telegraph.Ring) {
+        if (!galleryLeft) return
+        val d = Vec3d(ring.center.x - center.x, 0.0, ring.center.z - center.z).length()
+        val edge = HermesArena.GALLERY_EDGE
+        if (d + ring.radius <= edge || d - ring.radius > HermesArena.RADIUS + 0.5) return
+        val inner = max(abs(edge - d), ring.inner).coerceAtMost(ring.radius - 0.2)
+        val onGallery = ring.center.y >= arena.galleryY - GALLERY_TOLERANCE
+        val y = if (onGallery) arena.floorY else arena.galleryY
+        both(group.ring(Vec3d(ring.center.x, y, ring.center.z), ring.radius.toFloat(), ring.remaining, inner.toFloat()))
+    }
+
+    /** Wie [echoRing] für Linien: das Stück jenseits der Kernkante auf Emporenhöhe. */
+    fun echoLine(group: Telegraph.Fight.Group, line: Telegraph.Line) {
+        if (!galleryLeft) return
+        for ((a, b) in outsideCore(line.from, line.to)) {
+            both(group.line(Vec3d(a.x, arena.galleryY, a.z), Vec3d(b.x, arena.galleryY, b.z), line.width.toFloat(), line.remaining))
+        }
+    }
+
+    /** Teilstücke der Strecke [a] → [b], die außerhalb der Kernkante liegen (0, 1 oder 2 Stücke, je ≥ 0,3 lang). */
+    private fun outsideCore(a: Vec3d, b: Vec3d): List<Pair<Vec3d, Vec3d>> {
+        val ax = a.x - center.x
+        val az = a.z - center.z
+        val dx = b.x - a.x
+        val dz = b.z - a.z
+        val r = HermesArena.GALLERY_EDGE
+        val qa = dx * dx + dz * dz
+        if (qa < 1e-6) return emptyList()
+        val qb = 2.0 * (ax * dx + az * dz)
+        val qc = ax * ax + az * az - r * r
+        val disc = qb * qb - 4.0 * qa * qc
+        val pieces = ArrayList<Pair<Double, Double>>()
+        if (disc <= 0.0) {
+            if (qc > 0.0) pieces.add(0.0 to 1.0)
+        } else {
+            val s = kotlin.math.sqrt(disc)
+            val t1 = (-qb - s) / (2.0 * qa)
+            val t2 = (-qb + s) / (2.0 * qa)
+            if (t1 > 0.0) pieces.add(0.0 to min(t1, 1.0))
+            if (t2 < 1.0) pieces.add(max(t2, 0.0) to 1.0)
+        }
+        val length = kotlin.math.sqrt(qa)
+        return pieces.filter { (u, v) -> (v - u) * length >= 0.3 }.map { (u, v) -> a.lerp(b, u) to a.lerp(b, v) }
+    }
+
+    /**
+     * **Empore stürzt ab** (PLAN 3.1, Briefing P14 Schritt 8): Ansage ROOM mit goldenem Kern ([HermesSigTimings.ARC_WARN],
+     * verlängert, wenn jemand weit draußen steht), dann fallen die Bögen [ids] (oben zuerst). Aufgerufen in der
+     * Stage-Szene (keine Boss-Ansage läuft); überspringt jemand die Szene, steht der Endzustand mit [startStage].
+     */
+    fun dropGallery(ids: List<String>) {
+        val pending = ids.filter { it !in arena.lost }
+        if (pending.isEmpty()) return
+        val ticks = galleryWarnTicks()
+        val group = telegraph.boss(pace = Telegraph.Pace.ROOM)
+        group.safe(center, HermesArena.GALLERY_EDGE.toFloat(), ticks)
+        bells.hintOnce(HermesBells.HINT_GALLERY)
+        sound(HhaSounds.RIFT, center, 2.4f, 0.6f)
+        runTask(sequence {
+            repeat(ticks) { yield(Unit) }
+            for (id in pending) arena.dropArc(id)
+            telegraph.roomShake(center, GALLERY_SHAKE)
+        })
+    }
+
+    /** Ansagezeit für den Absturz: mindestens [HermesSigTimings.ARC_WARN], sonst Reaktion + Weg bis in den Kern (PLAN 4.1). */
+    private fun galleryWarnTicks(): Int {
+        val walk = targets().maxOfOrNull { p ->
+            val d = Vec3d(p.x - center.x, 0.0, p.z - center.z).length()
+            (d - (HermesArena.GALLERY_EDGE - 0.6)).coerceAtLeast(0.0)
+        } ?: 0.0
+        val needed = BossTimings.Min.REACTION + kotlin.math.ceil(walk * 1.1 / BossTimings.Min.ESCAPE_SPEED).toInt()
+        return max(HermesSigTimings.ARC_WARN, needed).coerceAtMost(max(HermesSigTimings.ARC_WARN, BossTimings.Min.ESCAPE_MAX))
     }
 
     fun spawnBoss(pos: Vec3d): HermesEntity {
@@ -433,14 +556,9 @@ class HermesFight(
         transitionQueued = false
         telegraph.reset()
         telegraph.style = stageStyle(number)
-        bossBar.isVisible = true
-        bossBar.setName(Text.translatable("hha.hermes.bar", Text.translatable("hha.hermes.stage.$number")))
-        bossBar.color = when (number) {
-            2 -> BossBar.Color.PINK
-            3 -> BossBar.Color.BLUE
-            4 -> BossBar.Color.RED
-            else -> BossBar.Color.YELLOW
-        }
+        barShown = true
+        // Was die Szene am Forum begonnen hat (Umfärben, Absturz der Empore), steht jetzt fertig da (auch nach Überspringen).
+        arena.finishWork()
     }
 
     /** Wechselt das Stage-Thema; `null` stoppt die Musik. */
@@ -483,7 +601,6 @@ class HermesFight(
         // Nur wer wirklich auf dem Forum steht, kämpft mit. Wer k.o. gegangen ist, bleibt draußen.
         if (attacker is ServerPlayerEntity && attacker.squaredDistanceTo(center) < JOIN_RADIUS * JOIN_RADIUS && participants.add(attacker.uuid)) {
             Cine.rejoin(attacker, this)
-            bossBar.addPlayer(attacker)
         }
         if (bossInvulnerable || !entity.vulnerable) {
             Vfx.flare(world, style, entity.entityPos.add(0.0, 1.6, 0.0), 1.6f, 6)
@@ -582,7 +699,7 @@ class HermesFight(
         player.extinguish()
         for (effect in player.statusEffects.map { it.effectType }) player.removeStatusEffect(effect)
         participants.remove(player.uuid)
-        bossBar.removePlayer(player)
+        Cine.phaseBar(listOf(player), false)
         Cine.end(listOf(player))
         Cine.atmosphere(listOf(player), null, center, 40)
         Cine.wings(listOf(player), false)
@@ -602,7 +719,7 @@ class HermesFight(
     /** Ausgeloggt: zurück an den Rückkehrort, damit niemand später hoch über der Welt aufwacht. */
     fun onPlayerLeft(player: ServerPlayerEntity) {
         if (participants.remove(player.uuid)) {
-            bossBar.removePlayer(player)
+            Cine.phaseBar(listOf(player), false)
             skip.recheck(players().filter { it.uuid != player.uuid })
             if (arenaBuilt) player.refreshPositionAndAngles(home.x, home.y, home.z, player.yaw, player.pitch)
         }
@@ -614,8 +731,8 @@ class HermesFight(
      */
     fun onPlayerChangedWorld(player: ServerPlayerEntity) {
         if (!participants.remove(player.uuid)) return
-        bossBar.removePlayer(player)
         val list = listOf(player)
+        Cine.phaseBar(list, false)
         Cine.end(list)
         Cine.atmosphere(list, null, center, 40)
         Cine.wings(list, false)
@@ -709,7 +826,10 @@ class HermesFight(
         closeOpening()
         // Ein Konter, den die Cutscene abschneidet, endet hier (sonst bliebe die Abwehr im Konter hängen).
         guard?.let { if (it.inCounter) it.endCounter() }
-        bossBar.isVisible = next <= 4
+        barShown = next <= 4
+        // Verbrauchte Deckung kehrt zum Stage-Beginn zurück (PLAN 1 Leitlinie 20): Säulen und Glocken aus dem Plan.
+        arena.restoreColumns()
+        bells.onStageStart()
         boss?.vulnerable = true
         val scene: Sequence<Unit> = when (next) {
             2 -> cutscenes.feather()
@@ -722,12 +842,29 @@ class HermesFight(
 
     fun markFinale() {
         stage = 5
-        bossBar.isVisible = false
+        barShown = false
     }
 
+    /**
+     * Leiste nur bei Änderung senden (Abschnitt, Anteil auf 1/400, Zahl der Empfänger): Der Anteil gilt innerhalb der
+     * laufenden Stage (zwischen ihrer Obergrenze und [stageFloor]), wie bei den Duell-Bossen.
+     */
     private fun syncBar() {
+        val list = players()
+        if (!barShown || stage !in 1..4) {
+            if (lastBar != "hidden") Cine.phaseBar(list, false)
+            lastBar = "hidden"
+            return
+        }
         val entity = boss ?: return
-        bossBar.percent = (entity.health / entity.maxHealth).coerceIn(0f, 1f)
+        val upper = if (stage == 1) entity.maxHealth else stageFloor(stage - 1)
+        val lower = if (stage >= 4) 0f else stageFloor(stage)
+        val fraction = ((entity.health - lower) / (upper - lower).coerceAtLeast(1f)).coerceIn(0f, 1f)
+        val theme = BAR_THEMES + stageStyle(stage).ordinal
+        val key = "$stage:$theme:${(fraction * 400).toInt()}:${list.size}"
+        if (key == lastBar) return
+        lastBar = key
+        Cine.phaseBar(list, true, STAGES, stage, fraction, theme, "entity.hha.hermes", "hha.hermes.stage.$stage")
     }
 
     /** Wer vom Forum stürzt, wird von einer Bö zurückgeworfen — das Forum ist für alle der einzige Ausweg. */
@@ -777,7 +914,7 @@ class HermesFight(
         Cine.wings(everyone, false)
         Cine.music(everyone, null)
         for (player in everyone) sendBack(player)
-        bossBar.clearPlayers()
+        Cine.phaseBar(everyone, false)
         returnLoot(null)
         clearMinions()
         boss?.discard()
@@ -819,5 +956,24 @@ class HermesFight(
 
         /** Über so viele Ticks wird die Spielerbewegung gemittelt. */
         private const val MOTION_SPAN = 6
+
+        /** Leiste: vier Abschnitte (Stages); Farbthemen ab 10 = Gefahrenpalette (`PhaseBar.STYLE_THEMES`). */
+        private const val STAGES = 4
+        private const val BAR_THEMES = 10
+
+        /** Höhenband: so tief unter den Füßen … */
+        const val BAND_BELOW = 1.0
+
+        /** … und so hoch darüber trifft ein Bodenangriff (Sprung ja, Empore + 2 nein). */
+        const val GROUND_ABOVE = 1.5
+
+        /** … bzw. ein Angriff auf beide Ebenen (Empore + 3). */
+        const val BOTH_ABOVE = 5.0
+
+        /** Füße so knapp unter der Emporenhöhe zählen noch als „auf der Empore“. */
+        private const val GALLERY_TOLERANCE = 0.6
+
+        /** Rütteln beim Absturz der Empore (saalweit, gedeckelt durch `roomShake`). */
+        private const val GALLERY_SHAKE = 3f
     }
 }

@@ -1,0 +1,8 @@
+{
+  "type": "minecraft:stonecutting",
+  "ingredient": "hha:tartarus_basalt",
+  "result": {
+    "count": 1,
+    "id": "hha:tartarus_basalt_bricks"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "parent": "minecraft:block/outer_stairs",
+  "textures": {
+    "bottom": "hha:block/tartarus_bronze",
+    "side": "hha:block/tartarus_bronze",
+    "top": "hha:block/tartarus_bronze"
+  }
+}

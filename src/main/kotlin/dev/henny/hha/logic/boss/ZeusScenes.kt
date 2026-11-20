@@ -178,6 +178,8 @@ class ZeusScenes(private val zeus: ZeusEntity) {
      * Phasenwechsel `zeus.phase2`/`zeus.phase3` (5 s): `PHASE`, ein Blitz fährt in ihn (Stoß, Ruck und Blitz ≤ 0,22
      * kommen von der Bühne), der Himmel wird dunkler (Gewitter über dem Hof, in III einmal noch dunkler), das Thema der
      * neuen Phase setzt ein; eine Zeile; zwei verbrauchte Pfeiler werden frisch (Bogen von ihm zu ihrer Spitze).
+     * Überarbeitung 4 (P18): In III schneidet die Kamera nach außen auf Scholle 0, deren Fugen aufreißen; der Bruch
+     * selbst (ROOM-Ansage, dann Abbau) läuft nach der Szene im Drehbuch des Bosses, also auch nach dem Überspringen.
      */
     fun phase(newPhase: Int): Sequence<Unit> = play(sequence {
         val viewers = zeus.sceneViewers()
@@ -188,8 +190,18 @@ class ZeusScenes(private val zeus: ZeusEntity) {
         val at = zeus.entityPos
         val stage = zeus.sceneStage()
         val center = stage?.center ?: at
-        Cine.stage(viewers, if (newPhase >= 2) ZeusStages.PHASE3 else ZeusStages.PHASE2, at, zeus.yaw, listOf(zeus))
+        if (newPhase >= 2) {
+            // Überarbeitung 4: Anker = Hof-Mitte, Blick nach Osten auf Scholle 0 (die Kamera zeigt den ersten Bruch).
+            Cine.stage(viewers, ZeusStages.PHASE3, Vec3d(center.x, stage?.center?.y ?: at.y, center.z), yawOf(Vec3d(1.0, 0.0, 0.0)), listOf(zeus))
+        } else {
+            // P24: Er wendet sich zur Hof-Mitte. Die Kamera hängt an seinem Blick; zum Rand gewandt stand sie bei r ≥ 14
+            // in Thronbühne bzw. Pfeilersockel (Stichprobe camcheck: zur Mitte 0 von 192 Lagen, sonst 395 von 1536).
+            if (stage != null && Vec3d(center.x - at.x, 0.0, center.z - at.z).lengthSquared() > 0.25) zeus.sceneFace(center)
+            Cine.stage(viewers, ZeusStages.PHASE2, at, zeus.yaw, listOf(zeus))
+        }
         for (t in 0 until ZeusStages.PHASE_LENGTH) {
+            // Risse an den Fugen der Schollen 0 und 3 (nur Bild; der Bruch selbst folgt nach der Szene mit Ansage).
+            if (newPhase >= 2 && t == ZeusStages.PHASE3_OMEN) zeus.sceneFloeOmen(ZeusStages.PHASE_LENGTH - t + OMEN_AFTER)
             when (t) {
                 ZeusStages.PHASE_BOLT -> {
                     zeus.sceneSkyBolt(at)
@@ -286,6 +298,9 @@ class ZeusScenes(private val zeus: ZeusEntity) {
         const val RENEW_BEND = 0.35f
         const val RENEW_WIDTH = 0.45f
         const val RENEW_LIFE = 14
+
+        /** Die Risse der Szene stehen noch so lange nach ihrem Ende (bis die Ansage des Bruchs eigene zeichnet). */
+        const val OMEN_AFTER = 20
 
         /** Laufende Szenen auf dem Server (für die Überspringen-Taste). */
         private val active = HashSet<ZeusScenes>()

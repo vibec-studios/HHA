@@ -325,6 +325,17 @@ class HadesModel(root: ModelPart) : EntityModel<HadesRenderState>(root) {
                 .hold((H.GAZE_WINDUP + 8).toFloat()).to(H.GAZE_END.toFloat(), K.IDLE).end()
             HadesPose.CHAINS -> Track(t, from, ch).to((H.CHAINS_CAST - 4).toFloat(), K.CHAINS_CAST, HARD).hold(H.CHAINS_CAST.toFloat())
                 .to((H.CHAINS_CAST + 6).toFloat(), K.CHAINS_PULL).end()
+            HadesPose.HOLD -> {
+                // Überarbeitung 4 (P19): Er hält die Fessel. Arme wie am Ende des Zugs, Gewicht nach hinten; alle
+                // HOLD_TUG Ticks ein kurzer Ruck an der Kette (schnell an, langsam nachgeben), kein Zittern ins Leere.
+                if (t < HOLD_SETTLE) {
+                    Track(t, from, ch).to(HOLD_SETTLE, K.CHAINS_PULL).end()
+                } else {
+                    val phase = ((t - HOLD_SETTLE) % HOLD_TUG) / HOLD_TUG
+                    val tug = if (phase < 0.2f) phase / 0.2f else 1f - (phase - 0.2f) / 0.8f
+                    mix(K.CHAINS_PULL, K.CHAINS_CAST, HOLD_TUG_DEPTH * tug * tug * (3f - 2f * tug))
+                }
+            }
             HadesPose.VANISH -> Track(t, from, ch).to(H.VANISH_ANIM.toFloat(), K.VANISH).end()
             HadesPose.AMBUSH -> Track(t, from, ch).to((H.AMBUSH_HIT - 2).toFloat(), K.SWEEP_A_WINDUP, HARD)
                 .to(H.AMBUSH_HIT.toFloat(), K.AMBUSH_HIT, HARD).to((H.AMBUSH_HIT + 8).toFloat(), K.AMBUSH_RECOVER).end()
@@ -367,6 +378,7 @@ class HadesModel(root: ModelPart) : EntityModel<HadesRenderState>(root) {
             HadesPose.GAZE -> window(t, 30f, H.GAZE_WINDUP - 1f)
             HadesPose.JUDGE -> window(t, 40f, H.JUDGE_HIT - 2f)
             HadesPose.CHAINS -> window(t, H.CHAINS_CAST + 6f, H.CHAINS_PULL_END.toFloat())
+            HadesPose.HOLD -> HOLD_TREMBLE
             HadesPose.ROAR -> 0.7f
             else -> 0f
         }
@@ -481,7 +493,7 @@ class HadesModel(root: ModelPart) : EntityModel<HadesRenderState>(root) {
             ch[K.CAPE] += walk * 0.25f
         }
         val lookWeight = when (state.bossPose) {
-            HadesPose.IDLE, HadesPose.EMPTY, HadesPose.CAST, HadesPose.WINDUP, HadesPose.STUCK, HadesPose.CHAINS -> 1f
+            HadesPose.IDLE, HadesPose.EMPTY, HadesPose.CAST, HadesPose.WINDUP, HadesPose.STUCK, HadesPose.CHAINS, HadesPose.HOLD -> 1f
             HadesPose.SWEEP, HadesPose.SWEEP_B, HadesPose.SWEEP_C, HadesPose.THRUST, HadesPose.THROW -> if (state.poseTime < 8f) 0.6f else 0.3f
             HadesPose.STAGGER -> 0.4f
             else -> 0f
@@ -680,6 +692,12 @@ class HadesModel(root: ModelPart) : EntityModel<HadesRenderState>(root) {
         private const val BEARD_DAMP = 0.4f
         private const val CREST_FREQ = 0.6f
         private const val CREST_DAMP = 0.35f
+
+        /** Pose „hält“ (P19): Einschwingen in die Zughaltung, Ruck alle so viele Ticks, Tiefe des Rucks, Zittern. */
+        private const val HOLD_SETTLE = 6f
+        private const val HOLD_TUG = 14f
+        private const val HOLD_TUG_DEPTH = 0.35f
+        private const val HOLD_TREMBLE = 0.6f
 
         /** Stoß (rad/Tick) beim Aufprall der Waffe bzw. beim plötzlichen Anhalten (je Gangstärke). */
         private const val KICK_IMPACT = 0.09f

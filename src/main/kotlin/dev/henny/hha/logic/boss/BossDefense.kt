@@ -112,6 +112,32 @@ object BossDefense {
         }
     }
 
+    /**
+     * Höhenregel mit Arena (Überarbeitung 4, PLAN 7.5): gemessen vom Boden der Fläche, auf der die Ansage bei [at] liegt
+     * ([floorFor]), nicht vom Boden unter dem Spieler. Ohne Vertrag (`arena.spec == null`) wie bisher vom Arenaboden
+     * `arena.floorY`; ohne Arena von `at.y`.
+     */
+    fun reaches(player: Entity, arena: Arenas.Arena?, at: Vec3d, reach: Reach, bossHeight: Double = 3.0): Boolean =
+        reaches(player, floorFor(arena, at), reach, bossHeight)
+
+    /**
+     * Wie oben für eine gezeigte Form: Hat sie ein Höhenband ([Telegraph.Shape.band]), zählt dessen Boden, sonst der
+     * Boden unter ihrem Bezugspunkt ([Telegraph.Shape.origin]).
+     */
+    fun reaches(player: Entity, arena: Arenas.Arena?, shape: Telegraph.Shape, reach: Reach, bossHeight: Double = 3.0): Boolean =
+        reaches(player, shape.bandFloor ?: floorFor(arena, shape.origin), reach, bossHeight)
+
+    /**
+     * Boden, von dem die Höhenregel misst: mit Vertrag die Fläche unter [at] (liegt [at] auf keiner Vertragsfläche, etwa
+     * am Hang des Sisyphos-Hügels, dann `at.y`: die Ansage liegt dort auf dem Gelände); ohne Vertrag der Arenaboden; ohne
+     * Arena `at.y`.
+     */
+    fun floorFor(arena: Arenas.Arena?, at: Vec3d): Double = when {
+        arena == null -> at.y
+        arena.spec == null -> arena.floorY
+        else -> arena.floorAtOrNull(at) ?: at.y
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Sturztreffer
     // ---------------------------------------------------------------------------------------------

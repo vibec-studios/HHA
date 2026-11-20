@@ -10,6 +10,7 @@ import dev.henny.hha.logic.Vfx
 import dev.henny.hha.logic.boss.BossTimings
 import dev.henny.hha.logic.boss.HadesFights
 import dev.henny.hha.net.VfxPayload
+import dev.henny.hha.world.TartarusArenas
 import dev.henny.hha.world.TartarusKind
 import dev.henny.hha.world.TartarusPiece
 import dev.henny.hha.world.TartarusPlans
@@ -165,25 +166,60 @@ object TartarosGuide {
         return t.pos?.let { it to t.key }
     }
 
-    /** Das nächste ungesprengte Glied (nächstes Bauwerk), nach dem fünften der Palast. */
+    /**
+     * Das nächste ungesprengte Glied (nächstes Bauwerk), nach dem fünften der Palast. Überarbeitung 4 (P23, Briefing 4):
+     * Ziel ist nicht mehr die Bauwerksmitte, sondern bei Wächtern der **Beginn des Zuwegs** (`siteApproach(…).points
+     * .first()`) und beim Palast der nächste nicht erreichte Punkt des Anmarschs ([palaceSpot]: zuerst der Alleeanfang,
+     * das Siegel erst ab dem Hundetor). Gewählt wird weiter nach der Entfernung zur Bauwerksmitte.
+     */
     private fun nextTarget(world: ServerWorld, player: ServerPlayerEntity): Target {
         val server = world.server ?: return Target(null, "lost", null)
         if (chainOpen(server)) {
             val palace = palace(world, player.blockPos) ?: return Target(null, "lost", null)
-            return Target(Vec3d.ofBottomCenter(palace), "palace", null)
+            return Target(palaceSpot(player, palace), "palace", null)
         }
-        var best: Target? = null
+        val site = nearestSite(world, player) ?: return Target(null, "lost", null)
+        val (middle, link) = site
+        return Target(TartarusArenas.siteApproach(kindOf(link), variantOf(link), middle).points.first().pos, link.key, link)
+    }
+
+    /** Nächstes nicht befreites Bauwerk eines fehlenden Glieds (Mitte, Glied) zu [player], ohne Palast. */
+    private fun nearestSite(world: ServerWorld, player: ServerPlayerEntity): Pair<BlockPos, TartarosChain.Link>? {
+        val server = world.server ?: return null
+        var best: Pair<BlockPos, TartarosChain.Link>? = null
         var bestDistance = Double.MAX_VALUE
         for (link in TartarosChain.of(server).missing()) {
             val site = site(world, link, player.blockPos) ?: continue
             val d = hypot(site.x + 0.5 - player.x, site.z + 0.5 - player.z)
             if (d < bestDistance) {
                 bestDistance = d
-                best = Target(Vec3d.ofBottomCenter(site), link.key, link)
+                best = site to link
             }
         }
-        return best ?: Target(null, "lost", null)
+        return best
     }
+
+    /**
+     * Öffentlich und nebenwirkungsfrei (für `RpgStory`, Kapitel U1): Mitte und Glied des nächsten Wächter-Bauwerks, solange
+     * die Kette nicht gesprengt ist; sonst `null`. Gleicher Zwischenspeicher wie der Wegweiser.
+     */
+    fun nextSite(world: ServerWorld, player: ServerPlayerEntity): Pair<BlockPos, TartarosChain.Link>? {
+        val server = world.server ?: return null
+        if (chainOpen(server)) return null
+        return nearestSite(world, player)
+    }
+
+    /** Palast [o]: nächster nicht erreichter Punkt des Anmarschs für [player], alles erreicht → Eingang vor dem Siegel. */
+    private fun palaceSpot(player: ServerPlayerEntity, o: BlockPos): Vec3d =
+        Approach.next(player, TartarusArenas.palaceApproach(o))?.pos ?: Vec3d.ofBottomCenter(TartarusArenas.palaceEntrance(o))
+
+    /** Fuß der grünen Säule nach 5/5: über dem Propylon (Abschnitt 1 des Anmarschs), nicht über der Kuppel. */
+    private fun propylon(o: BlockPos): Vec3d {
+        val points = TartarusArenas.palaceApproach(o).points
+        return (points.firstOrNull { it.id == PROPYLON } ?: points.first()).pos
+    }
+
+    private const val PROPYLON = "propylon"
 
     /** Hermes erscheint vor dem Spieler und zeigt zum Ziel; steht schon einer bei der Gruppe, bleibt es bei dem. */
     private fun appear(world: ServerWorld, player: ServerPlayerEntity, toward: Vec3d?) {
@@ -278,7 +314,7 @@ object TartarosGuide {
             if (!open || HadesFights.isParticipant(player)) continue
             val palace = palace(world, player.blockPos) ?: continue
             if (hypot(palace.x + 0.5 - player.x, palace.z + 0.5 - player.z) < G.PALACE_NEAR) continue
-            sendBeacon(player, Vec3d.ofBottomCenter(palace), Vfx.Style.HADES)
+            sendBeacon(player, propylon(palace), Vfx.Style.HADES)
         }
         beacons.keys.retainAll(present)
     }

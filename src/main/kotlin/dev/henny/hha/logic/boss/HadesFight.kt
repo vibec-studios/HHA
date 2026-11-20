@@ -13,11 +13,15 @@ import dev.henny.hha.entity.boss.KronosEntity
 import dev.henny.hha.entity.boss.KronosPose
 import dev.henny.hha.logic.Fx
 import dev.henny.hha.logic.Vfx
+import dev.henny.hha.logic.boss.arena.ArenaBlueprints
+import dev.henny.hha.logic.boss.arena.ArenaEdits
 import dev.henny.hha.logic.world.TartarosChain
 import dev.henny.hha.logic.world.TartarosMinibosses
 import dev.henny.hha.stage.StageScripts
 import dev.henny.hha.stage.scripts.HadesStages
+import dev.henny.hha.world.TartarusArenas
 import dev.henny.hha.world.TartarusPlans
+import dev.henny.hha.world.arena.ArenaSpec
 import net.fabricmc.fabric.api.entity.event.v1.ServerEntityWorldChangeEvents
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
@@ -150,7 +154,9 @@ object HadesFights {
  *
  * Dieses Objekt hält Zustand und Szenen; die Attacken stehen in [HadesAttacks] und [KronosAttacks]. Alle Ansagen laufen
  * über [Telegraph] ([hadesCalls], [kronosCalls]), der ganze Kampf-Tick im Scope von [Telegraph.Fight.during]. Alle
- * Blockänderungen merkt sich [edit], am Ende steht der Saal wieder wie vorher.
+ * Blockänderungen laufen über [edit] in das persistente Edit-Register des Bauplans `palace_hall` (Überarbeitung 4,
+ * PLAN 7.3); am Ende, nach einem Abbruch oder Absturz steht der Saal wieder so, wie der Plan ihn zeichnet. Beim
+ * Kampfbeginn wird der Saal gegen den Plan repariert (auch in alten Welten, PLAN 6.3).
  */
 class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPlayerEntity) {
 
@@ -224,8 +230,18 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
     /** Säulen, die noch stehen und vor seinem Blick schützen: Versatz zur Mitte. */
     val intactPillars = ArrayList(TartarusPlans.coverPillars())
 
-    /** Originalzustand aller Blöcke, die der Kampf verändert hat. */
-    private val edits = LinkedHashMap<BlockPos, BlockState>()
+    /**
+     * Vertrag des Saals (Überarbeitung 4, PLAN 3.6, 7.2): Deckung, Umgang, Podest, Einsturzringe. Nur lesen; Maße kommen
+     * von hier, nicht aus eigenen Kopien.
+     */
+    val spec: ArenaSpec = TartarusArenas.hall(floor)
+
+    /**
+     * Edit-Register des Saals (PLAN 7.3, Leitlinie 21; P19 Schritt 3): Jede Blockänderung des Kampfs läuft hierüber,
+     * persistent. Zurückgesetzt wird auf den Bauplan, wo er spricht (Saal), sonst auf den gemerkten Zustand (Siegel,
+     * Kuppelauge, Grube unter dem Boden).
+     */
+    private val edits: ArenaEdits = ArenaEdits.open(world, TartarusArenas.HALL_ID, floor)
 
     /** Was eine laufende Attacke verändert hat, mit dem Zustand direkt davor. */
     private val scars = LinkedHashMap<BlockPos, BlockState>()
@@ -238,6 +254,7 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
     private var lastBar = ""
 
     fun begin() {
+        startRepair()
         for (player in world.players) {
             if (player.squaredDistanceTo(center) <= 70.0 * 70.0 && !player.isSpectator) {
                 participants.add(player.uuid)
@@ -271,20 +288,25 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
      * Schwere Treffer: über `hades_damage` einstellbar. Mit [magic] hilft keine Rüstung. [reach] ist die Höhenregel
      * (PLAN 4.3, [BossDefense.reaches]) über dem Hallenboden; ohne Angabe [BossDefense.Reach.BODY].
      */
-    fun hurt(player: ServerPlayerEntity, base: Float, magic: Boolean = false, reach: BossDefense.Reach = BossDefense.Reach.BODY): Boolean {
+    fun hurt(player: ServerPlayerEntity, base: Float, magic: Boolean = false, reach: BossDefense.Reach = BossDefense.Reach.BODY, floorY: Double = center.y): Boolean {
         if (inCutscene) return false
         // Ziele, die ein Ablauf früher gemerkt hat, können inzwischen ausgeschieden oder in einer anderen Welt sein.
         if (player.uuid !in participants || player.entityWorld !== world) return false
+        // Wen die Fessel hält, den trifft sonst nichts (P19: „der Gefesselte nimmt keinen anderen Boss-Treffer“).
+        if (attacks.fettered(player)) return false
         val attacker = if (stage >= 4) kronos else boss
-        if (!reaches(player, reach)) return false
+        if (!reaches(player, reach, floorY)) return false
         val source: DamageSource = if (magic || attacker == null) world.damageSources.magic() else world.damageSources.mobAttack(attacker)
         return player.damage(world, source, scaledDamage(base))
     }
 
-    /** Höhenregel (PLAN 4.3) über dem Hallenboden, mit der Höhe des Körpers, der gerade kämpft. */
-    fun reaches(player: ServerPlayerEntity, reach: BossDefense.Reach): Boolean {
+    /**
+     * Höhenregel (PLAN 4.3) über dem Hallenboden, mit der Höhe des Körpers, der gerade kämpft. [floorY] (Überarbeitung 4,
+     * P00): Boden der Ebene, auf die der Angriff zielt (Umgang, Podest); Standard der Hallenboden.
+     */
+    fun reaches(player: ServerPlayerEntity, reach: BossDefense.Reach, floorY: Double = center.y): Boolean {
         val attacker = if (stage >= 4) kronos else boss
-        return BossDefense.reaches(player, center.y, reach, (attacker?.height ?: 4f).toDouble())
+        return BossDefense.reaches(player, floorY, reach, (attacker?.height ?: 4f).toDouble())
     }
 
     /** Die Abwehr des Körpers, der gerade kämpft (Hades in I–III, Kronos in IV–V). */
@@ -319,10 +341,9 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         entity.yaw = (Math.toDegrees(atan2(d.z, d.x)) - 90.0).toFloat()
     }
 
+    /** Setzt einen Block über das Edit-Register (merkt beim ersten Mal den Urzustand, persistent; ohne Drops). */
     fun edit(pos: BlockPos, state: BlockState) {
-        val key = pos.toImmutable()
-        edits.putIfAbsent(key, world.getBlockState(key))
-        world.setBlockState(key, state, Block.NOTIFY_LISTENERS or Block.FORCE_STATE)
+        edits.set(pos.toImmutable(), state)
     }
 
     fun scar(pos: BlockPos, state: BlockState) {
@@ -342,23 +363,65 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
             }
         }
         for ((pos, state) in scars) {
-            // Was schon in die Tiefe gestürzt ist, kommt nicht wieder.
-            if (Vec3d(pos.x + 0.5 - center.x, 0.0, pos.z + 0.5 - center.z).length() <= safeRadius) {
-                world.setBlockState(pos, state, Block.NOTIFY_LISTENERS or Block.FORCE_STATE)
-            }
+            // Was schon in die Tiefe gestürzt ist, kommt nicht wieder. Die Stelle bleibt im Register (Kampfende: Plan).
+            if (Vec3d(pos.x + 0.5 - center.x, 0.0, pos.z + 0.5 - center.z).length() <= safeRadius) edits.set(pos, state)
         }
         scars.clear()
     }
 
-    private fun restoreEdits() {
+    /**
+     * Saal zurück auf den Bauplan. [final] (Kampfende): Register leeren und schließen. Sonst (Heilung vor dem Titanen)
+     * bleibt das Register offen und persistent.
+     */
+    private fun restoreEdits(final: Boolean) {
         scars.clear()
-        for ((pos, state) in edits) world.setBlockState(pos, state, Block.NOTIFY_LISTENERS or Block.FORCE_STATE)
-        edits.clear()
+        if (final) edits.restoreAll() else edits.restore()
+    }
+
+    // --- Bauplan (Überarbeitung 4, P19 Schritt 3) ----------------------------------------------------------------
+
+    /** Läuft die Reparatur des Saals gegen den Plan noch (Hintergrund)? */
+    private var repairing = false
+
+    /** Muss der Auftritt auf die Reparatur warten (Stichprobe unter [REPAIR_SKIP_WAIT])? */
+    private var repairWait = false
+
+    /**
+     * Kampfbeginn: Saal gegen den Bauplan `palace_hall` reparieren (PLAN 6.3, auch in alten Welten). Stimmt die Stichprobe
+     * fast ganz, läuft die Reparatur nur im Hintergrund (die Szene wartet nicht); sonst wartet der Auftritt darauf
+     * ([awaitRepair], höchstens [REPAIR_WAIT] Ticks, danach sofort).
+     */
+    private fun startRepair() {
+        val share = ArenaBlueprints.matches(world, TartarusArenas.HALL_ID, floor)
+        repairing = true
+        repairWait = share < REPAIR_SKIP_WAIT
+        ArenaBlueprints.repair(world, TartarusArenas.HALL_ID, floor, instant = false) { count ->
+            repairing = false
+            if (count > 0) Hha.LOGGER.info("Thronsaal an {}: {} Blöcke nach Bauplan repariert (Stichprobe {} %)", floor.toShortString(), count, (share * 100).toInt())
+        }
+    }
+
+    /** Wartet (vor der ersten Einstellung) höchstens [REPAIR_WAIT] Ticks auf die Reparatur, dann sofort. */
+    private suspend fun SequenceScope<Unit>.awaitRepair() {
+        if (!repairWait) return
+        var waited = 0
+        while (repairing && ArenaBlueprints.isRepairing(world, TartarusArenas.HALL_ID, floor) && waited < REPAIR_WAIT) {
+            waited++
+            yield(Unit)
+        }
+        finishRepair()
+    }
+
+    /** Läuft die Reparatur noch, jetzt sofort fertig machen (spätestens vor dem ersten Angriff und am Kampfende). */
+    private fun finishRepair() {
+        if (!ArenaBlueprints.isRepairing(world, TartarusArenas.HALL_ID, floor)) return
+        ArenaBlueprints.repair(world, TartarusArenas.HALL_ID, floor, instant = true)
+        repairing = false
     }
 
     /** Vor dem Titanenkampf: Boden, Säulen und Spalten stehen wieder, nur das Siegel bleibt zu. */
     private fun healHall() {
-        restoreEdits()
+        restoreEdits(false)
         floorBusy = false
         safeRadius = ARENA.toDouble()
         intactPillars.clear()
@@ -372,6 +435,52 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         val clamped = if (flat.length() > limit) flat.normalize().multiply(limit) else flat
         return Vec3d(center.x + clamped.x, center.y, center.z + clamped.z)
     }
+
+    /**
+     * Wie [clampToHall], aber in den **Kern** (Überarbeitung 4, PLAN 3.6, P19 Schritt 4): Kreis r 38 ohne Thronpodest.
+     * Für Punkte, die ein Körper selbst betritt (Hades geht, Ausfall-Ende, Schattenschritt, Hermes, Rückholen), damit
+     * niemand im Umgang oder im Podest steckt. Rückgabe auf Hallenhöhe.
+     */
+    fun clampToCore(pos: Vec3d, margin: Double = CORE_MARGIN): Vec3d {
+        val limit = (min(TartarusArenas.HALL_CORE, safeRadius) - margin).coerceAtLeast(1.0)
+        val tz = TartarusPlans.THRONE_Z.toDouble()
+        val foot = TartarusArenas.HALL_DAIS_FOOT + DAIS_MARGIN
+        var x = pos.x - center.x
+        var z = pos.z - center.z
+        repeat(CORE_CLAMP_PASSES) {
+            val r = hypot(x, z)
+            if (r > limit) {
+                x *= limit / r
+                z *= limit / r
+            }
+            val oz = z - tz
+            val d = hypot(x, oz)
+            if (d < foot) {
+                // Vom Thron weg nach außen; genau auf dem Thron: zur Saalmitte.
+                if (d < 1e-3) {
+                    x = 0.0
+                    z = tz + foot
+                } else {
+                    x *= foot / d
+                    z = tz + oz / d * foot
+                }
+            }
+        }
+        return Vec3d(center.x + x, center.y, center.z + z)
+    }
+
+    /**
+     * Boden (Füße) der Ebene unter [pos] (Überarbeitung 4): Umgang (+2), Thronpodest (+3) oder Hallenboden. Was schon
+     * eingestürzt ist ([safeRadius]), zählt als Hallenboden.
+     */
+    fun levelFloor(pos: Vec3d): Double {
+        if (hypot(pos.x - center.x, pos.z - center.z) > safeRadius) return center.y
+        for (level in spec.levels) if (level.zone.contains(pos.x, pos.z)) return level.floorY.toDouble()
+        return center.y
+    }
+
+    /** [pos] auf den Boden seiner Ebene gesetzt ([levelFloor]): Dort zeigen Ansagen, die unter einem Spieler liegen. */
+    fun onLevel(pos: Vec3d): Vec3d = Vec3d(pos.x, levelFloor(pos), pos.z)
 
     /** Zähigkeit von Hades (ohne Spielerzahl): `hermes_toughness` × [TOUGHNESS]. Kronos zusätzlich × [KRONOS_TOUGHNESS]. */
     private fun toughness(): Float = HhaConfig.numF("hermes_toughness") * TOUGHNESS
@@ -445,6 +554,7 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
     fun interrupt(with: Sequence<Unit>) {
         if (inCutscene) return
         endCounters()
+        attacks.abortFetter()
         script = with.iterator()
     }
 
@@ -620,7 +730,8 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
             val flat = Vec3d(player.x - center.x, 0.0, player.z - center.z)
             val fell = player.y < center.y - 4.5
             if (!fell && flat.length() <= TartarusPlans.SEAL_Z + 8.0) continue
-            val spot = clampToHall(player.entityPos, 3.0)
+            // In den Kern (nicht in den Umgang oder das Podest), sonst stünde man in Blöcken.
+            val spot = clampToCore(player.entityPos, 3.0)
             player.teleport(world, spot.x, spot.y + 0.2, spot.z, emptySet(), player.yaw, player.pitch, false)
             player.velocity = Vec3d.ZERO
             player.velocityDirty = true
@@ -679,8 +790,9 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         titan.reset()
         hadesCalls.reset()
         kronosCalls.reset()
-        // Jede Hades-Phase beginnt mit allen acht Säulen: Sie sind seine Mechanik, kein Vorrat.
-        if (number in 2..3) restorePillars()
+        // Jede Hades-Phase beginnt mit allen acht Säulen: Sie sind seine Mechanik, kein Vorrat. P24 (Wunsch P20 1): auch
+        // Kronos II (PLAN 3.6: gealterte Säulen stehen wieder); die Spieler stehen nach `gather` bei r 15, fern der Säulen.
+        if (number in 2..3 || number == 5) restorePillars()
         if (number <= 3) attacks.onStageStart(number) else titan.onStageStart(number)
     }
 
@@ -688,15 +800,11 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
     private fun restorePillars() {
         val reach = TartarusPlans.PILLAR_RADIUS + 1
         val all = TartarusPlans.coverPillars()
-        for (pillar in all) {
-            if (pillar in intactPillars) continue
-            val iterator = edits.entries.iterator()
-            while (iterator.hasNext()) {
-                val (pos, state) = iterator.next()
-                if (pos.y <= floor.y) continue
-                if (abs(pos.x - floor.x - pillar.first) > reach || abs(pos.z - floor.z - pillar.second) > reach) continue
-                world.setBlockState(pos, state, Block.NOTIFY_LISTENERS or Block.FORCE_STATE)
-                iterator.remove()
+        val fallen = all.filter { it !in intactPillars }
+        if (fallen.isNotEmpty()) {
+            // Über das Register zurück auf den Bauplan (nur Blöcke über dem Boden, im Kasten der Säule samt Rand).
+            edits.restore { pos ->
+                pos.y > floor.y && fallen.any { abs(pos.x - floor.x - it.first) <= reach && abs(pos.z - floor.z - it.second) <= reach }
             }
         }
         intactPillars.clear()
@@ -752,7 +860,8 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
         boss?.discard()
         kronos?.discard()
         for (player in everyone) send(player)
-        restoreEdits()
+        finishRepair()
+        restoreEdits(true)
         // Nach dem Sieg bleibt der Weg frei; sonst bleibt das Siegel, und man kann es erneut versuchen.
         if (success) sealOpen(true)
         Cine.encounterEnded(this)
@@ -875,6 +984,8 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
     }
 
     private fun intro(): Sequence<Unit> = sequence {
+        // Alte Welt: erst der Saal nach Plan, dann der Auftritt (höchstens REPAIR_WAIT Ticks, dann sofort).
+        awaitRepair()
         val everyone = players()
         Cine.start(everyone)
         Cine.fade(everyone, 0x000000, 1.0, 0.0, 36)
@@ -1407,5 +1518,22 @@ class HadesFight(val world: ServerWorld, val floor: BlockPos, summoner: ServerPl
 
         /** Gebunden sinkt Kronos je Tick so tief ein (vorher 0,13: er verschwand im Boden; jetzt zerfällt er sichtbar). */
         private const val BOUND_SINK = 0.02
+
+        // --- Überarbeitung 4 (P19): Saal als Bauplan, Kern; keine Kampfzahl ---
+
+        /** Auf die Reparatur des Saals wartet der Auftritt höchstens so lange, dann wird sofort fertig repariert. */
+        private const val REPAIR_WAIT = 60
+
+        /** Stimmt die Stichprobe mindestens so gut, wartet die Szene nicht (Reparatur nur im Hintergrund). */
+        private const val REPAIR_SKIP_WAIT = 0.99
+
+        /** [clampToCore]: Abstand zum Kernrand (die Treppen zum Umgang beginnen auf Blockring 37). */
+        const val CORE_MARGIN = 2.0
+
+        /** [clampToCore]: so viel Abstand zum Fuß des Thronpodests. */
+        private const val DAIS_MARGIN = 1.0
+
+        /** [clampToCore]: Rand und Podest abwechselnd so oft (genügt für die Ecke zwischen beiden). */
+        private const val CORE_CLAMP_PASSES = 3
     }
 }

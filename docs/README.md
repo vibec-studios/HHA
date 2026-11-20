@@ -9,9 +9,10 @@ gibt es in [ADDONS.md](../ADDONS.md) im Repo-Root.
 | [Abilities](abilities.md) | Aktive Fähigkeiten auf den HHA-Tasten |
 | [Events](events.md) | Hooks in Ability-Casts, Spieler-Ticks und Targeting |
 | [Config, Lore & HUD](config-und-hud.md) | Eigene Config-Schlüssel, dynamische Lore und Cooldown-HUD-Slots |
-| [Olymp](olymp.md) | Wolkentor, Inselpfad, Hermes, Hekate, Brontes, Kratos und Bia, Zeus, Gegner des Olymp |
+| [Olymp](olymp.md) | Wolkentor, Inselpfad mit Schlachtwegen, Hermes, Hekate, Brontes, Kratos und Bia, Zeus, Gegner des Olymp |
 | [Tartaros](tartaros.md) | Höllentor, Kette der fünf Wächter, Wegweiser, Hades und Kronos |
-| [Bosse allgemein](bosse-allgemein.md) | Skalierung, Deckel, Mace-Abwehr, Reliquien, Befehle, Einstellungen, Effekte, Kamera und Szenen, Aufbau im Code |
+| [Bosse allgemein](bosse-allgemein.md) | Arena (Deckung, Ebenen, Teilziele, Geräte, Wiederherstellung), Skalierung, Deckel, Mace-Abwehr, Reliquien, Befehle, Einstellungen, Effekte, Kamera und Szenen, Aufbau im Code |
+| [Blöcke](bloecke.md) | Die 35 Deko- und Geräte-Blöcke, Steinsäge, Textur-Generator |
 | [Bossfight Hermes](hermes.md) | Weiterleitung auf die drei Seiten oben |
 | [RPG-Modus](rpg.md) | Tunnel-Lobby, Reise und Ankunft, Kapitel, HUD, Tagebuch, Rast und Tod, Befehle, Addon-Wege (`HhaRpg.Path`) |
 

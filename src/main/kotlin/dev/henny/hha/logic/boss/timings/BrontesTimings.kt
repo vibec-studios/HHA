@@ -36,7 +36,7 @@ object BrontesTimings {
     const val CRACK_LENGTH = 18f
     const val CRACK_W = 8
     const val CRACK_DAMAGE = 12f
-    /** Hammer steckt: F 28. */
+    /** Hammer steht nach dem Schlag (ohne Rune): F 28. Nach echtem Fehlschlag steckt er stattdessen ([STUCK_F]). */
     const val HAMMER_F = 28
     /** Breite des Risses (PLAN nennt keine; schmaler als der Hammer). */
     const val CRACK_WIDTH = 2f
@@ -205,6 +205,35 @@ object BrontesTimings {
     const val SWING_WEIGHT = 3
     const val TOSS_WEIGHT = 2
     const val BELLOWS_WEIGHT = 2
+
+    // --- Überarbeitung 4 (P16, PLAN 4.2/4.3): Hammer steckt, Amboss bricht ---
+    /** Hammer steckt nach echtem Fehlschlag: so lange offen (× [dev.henny.hha.entity.boss.DuelBossEntity.OPEN_FACTOR]). */
+    const val STUCK_F = 60
+    /** Zwischen zwei Mal Stecken mindestens so viele Ticks (sonst „steht 28“ wie bisher). */
+    const val STUCK_COOLDOWN = 300
+    /** Bedingung (c): Das Ziel stand beim Treffer mindestens so weit neben der Mittellinie der Hammerlinie … */
+    const val STUCK_MISS_DISTANCE = 2.0
+    /** … und höchstens so weit von ihm weg (er hat wirklich nach ihm geschlagen). */
+    const val STUCK_MAX_RANGE = 14.0
+    /** Splitter beim Herausreißen: roter Ring (Ansage `HEAVY`, endet mit dem Fenster), Radius, Schaden (`LOW`). */
+    const val SPLINTER_W = 16
+    const val SPLINTER_RADIUS = 2.6f
+    const val SPLINTER_DAMAGE = 8f
+    /** Nach dem Herausreißen bis zum Ende der Aktion: derselbe Nachlauf wie heute nach „steht 28“ (56 − 50). */
+    const val STUCK_TAIL = HAMMER_END - HAMMER_STUCK_END
+    /** Animation STUCK (ab dem Treffer): Herausreißen beim Ende des Fensters, Aktion endet [STUCK_TAIL] danach. */
+    const val STUCK_RIP = STUCK_F
+    const val STUCK_END = STUCK_F + STUCK_TAIL
+    /** Der Amboss reißt so oft, dann bricht er (Unterleiste mit so vielen Kerben). */
+    const val ANVIL_CRACKS = 3
+    /** Der Amboss bricht: Brontes taumelt so lange, offen. */
+    const val ANVIL_BREAK_F = 100
+    /** Animation STAGGER (Amboss bricht): Taumel ab dem Treffer, Ende = [ANVIL_BREAK_F]. */
+    const val STAGGER_END = ANVIL_BREAK_F
+    /** Glutwurf: Steht jemand so lange (Ticks) auf einer Essebühne, wirft er bevorzugt auf ihn. */
+    const val STAGE_CAMP_TICKS = 100
+    /** Höhenband der Angriffe, die die Essebühnen erreichen: bis Bühnenhöhe + 3 über dem Kern (PLAN 4.1, Pflicht 3). */
+    const val STAGE_BAND_ABOVE = dev.henny.hha.world.olymp.OlympusArenas.D_STAGE_HEIGHT + 3.0
 
     // --- Textzeilen (Ticks im Bild) ---
     const val LINE_TICKS = 80

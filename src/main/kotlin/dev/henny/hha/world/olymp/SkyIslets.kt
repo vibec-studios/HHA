@@ -1,5 +1,6 @@
 package dev.henny.hha.world.olymp
 
+import dev.henny.hha.HhaDecoBlocks
 import dev.henny.hha.world.Kit
 import dev.henny.hha.world.block
 import net.minecraft.block.Blocks
@@ -105,7 +106,7 @@ object SkyIslets {
         // Zwei Säulen stehen, darüber ein Rest des Architravs; die dritte liegt in Trommeln am Boden.
         for (a in intArrayOf(-4, 0)) {
             val (x, z) = at(a, -1)
-            OlympusPlans.column(c, x, fy, z, 8)
+            OlympKit.column(c, x, fy, z, 8)
         }
         for (a in -5..1) {
             val (x, z) = at(a, -1)
@@ -116,20 +117,21 @@ object SkyIslets {
         val axis = if (alongX) Direction.Axis.X else Direction.Axis.Z
         for (a in 2..5) {
             val (x, z) = at(a, 1)
-            c.block(x, fy, z, Blocks.QUARTZ_PILLAR.defaultState.with(Properties.AXIS, axis))
+            // Überarbeitung 4 (P06): die gestürzten Trommeln aus Olymp-Marmor (Akzent, Erprobung der neuen Blöcke).
+            c.block(x, fy, z, (if (a == 3 || a == 4) HhaDecoBlocks.OLYMPUS_MARBLE_PILLAR else Blocks.QUARTZ_PILLAR).defaultState.with(Properties.AXIS, axis))
             if (a == 3) c.block(x, fy + 1, z, Blocks.MOSS_CARPET.defaultState)
         }
         val (bx, bz) = at(4, -1)
-        OlympusPlans.column(c, bx, fy, bz, 2)
+        OlympKit.column(c, bx, fy, bz, 2)
         c.block(bx, fy + 2, bz, Blocks.MOSS_CARPET.defaultState)
         // Die Truhe unter einem umgestürzten Kapitell.
         val (kx, kz) = at(-2, 1)
         c.chest(kx, fy, kz)
         val (lx, lz) = at(-1, 2)
-        c.block(lx, fy, lz, Blocks.CHISELED_QUARTZ_BLOCK.defaultState)
+        c.block(lx, fy, lz, HhaDecoBlocks.CHISELED_OLYMPUS_MARBLE.defaultState)
         c.block(lx, fy + 1, lz, Blocks.MOSS_CARPET.defaultState)
         val (sx, sz) = at(-5, 2)
-        OlympusPlans.stele(c, sx, fy, sz, 14, if (alongX) Direction.SOUTH else Direction.EAST)
+        OlympKit.stele(c, sx, fy, sz, 14, if (alongX) Direction.SOUTH else Direction.EAST)
         OlympusIsles.cloudSkirt(c, body, 2)
     }
 
@@ -144,7 +146,7 @@ object SkyIslets {
             c.put(x, fy - 1, z, if (d > 5.5) Blocks.QUARTZ_BRICKS.defaultState else if (Kit.noise(x, 1, z) % 5 == 0) Blocks.CALCITE.defaultState else Blocks.POLISHED_DIORITE.defaultState)
             if (d > 5.6 && Kit.noise(x, 2, z) % 4 != 0) c.put(x, fy, z, if (Kit.noise(x, 3, z) % 3 == 0) Blocks.QUARTZ_PILLAR.defaultState else Blocks.SMOOTH_QUARTZ_SLAB.defaultState)
         }
-        for ((ox, oz) in listOf(-2 to -2, 2 to -2, -2 to 2, 2 to 2)) OlympusPlans.slimColumn(c, cx + ox, fy, cz + oz, 5)
+        for ((ox, oz) in listOf(-2 to -2, 2 to -2, -2 to 2, 2 to 2)) OlympKit.slimColumn(c, cx + ox, fy, cz + oz, 5)
         for (x in cx - 3..cx + 3) for (z in cz - 3..cz + 3) {
             val edge = abs(x - cx) == 3 || abs(z - cz) == 3
             c.block(x, fy + 5, z, if (edge) Kit.stair(Blocks.SMOOTH_QUARTZ_STAIRS, Kit.inward(x - cx, z - cz), top = true) else Blocks.SMOOTH_QUARTZ.defaultState)
@@ -152,12 +154,14 @@ object SkyIslets {
         }
         c.block(cx, fy + 4, cz, Kit.lantern(hanging = true, soul = false))
         // Bronzeschilde an zwei Säulen, die Speere der Kureten daneben.
-        for ((ox, oz) in listOf(-2 to -3, 2 to 3)) c.block(cx + ox, fy + 2, cz + oz, Blocks.WAXED_COPPER_BLOCK.defaultState)
-        for (h in 0..2) c.block(cx + 4, fy + h, cz - 1, OlympusPlans.wall(Blocks.DIORITE_WALL, alongX = true, post = true))
+        // Überarbeitung 4 (P06): Schilde aus Olymp-Bronze, in der Mitte der Plattform eine vergoldete Platte.
+        for ((ox, oz) in listOf(-2 to -3, 2 to 3)) c.block(cx + ox, fy + 2, cz + oz, HhaDecoBlocks.OLYMPUS_BRONZE.defaultState)
+        c.block(cx, fy - 1, cz, HhaDecoBlocks.GILDED_OLYMPUS_MARBLE.defaultState)
+        for (h in 0..2) c.block(cx + 4, fy + h, cz - 1, OlympKit.wall(Blocks.DIORITE_WALL, alongX = true, post = true))
         c.block(cx + 4, fy + 3, cz - 1, Blocks.WAXED_LIGHTNING_ROD.defaultState)
-        OlympusPlans.brazier(c, cx - 4, fy, cz + 1)
-        OlympusPlans.herm(c, cx, fy, cz + 5, Direction.SOUTH)
-        OlympusPlans.stele(c, cx + 2, fy, cz + 5, 15, Direction.SOUTH)
+        OlympKit.brazier(c, cx - 4, fy, cz + 1)
+        OlympKit.herm(c, cx, fy, cz + 5, Direction.SOUTH)
+        OlympKit.stele(c, cx + 2, fy, cz + 5, 15, Direction.SOUTH)
         OlympusIsles.cloudSkirt(c, body, 2)
     }
 

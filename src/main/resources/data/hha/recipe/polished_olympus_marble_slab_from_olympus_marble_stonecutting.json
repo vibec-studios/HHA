@@ -1,0 +1,8 @@
+{
+  "type": "minecraft:stonecutting",
+  "ingredient": "hha:olympus_marble",
+  "result": {
+    "count": 2,
+    "id": "hha:polished_olympus_marble_slab"
+  }
+}

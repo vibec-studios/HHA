@@ -12,6 +12,14 @@ import dev.henny.hha.logic.boss.SceneKit
 import dev.henny.hha.logic.boss.BossRewards
 import dev.henny.hha.logic.boss.BossTimings
 import dev.henny.hha.logic.boss.Telegraph
+import dev.henny.hha.logic.boss.Cover
+import dev.henny.hha.logic.boss.SubTarget
+import dev.henny.hha.logic.boss.SubTargetGroup
+import dev.henny.hha.logic.boss.subTargetHandler
+import dev.henny.hha.logic.boss.arena.ArenaDevices
+import dev.henny.hha.logic.boss.sig.GuardianDevices
+import dev.henny.hha.logic.boss.timings.GuardianSigTimings
+import dev.henny.hha.world.TartarusArenas
 import dev.henny.hha.logic.world.TartarosChain
 import dev.henny.hha.logic.world.TartarosMinibosses
 import net.minecraft.block.Blocks
@@ -35,6 +43,7 @@ import net.minecraft.sound.SoundEvent
 import net.minecraft.sound.SoundEvents
 import net.minecraft.text.Text
 import net.minecraft.util.hit.HitResult
+import net.minecraft.util.math.BlockPos
 import net.minecraft.util.math.Vec3d
 import net.minecraft.world.RaycastContext
 import net.minecraft.world.World
@@ -83,6 +92,9 @@ object IxionAction {
     const val SPARKS = 5
     const val FALLEN = 6
     const val RISE = 7
+
+    /** Überarbeitung 4 (P21): Kippen mit Fesseln, [dev.henny.hha.logic.boss.timings.GuardianSigTimings.TILT_TICKS] lang. */
+    const val TILT = 8
 }
 
 /** Aktionen des Tantalos, siehe [WardenAction]. */
@@ -653,7 +665,7 @@ internal object GuardianScenes {
  * - **Rundschlag** (nah, nach dem Heranziehen): Kegel nach vorn.
  * - **Die Laterne** ist die Schwachstelle: Treffer von hinten × 1,5; drei davon bringen ihn ins Taumeln.
  */
-class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: World) : TartarosGuardian(type, world) {
+class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: World) : TartarosGuardian(type, world), GuardianDevices.DeviceUser {
 
     override val kit = MiniBossKit(this, "entity.hha.warden_of_chains", BossBar.Color.WHITE, Vfx.Style.SHADOW)
     override val fightName = "warden"
@@ -688,6 +700,84 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
         super.onReset()
         staggerDue = false
         lanternHits = 0
+        releasePost()
+    }
+
+    // --- Überarbeitung 4 (P21): Kettenpfähle -------------------------------------------------------------------
+
+    /** Pfahl, an dem die Kette gerade hängt (Zustand 1), sonst `null`. */
+    private var hookedPost: BlockPos? = null
+
+    /** Welt-Tick, an dem ein Spieler den Pfahl umgelegt hat (−1 = nicht). */
+    private var postPulledAt = -1L
+
+    /** Rechtsklick auf den goldenen Pfahl: nur der, an dem die Kette hängt, und nur einmal. */
+    override fun onDevice(kind: String, pos: BlockPos, player: ServerPlayerEntity): Boolean {
+        if (kind != GuardianDevices.CHAIN_POST || !isAlive || pos != hookedPost || postPulledAt >= 0L) return false
+        postPulledAt = sw.time
+        return true
+    }
+
+    /** Kette vom Pfahl lösen: ein noch goldener Pfahl geht auf 0 zurück, ein umgelegter bleibt liegen (bis Kampfende). */
+    private fun releasePost() {
+        val pos = hookedPost ?: return
+        hookedPost = null
+        postPulledAt = -1L
+        val world = entityWorld as? ServerWorld ?: return
+        if (ArenaDevices.mode(world, pos) == ArenaDevices.READY) ArenaDevices.setMode(world, pos, ArenaDevices.IDLE)
+    }
+
+    /**
+     * Die Kette hakt am Pfahl [post] ein (PLAN 4.2): Pfahl golden für [GuardianSigTimings.POST_HOOK], er zerrt (Haltung
+     * „gehakt"). Legt ein Teilnehmer den Pfahl um, reißt es ihn [GuardianSigTimings.POST_PULL] Ticks später zu Boden
+     * ([postFall]); sonst löst er die Kette und kämpft weiter. Drei Laternentreffer brechen das ab wie am Pfeiler.
+     */
+    private fun hookOnPost(post: net.minecraft.util.math.BlockPos): Sequence<Unit> = sequence {
+        val sig = GuardianSigTimings
+        val end = Vec3d(post.x + 0.5, post.y + POST_HOOK_UP, post.z + 0.5)
+        hookedPost = post
+        postPulledAt = -1L
+        ArenaDevices.setMode(sw, post, ArenaDevices.READY)
+        kit.act(WardenAction.HOOKED)
+        hint("hha.guardian.hint.post")
+        Vfx.chain(sw, danger, self, end, null, sig.POST_HOOK + sig.POST_PULL)
+        BossFx.play(sw, "warden.tension", danger, end, entity = self, a = sig.POST_HOOK.toFloat(), life = sig.POST_HOOK + TENSION_RELEASE)
+        telegraph.sound(HhaSounds.ARENA_POST, end, 1.4f, 0.8f)
+        if (window(sig.POST_HOOK) { staggerDue || postPulledAt >= 0L }) {
+            if (postPulledAt >= 0L) {
+                // Der Pfahl kippt schon (Zustand 2); er zerrt noch, dann reißt es ihn um.
+                wait(sig.POST_PULL)
+                hookedPost = null
+                yieldAll(postFall(end))
+                return@sequence
+            }
+            releasePost()
+            yieldAll(stagger())
+            return@sequence
+        }
+        releasePost()
+        kit.act(0)
+    }
+
+    /** Der umgelegte Pfahl reißt ihn zu Boden: offen [GuardianSigTimings.POST_OPEN_F], Laterne frei (wie das Taumeln). */
+    private fun postFall(post: Vec3d): Sequence<Unit> = sequence {
+        staggerDue = false
+        lanternHits = 0
+        hold(null)
+        kit.act(WardenAction.STAGGER)
+        BossFx.play(sw, "guardian.post_fall", danger, post, dir = flatNorm(entityPos.subtract(post)), a = flat(post, entityPos).toFloat(), entity = self, life = POST_FALL_FX)
+        telegraph.sound(HhaSounds.IMPACT, entityPos, 2.2f, 0.6f)
+        BossFx.kick(sw, entityPos, KICK_CHOP, ticks = KICK_TICKS, radius = KICK_RADIUS)
+        BossFx.sparks(sw, danger, lantern(), facing().multiply(-1.0).add(0.0, 0.6, 0.0), 10, 0.3f, 18)
+        open(GuardianSigTimings.POST_OPEN_F, OPEN_FACTOR)
+        wait(GuardianSigTimings.POST_OPEN_F)
+        close()
+        kit.act(0)
+    }
+
+    override fun onDefeated() {
+        hookedPost = null
+        super.onDefeated()
     }
 
     /** Kommt der Treffer von hinten (mehr als ~110° aus seiner Blickrichtung)? Dann trifft er die Laterne. */
@@ -719,7 +809,10 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
         hold(dir)
         kit.act(if (double) WardenAction.DOUBLE_CHOP else WardenAction.CHOP)
         val (a, b) = axeLine(dir)
-        val first = telegraph.line(a, b, w.CHOP_WIDTH, w.CHOP_WINDUP, Telegraph.Pace.HEAVY)
+        val firstGroup = telegraph.boss()
+        val first = firstGroup.line(a, b, w.CHOP_WIDTH, w.CHOP_WINDUP, Telegraph.Pace.HEAVY)
+        // P21: Das Beil trifft auch die Hofterrasse; dort zeigt eine zweite Form derselben Gruppe die Linie.
+        arenaOrNull()?.spec?.let { GuardianDevices.echoLine(firstGroup, it, a, b, w.CHOP_WIDTH, first.ticks) }
         telegraph.sound(HhaSounds.CHARGE, entityPos, 2f, 0.55f)
         wait(first.ticks)
         axeFalls(first, dir, kick = if (double) KICK_DOUBLE_1 else KICK_CHOP)
@@ -730,7 +823,9 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
             dir = dirTo(target.entityPos)
             hold(dir)
             val (c, d) = axeLine(dir)
-            val second = telegraph.line(c, d, w.CHOP_WIDTH, w.DOUBLE_CHOP_GAP, Telegraph.Pace.FOLLOW_UP)
+            val secondGroup = telegraph.boss()
+            val second = secondGroup.line(c, d, w.CHOP_WIDTH, w.DOUBLE_CHOP_GAP, Telegraph.Pace.FOLLOW_UP)
+            arenaOrNull()?.spec?.let { GuardianDevices.echoLine(secondGroup, it, c, d, w.CHOP_WIDTH, second.ticks) }
             wait(second.ticks)
             axeFalls(second, dir, kick = KICK_DOUBLE_2)
             stuck = w.DOUBLE_CHOP_STUCK_END - w.DOUBLE_CHOP_SECOND
@@ -771,15 +866,37 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
         hold(dir)
         kit.act(WardenAction.CHAIN)
         // Wie weit die Kette reicht: bis zur ersten Mauer oder Säule, höchstens CHAIN_RANGE.
-        val eye = entityPos.add(0.0, 1.6, 0.0)
+        val arena = arenaOrNull()
+        val spec = arena?.spec
+        // P21: Steht das Ziel auf der Hofterrasse, fliegt die Kette über deren Kante (sie darf es von dort ziehen).
+        val castY = arena?.levelAt(target.entityPos)?.let { (it.floorY + 1.0).coerceAtLeast(y + 1.6) } ?: (y + 1.6)
+        val eye = Vec3d(x, castY, z)
         val far = eye.add(dir.multiply(w.CHAIN_RANGE.toDouble()))
         val hit = sw.raycast(RaycastContext(eye, far, RaycastContext.ShapeType.COLLIDER, RaycastContext.FluidHandling.NONE, self))
         val wall = hit.type == HitResult.Type.BLOCK
         val end = if (wall) hit.pos.subtract(dir.multiply(0.3)) else far
-        val line = telegraph.line(ground(entityPos), ground(end), w.CHAIN_WIDTH, w.CHAIN_WINDUP, Telegraph.Pace.HEAVY)
+        val chainGroup = telegraph.boss()
+        val line = chainGroup.line(ground(entityPos), ground(end), w.CHAIN_WIDTH, w.CHAIN_WINDUP, Telegraph.Pace.HEAVY)
+        if (spec != null) {
+            GuardianDevices.echoLine(chainGroup, spec, ground(entityPos), ground(end), w.CHAIN_WIDTH, line.ticks)
+            // Die Hofpfeiler decken gegen die Kette: goldene Rune an dem, hinter dem gerade jemand steht.
+            Cover.mark(telegraph, spec, TartarusArenas.WARDEN_CHAIN, eye, line.ticks)
+        }
         telegraph.sound(HhaSounds.CHAIN, entityPos, 2f, 0.7f)
         wait(line.ticks)
-        val caught = line.hits(fighters()).minByOrNull { it.squaredDistanceTo(self) }
+        val caught = line.hits(fighters())
+            .filter { spec == null || Cover.shelter(sw, eye, it, spec, TartarusArenas.WARDEN_CHAIN) == null }
+            .minByOrNull { it.squaredDistanceTo(self) }
+        // P21: Verfehlt, und die Linie läuft an einem stehenden Kettenpfahl vorbei → sie hakt dort ein (vor Mauer/Pfeiler).
+        val post = if (caught == null && spec != null) GuardianDevices.postNear(sw, spec, ground(entityPos), ground(end)) else null
+        if (post != null) {
+            val postEnd = Vec3d(post.pos.x + 0.5, post.pos.y + POST_HOOK_UP, post.pos.z + 0.5)
+            Vfx.chain(sw, danger, self, postEnd, null, w.CHAIN_PULL - w.CHAIN_WINDUP + 6)
+            telegraph.sound(SoundEvents.BLOCK_CHAIN_BREAK, entityPos, 2f, 0.6f)
+            wait(w.CHAIN_PULL - w.CHAIN_WINDUP)
+            yieldAll(hookOnPost(post.pos))
+            return@sequence
+        }
         val taut = w.CHAIN_PULL - w.CHAIN_WINDUP
         Vfx.chain(sw, danger, self, caught?.entityPos?.add(0.0, 1.0, 0.0) ?: end, caught, taut + 6)
         telegraph.sound(SoundEvents.BLOCK_CHAIN_BREAK, entityPos, 2f, 0.6f)
@@ -829,6 +946,8 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
         hold(dir)
         kit.act(WardenAction.ROUND)
         val cone = telegraph.cone(ground(entityPos), dir, w.ROUND_RADIUS, w.ROUND_HALF_ANGLE, w.ROUND_WINDUP, Telegraph.Pace.QUICK)
+        // P21: Der Rundschlag geht nur waagerecht über den Hof; die Hofterrasse (+3) ist sicher.
+        arenaOrNull()?.spec?.let { cone.band(it.coreY.toDouble(), above = GuardianSigTimings.ROUND_BAND_ABOVE) }
         telegraph.sound(HhaSounds.WHOOSH, entityPos, 2f, 0.6f)
         wait(cone.ticks)
         val struck = cone.hits(fighters())
@@ -936,6 +1055,10 @@ class WardenOfChainsEntity(type: EntityType<out WardenOfChainsEntity>, world: Wo
         const val CHAIN_SIDE = 1.1
         /** Auftritt: Tick des Brüllens (passend zu `warden.intro`). */
         const val INTRO_ROAR_AT = 88
+        /** P21: Kette endet so hoch über dem Fuß des Pfahls (Krampe mit Kettenring). */
+        const val POST_HOOK_UP = 0.85
+        /** P21: Lebensdauer des Bilds `guardian.post_fall` (Ticks). */
+        const val POST_FALL_FX = 40
 
         fun attributes(): DefaultAttributeContainer.Builder = guardianAttributes()
     }
@@ -993,6 +1116,127 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Tarta
         super.onReset()
         hasRock = true
         staggering = false
+        closeBoulder()
+    }
+
+    override fun onDefeated() {
+        closeBoulder()
+        super.onDefeated()
+    }
+
+    override fun remove(reason: RemovalReason) {
+        if (!entityWorld.isClient) closeBoulder()
+        super.remove(reason)
+    }
+
+    // --- Überarbeitung 4 (P21): den Stein zurückrollen ----------------------------------------------------------
+
+    /** Teilziel des liegenden Felsens (eine Gruppe je Fels; höchstens einer zugleich), sonst `null`. */
+    private var boulder: SubTargetGroup? = null
+
+    /** Welt-Tick des letzten Rücklaufs ([GuardianSigTimings.ROLL_BACK_COOLDOWN]). */
+    private var lastRollBack = Long.MIN_VALUE / 2
+
+    private fun closeBoulder() {
+        boulder?.close()
+        boulder = null
+    }
+
+    /** Wird der eben gelandete Fels zum Teilziel? Nur in der Arena, ohne laufenden Fels und nach der Abklingzeit. */
+    private fun rollBackReady(): Boolean =
+        arenaOrNull()?.spec != null && boulder == null && sw.time - lastRollBack >= GuardianSigTimings.ROLL_BACK_COOLDOWN
+
+    /**
+     * Der Fels liegt (PLAN 4.2): Teilziel mit Wesen an seinem Ort, sofort offen, [GuardianSigTimings.BOULDER_NOTCHES]
+     * Kerben (jeder gezählte Treffer eine). Beim letzten Treffer rollt er nach [rollBack] auf Sisyphos zu; sonst zerfällt
+     * er nach `BOULDER_LIE` wie bisher.
+     */
+    private fun lyingBoulder(rock: ScriptedBolt, spot: Vec3d): Sequence<Unit> = sequence {
+        val sig = GuardianSigTimings
+        var lastHitter: Vec3d? = null
+        var broken = false
+        val group = SubTargetGroup(sw, { fighters() }, subTargetHandler(
+            onHit = { target, source, _ ->
+                lastHitter = (source.attacker ?: source.source)?.entityPos
+                target.maxHealth // genau eine Kerbe: der Deckel begrenzt
+            },
+            onBroken = { broken = true },
+        ))
+        boulder = group
+        val target = group.add("boulder", "hha.guardian.sub.boulder", sig.BOULDER_HEALTH, sig.BOULDER_CAP, sig.BOULDER_NOTCHES)
+        // Das Teilziel zeichnet den Fels selbst (Renderer `sisyphus.boulder`); das Geschoss-Bild geht.
+        rock.discard()
+        val feet = Vec3d(spot.x, floorAt(spot, 3.0), spot.z)
+        target.anchor = feet.add(0.0, ROCK_RADIUS, 0.0)
+        group.spawn(target, feet, "sisyphus.boulder", sig.BOULDER_SIZE)
+        target.open = true
+        hint("hha.guardian.hint.boulder_back")
+        var t = 0
+        while (t < BossTimings.Sisyphus.BOULDER_LIE && !broken && isAlive && boulder === group) {
+            group.tick()
+            yield(Unit)
+            t++
+        }
+        if (!broken || boulder !== group) {
+            // Liegen gelassen: zerfällt wie bisher.
+            if (boulder === group) closeBoulder()
+            Fx.burst(sw, BlockStateParticleEffect(ParticleTypes.BLOCK, Blocks.BLACKSTONE.defaultState), target.anchor ?: feet, 24, 0.9, 0.15)
+            telegraph.sound(SoundEvents.BLOCK_DEEPSLATE_BREAK, feet, 1.4f, 0.7f)
+            return@sequence
+        }
+        group.tick()
+        closeBoulder()
+        lastRollBack = sw.time
+        yieldAll(rollBack(feet, lastHitter))
+    }
+
+    /**
+     * Rücklauf: Richtung vom letzten Schläger weg, höchstens [GuardianSigTimings.ROLL_BACK_TURN] Grad auf Sisyphos zu
+     * gedreht; Ansage [GuardianSigTimings.ROLL_BACK_W] als goldener Kern (Ziel) in einer Gefahr-Linie (der Fels trifft
+     * auch Spieler); dann rollt er mit der Logik des Fluch-Felsens ([roll], trifft Sisyphos → [crushed]). Der Gipfelaltar
+     * deckt: Die Linie endet an ihm.
+     */
+    private fun rollBack(from: Vec3d, hitter: Vec3d?): Sequence<Unit> = sequence {
+        val sig = GuardianSigTimings
+        val s = BossTimings.Sisyphus
+        val toHim = flatNorm(entityPos.subtract(from))
+        val away = if (hitter != null) flatNorm(from.subtract(hitter)) else toHim
+        val dir = turnToward(away, toHim, sig.ROLL_BACK_TURN)
+        val length = (flat(from, entityPos) + sig.ROLL_BACK_OVERSHOOT).coerceAtMost(sig.ROLL_BACK_MAX)
+        val to = boulderEnd(from, from.add(dir.multiply(length)))
+        val group = telegraph.hazard(pace = Telegraph.Pace.HEAVY) ?: telegraph.boss(pace = Telegraph.Pace.HEAVY)
+        val ticks = terrainLine(group, from, to, sig.ROLL_BACK_WIDTH, sig.ROLL_BACK_W)
+        goldLine(group, from, to, sig.ROLL_BACK_GOLD_WIDTH, ticks)
+        markAltar(from, ticks)
+        val travel = ceil(flat(from, to) / s.ROLL_SPEED).toInt()
+        group.hold(ticks + travel + 4)
+        BossFx.play(sw, "guardian.boulder_back", Vfx.Style.GOLD, ground(from), dir = dir, a = flat(from, to).toFloat(), b = ticks.toFloat(), life = ticks + travel + BOULDER_BACK_TAIL)
+        telegraph.sound(HhaSounds.ARENA_CRUMBLE, from, 1.6f, 0.8f)
+        wait(ticks - 1)
+        yieldAll(roll(from, to, BOWL_DAMAGE, cursedRock = true))
+    }
+
+    /** Goldener Kern der Rücklauf-Linie, dem Gelände folgend wie [terrainLine] (sichere Form = Gold = „Ziel“). */
+    private fun goldLine(group: Telegraph.Fight.Group, from: Vec3d, to: Vec3d, width: Float, ticks: Int) {
+        val parts = max(1, ceil(flat(from, to) / 4.0).toInt())
+        var last = ground(from)
+        for (i in 1..parts) {
+            val next = ground(from.lerp(to, i.toDouble() / parts))
+            group.safeLine(last.add(0.0, GOLD_LIFT, 0.0), next.add(0.0, GOLD_LIFT, 0.0), width, ticks)
+            last = next
+        }
+    }
+
+    /** Endpunkt einer Fels-Linie: in der Arena endet sie am Gipfelaltar (Deckung gegen den rollenden Fels). */
+    private fun boulderEnd(from: Vec3d, to: Vec3d): Vec3d {
+        val spec = arenaOrNull()?.spec ?: return to
+        return GuardianDevices.coverEnd(sw, spec, from, to, TartarusArenas.SISYPHUS_BOULDER, ROCK_RADIUS)
+    }
+
+    /** Ansage einer Fels-Linie läuft: goldene Rune am Altar, wenn jemand dahinter gedeckt ist (nur in der Arena). */
+    private fun markAltar(from: Vec3d, ticks: Int) {
+        val spec = arenaOrNull()?.spec ?: return
+        Cover.mark(telegraph, spec, TartarusArenas.SISYPHUS_BOULDER, from.add(0.0, ROCK_RADIUS, 0.0), ticks)
     }
 
     /** Ohne Fels ist er offen (Plan 4.6), ab dem Abwurf und nicht erst, wenn die Erholung beginnt. */
@@ -1044,6 +1288,11 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Tarta
         BossFx.kick(sw, spot, KICK_THROW, ticks = 7, radius = 28f)
         telegraph.sound(SoundEvents.ENTITY_GENERIC_EXPLODE.value(), spot, 1.2f, 0.7f)
         rock.rest()
+        // P21: In der Arena wird der liegende Fels zum Teilziel (drei Schläge → er rollt zurück).
+        if (rollBackReady()) {
+            yieldAll(lyingBoulder(rock, spot))
+            return@sequence
+        }
         // Der Fels bleibt 8 s liegen, dann zerfällt er.
         wait(s.BOULDER_LIE)
         crumble(rock)
@@ -1071,13 +1320,14 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Tarta
         hold(dir)
         kit.act(SisyphusAction.BOWL)
         val from = entityPos.add(dir.multiply(width * 0.5 + 1.0))
-        val to = from.add(dir.multiply(s.BOWL_LENGTH.toDouble()))
+        val to = boulderEnd(from, from.add(dir.multiply(s.BOWL_LENGTH.toDouble())))
         val group = telegraph.boss(pace = Telegraph.Pace.HEAVY)
         val ticks = terrainLine(group, from, to, s.BOWL_WIDTH, s.BOWL_WINDUP)
+        markAltar(from, ticks)
         telegraph.sound(SoundEvents.BLOCK_GRINDSTONE_USE, entityPos, 1.6f, 0.5f)
         wait(ticks)
         hasRock = false
-        launch(roll(from, to, 18f, cursedRock = false))
+        launch(roll(from, to, BOWL_DAMAGE, cursedRock = false))
         wait(s.BOWL_END - s.BOWL_WINDUP)
         yieldAll(regrow())
     }
@@ -1088,6 +1338,8 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Tarta
         hold(dirTo(target.entityPos))
         kit.act(SisyphusAction.STOMP)
         val ring = telegraph.ring(ground(entityPos), s.STOMP_RADIUS, s.STOMP_WINDUP)
+        // P21: Bodenangriff mit Höhenband um den Boden unter ihm (in der Arena); die nächste Windung der Bahn ist sicher.
+        if (arenaOrNull()?.spec != null) ring.band(floorAt(entityPos))
         telegraph.sound(SoundEvents.ENTITY_RAVAGER_STEP, entityPos, 2f, 0.5f)
         wait(ring.ticks)
         val struck = ring.hits(fighters())
@@ -1135,8 +1387,9 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Tarta
             // Steht der Spieler selbst oben, kommt der Fels vom Rand des Gipfels her.
             val start = if (flat(top, target.entityPos) < 6.0) target.entityPos.subtract(dir.multiply(9.0)) else top
             val length = min(s.CURSE_LENGTH.toDouble(), flat(start, target.entityPos) + 10.0)
-            val end = start.add(dir.multiply(length))
+            val end = boulderEnd(start, start.add(dir.multiply(length)))
             val ticks = terrainLine(group, start, end, s.BOWL_WIDTH, s.CURSE_WINDUP)
+            markAltar(start, ticks)
             telegraph.sound(SoundEvents.BLOCK_GRINDSTONE_USE, start, 2f, 0.4f)
             group.hold(ticks + ceil(length / s.ROLL_SPEED).toInt() + 4)
             launch(sequence {
@@ -1298,6 +1551,15 @@ class SisyphusEntity(type: EntityType<out SisyphusEntity>, world: World) : Tarta
         /** Halber Durchmesser des fliegenden Felsens (Knochen `boulder`, Faktor 0,69). */
         private const val ROCK_RADIUS = 0.78
 
+        /** Schaden des rollenden Felsens (unverändert 18; auch der Rücklauf trifft Spieler damit). */
+        private const val BOWL_DAMAGE = 18f
+
+        /** P21: Ausklang des Bilds `guardian.boulder_back` nach dem Rollen (Ticks). */
+        private const val BOULDER_BACK_TAIL = 10
+
+        /** P21: Der goldene Kern liegt knapp über der Gefahr-Linie (gleiche Ebene, sichtbar obenauf). */
+        private const val GOLD_LIFT = 0.02
+
         fun attributes(): DefaultAttributeContainer.Builder = guardianAttributes()
     }
 }
@@ -1410,17 +1672,73 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : TartarosGua
         grounded = false
         tipping = false
         setNoGravity(true)
+        closeFetters()
+    }
+
+    override fun onDefeated() {
+        closeFetters()
+        super.onDefeated()
+    }
+
+    override fun remove(reason: RemovalReason) {
+        if (!entityWorld.isClient) closeFetters()
+        super.remove(reason)
     }
 
     /** Schweben: zieht sich jeden Tick sanft auf die Schwebehöhe über dem Boden. */
     override fun tickBody() {
+        tickFetters()
         if (grounded) return
         val want = floorAt(entityPos, 8.0) + hover
         velocity = Vec3d(velocity.x, ((want - y) * 0.3).coerceIn(-0.35, 0.35), velocity.z)
     }
 
     override fun onDamaged(source: DamageSource, lost: Float, factor: Float) {
-        if (tipping && source.attacker is PlayerEntity) tipHits++
+        if (tipping && source.attacker is PlayerEntity) {
+            tipHits++
+            // P21: Treffer auf ihn zählen zusätzlich an der offenen Fessel (Deckel 50 %: zwei Treffer sprengen sie).
+            openFetter?.let { it.hit(it.maxHealth, source) }
+        }
+    }
+
+    // --- Überarbeitung 4 (P21): die Fesseln als Unterleisten ----------------------------------------------------
+
+    /** Die drei Fesseln (Teilziele ohne Wesen); nur in der Arena, sonst `null` (alte Zählung über [tipHits]). */
+    private var fetters: SubTargetGroup? = null
+
+    /** Die Fessel, die gerade golden ist (Rad kippt), sonst `null`. */
+    private var openFetter: SubTarget? = null
+
+    /** Fesseln anlegen, sobald er in seiner Arena kämpft (nach dem Auftritt); jeden Tick abgleichen. */
+    private fun tickFetters() {
+        if (fetters == null) {
+            if (arenaOrNull()?.spec == null || cinematics.playing) return
+            val crowd = fighters()
+            if (crowd.isEmpty()) return
+            val sig = GuardianSigTimings
+            val group = SubTargetGroup(sw, { fighters() }, subTargetHandler(onBroken = { fetterBroken(it) }))
+            group.theme = MiniBossKit.BAR_STYLE_THEMES + danger.ordinal
+            for (i in 1..sig.FETTERS) group.add("fetter_$i", "hha.guardian.sub.fetter_$i", sig.FETTER_HEALTH, sig.FETTER_CAP, sig.FETTER_NOTCHES)
+            fetters = group
+            looseFetters = 0
+        }
+        fetters?.let { group ->
+            for (f in group.all) f.anchor = entityPos.add(0.0, WHEEL_HEIGHT, 0.0)
+            group.tick()
+        }
+    }
+
+    private fun fetterBroken(target: SubTarget) {
+        looseFetters = fetters?.all?.count { it.broken } ?: (looseFetters + 1)
+        BossFx.play(sw, "guardian.fetter_break", danger, entityPos.add(0.0, WHEEL_HEIGHT, 0.0), entity = self, a = looseFetters.toFloat(), life = FETTER_FX)
+        telegraph.sound(HhaSounds.ARENA_FETTER, entityPos, 2.2f, 0.7f)
+        if (openFetter === target) openFetter = null
+    }
+
+    private fun closeFetters() {
+        openFetter = null
+        fetters?.close()
+        fetters = null
     }
 
     /** Feuerrad: Linie quer über die Plattform, er rollt sie entlang, die Spur brennt nach; dann kippt das Rad. */
@@ -1518,8 +1836,11 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : TartarosGua
                 }
             }
             if (t % ix.FIRE_TICK == 0) {
+                // P21: Höhenband der Spur in der Arena (die Randstufe +1 ist sicher), sonst wie bisher.
+                val bandTop = arenaOrNull()?.spec?.let { it.coreY + GuardianSigTimings.TRAIL_BAND_ABOVE }
                 for (player in fighters()) {
                     if (abs(player.y - from.y) > 1.6) continue
+                    if (bandTop != null && player.y > bandTop) continue
                     if (!Telegraph.inLine(player.entityPos, from, to, ix.ROLL_WIDTH.toDouble(), player.width * 0.5)) continue
                     hit(player, 3f, BossDefense.Reach.BODY, from.y)
                     player.setOnFireFor(1f)
@@ -1529,18 +1850,30 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : TartarosGua
         }
     }
 
-    /** Das Rad kippt wie eine auslaufende Münze (F 30). Ein genutztes Fenster lockert eine Fessel. */
+    /**
+     * Das Rad kippt wie eine auslaufende Münze (F 30). Ein genutztes Fenster lockert eine Fessel.
+     * P21 (in der Arena): Es kippt [GuardianSigTimings.TILT_TICKS], die nächste heile Fessel ist golden und nimmt Treffer
+     * (zusätzlich zum Schaden an ihm, × 1,0); nach drei gesprengten Fesseln stürzt er wie bisher.
+     */
     private fun wobble(): Sequence<Unit> = sequence {
         val ix = BossTimings.Ixion
-        kit.act(IxionAction.WOBBLE)
+        val group = fetters
+        val fetter = group?.all?.firstOrNull { !it.broken }
+        val window = if (group != null) GuardianSigTimings.TILT_TICKS else ix.WOBBLE_WINDOW
+        kit.act(if (group != null) IxionAction.TILT else IxionAction.WOBBLE)
         hint("hha.guardian.hint.wheel")
+        if (fetter != null) hint("hha.guardian.hint.fetter")
         tipping = true
         tipHits = 0
-        open(ix.WOBBLE_WINDOW, 1f)
-        wait(ix.WOBBLE_WINDOW)
+        openFetter = fetter
+        fetter?.open = true
+        open(window, 1f)
+        wait(window)
         tipping = false
+        fetter?.open = false
+        openFetter = null
         close()
-        if (tipHits > 0) {
+        if (group == null && tipHits > 0) {
             looseFetters = looseFetters + 1
             telegraph.sound(SoundEvents.BLOCK_CHAIN_BREAK, entityPos, 2.4f, 0.5f)
         }
@@ -1572,6 +1905,8 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : TartarosGua
         close()
         kit.act(IxionAction.RISE)
         looseFetters = 0
+        // P21: neue Fesseln (heile Leisten), sobald er wieder auf dem Rad ist.
+        closeFetters()
         grounded = false
         setNoGravity(true)
         hover = ix.HOVER
@@ -1609,6 +1944,10 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : TartarosGua
             group.line(a, b, ix.SPOKES_WIDTH, ix.SPOKES_WINDUP)
         }
         telegraph.sound(SoundEvents.ENTITY_BLAZE_BURN, entityPos, 2f, 0.6f)
+        // P21: Die Prellsteine decken gegen das Speichenfeuer (Sichtlinie von der Nabe); Rune während der Ansage.
+        val spec = arenaOrNull()?.spec
+        val source = hub.add(0.0, GuardianSigTimings.SPOKES_EYE, 0.0)
+        if (spec != null) Cover.mark(telegraph, spec, TartarusArenas.IXION_SPOKES, source, group.ticks)
         wait(group.ticks)
         // Die Strahlen drehen von oben gesehen im Uhrzeigersinn, wie das Rad im Modell (Anfrage ixion.md).
         // Überarbeitung 3: ein stetig drehendes Bild statt Strahlen alle 3 Ticks (kein Blinken). Der Client rechnet
@@ -1628,6 +1967,7 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : TartarosGua
                     Telegraph.inLine(player.entityPos, a, b, ix.SPOKES_WIDTH.toDouble(), player.width * 0.5)
                 }
                 if (!inBeam) continue
+                if (spec != null && Cover.shelter(sw, source, player, spec, TartarusArenas.IXION_SPOKES) != null) continue
                 lastHit[player.uuid] = sw.time
                 hit(player, 8f, BossDefense.Reach.BODY, hub.y)
                 player.setOnFireFor(2f)
@@ -1718,6 +2058,8 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : TartarosGua
         // --- Darstellung (Überarbeitung 3, P14; keine Kampfzahl) ---
         /** Mitte des Rads über seinen Füßen (Blöcke, Modell: Durchmesser 3,2). */
         const val WHEEL_HEIGHT = 1.7
+        /** P21: Lebensdauer des Bilds `guardian.fetter_break` (Ticks). */
+        const val FETTER_FX = 36
         const val FALLEN_DRIP_RADIUS = 2.4f
         const val FALLEN_DRIPS = 12
         const val KICK_FALLEN = 1.5f
@@ -1750,7 +2092,7 @@ class IxionEntity(type: EntityType<out IxionEntity>, world: World) : TartarosGua
  * - **Der Durst:** Bei 66 % und 33 % kniet er und trinkt (heilt). 30 Schaden in dieser Zeit schlagen ihm den Kelch aus
  *   der Hand: Das Wasser weicht zurück, er taumelt (× 1,5).
  */
-class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : TartarosGuardian(type, world) {
+class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : TartarosGuardian(type, world), GuardianDevices.DeviceUser {
 
     override val kit = MiniBossKit(this, "entity.hha.tantalus", BossBar.Color.BLUE, Vfx.Style.SOUL)
     override val fightName = "tantalus"
@@ -1784,6 +2126,48 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Tarta
         super.onReset()
         drinking = false
         clearHaze()
+        // P21: Leine – offene Schleuse zu, Wasser zurück (das Kampfende stellt beides über den Bauplan her).
+        openSluice = null
+        sluiceClosedAt = -1L
+        arenaOrNull()?.let {
+            GuardianDevices.resetDevices(it, GuardianDevices.SLUICE_WHEEL, keepSpent = true)
+            GuardianDevices.restoreWater(it)
+        }
+    }
+
+    // --- Überarbeitung 4 (P21): die Schleusen -------------------------------------------------------------------
+
+    /** Schleuse, die er beim Trinken geöffnet hat (Zustand 1), sonst `null`. */
+    private var openSluice: BlockPos? = null
+
+    /** Welt-Tick, an dem ein Spieler sie geschlossen hat (−1 = nicht). */
+    private var sluiceClosedAt = -1L
+
+    /** Rechtsklick auf das goldene Schleusenrad: nur die offene, nur während er trinkt, nur einmal. */
+    override fun onDevice(kind: String, pos: BlockPos, player: ServerPlayerEntity): Boolean {
+        if (kind != GuardianDevices.SLUICE_WHEEL || !isAlive || !drinking || pos != openSluice || sluiceClosedAt >= 0L) return false
+        sluiceClosedAt = sw.time
+        return true
+    }
+
+    /** Beim Trinken: Wasser vom letzten Mal zurück, die nächste Schleuse öffnet sich (golden, Wasser in der Rinne). */
+    private fun openNearestSluice(): BlockPos? {
+        val arena = arenaOrNull() ?: return null
+        val spec = arena.spec ?: return null
+        GuardianDevices.restoreWater(arena)
+        val spot = GuardianDevices.nearestSluice(sw, spec, entityPos) ?: return null
+        ArenaDevices.setMode(sw, spot.pos, ArenaDevices.READY)
+        val wheel = GuardianDevices.center(spot)
+        BossFx.play(sw, "guardian.sluice", danger, wheel, dir = flatNorm(spec.centerVec.subtract(wheel)), a = (flat(wheel, spec.centerVec) - TartarusArenas.TANTALUS_LEDGE_INNER + SLUICE_INTO_BASIN).toFloat(), life = BossTimings.Tantalus.DRINK + GuardianSigTimings.SLUICE_TURN)
+        hint("hha.guardian.hint.sluice")
+        return spot.pos
+    }
+
+    /** Nach dem Trinken: eine noch goldene Schleuse schließt sich wieder (ohne Wirkung). */
+    private fun settleSluice() {
+        val pos = openSluice ?: return
+        openSluice = null
+        if (ArenaDevices.mode(sw, pos) == ArenaDevices.READY) ArenaDevices.setMode(sw, pos, ArenaDevices.IDLE)
     }
 
     override fun onDefeated() {
@@ -1814,12 +2198,16 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Tarta
             if (n > 0) dir = turnToward(dir, dirTo(target.entityPos), t.THRUST_MAX_TURN.toDouble())
             hold(dir)
             val from = ground(entityPos)
-            val to = ground(entityPos.add(dir.multiply(t.THRUST_LENGTH.toDouble())))
+            var to = ground(entityPos.add(dir.multiply(t.THRUST_LENGTH.toDouble())))
+            // P21: Der Dreizack endet an Baumstamm und Felssäulen (Deckung aus dem Vertrag).
+            val spec = arenaOrNull()?.spec
+            if (spec != null) to = GuardianDevices.coverEnd(sw, spec, from, to, TartarusArenas.TANTALUS_TRIDENT, GuardianSigTimings.TRIDENT_EYE)
             val line = if (n == 0) {
                 telegraph.line(from, to, t.THRUST_WIDTH, t.THRUST_WINDUP, Telegraph.Pace.QUICK)
             } else {
                 telegraph.line(from, to, t.THRUST_WIDTH, t.THRUST_GAP, Telegraph.Pace.FOLLOW_UP)
             }
+            if (spec != null) Cover.mark(telegraph, spec, TartarusArenas.TANTALUS_TRIDENT, from.add(0.0, GuardianSigTimings.TRIDENT_EYE, 0.0), line.ticks)
             if (n == 0) telegraph.sound(HhaSounds.CHARGE, entityPos, 1.8f, 0.9f)
             wait(line.ticks)
             for (player in line.hits(fighters())) {
@@ -1877,6 +2265,9 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Tarta
         kit.act(TantalusAction.WAVE)
         val center = ground(entityPos.add(facing().multiply(1.0)))
         val ring = telegraph.ring(center, t.WAVE_RADIUS, t.WAVE_WINDUP)
+        // P21: Höhenband der Beckenfläche (Absatz); wer auf dem Rand (+1) steht, lässt die Welle unter sich laufen.
+        val floor = arenaOrNull()?.spec?.coreY?.toDouble()
+        if (floor != null) ring.band(floor)
         telegraph.sound(SoundEvents.AMBIENT_UNDERWATER_ENTER, entityPos, 2f, 0.5f)
         wait(ring.ticks)
         // Der eine Flächeneffekt: eine niedrige Wasserwand läuft als Ring nach außen, genau so schnell wie die
@@ -1894,7 +2285,7 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Tarta
                 passed.add(player.uuid)
                 if (airborne(player) || abs(player.y - center.y) > 2.0) continue
                 // Flutwelle: zum Überspringen (LOW), wie die Prüfung darüber.
-                if (!hit(player, 10f, BossDefense.Reach.LOW, center.y)) continue
+                if (!hit(player, 10f, BossDefense.Reach.LOW, floor ?: center.y)) continue
                 anyHit = true
                 knock(player, player.entityPos.subtract(center), 0.9, 0.4)
             }
@@ -1918,16 +2309,36 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Tarta
         drinking = true
         spilled = 0f
         var knocked = false
-        for (tick in 1..t.DRINK) {
+        // P21: In der Arena öffnet er die nächste Schleuse; schließt ein Spieler sie, bricht das Trinken nach SLUICE_TURN ab.
+        sluiceClosedAt = -1L
+        openSluice = openNearestSluice()
+        var bySluice = false
+        var tick = 0
+        while (tick < t.DRINK || sluiceClosedAt >= 0L) {
+            tick++
             // [spilled] zählt Leistenpunkte; × Zähigkeit = effektiver Schaden (Kettenbonus über 1024, Review R2 m2).
             if (spilled * toughness() >= SPILL) {
                 knocked = true
                 break
             }
-            if (tick > t.DRINK_KNEEL && tick % t.DRINK_HEAL_TICK == 0) heal(maxHealth * HEAL_SHARE)
+            if (sluiceClosedAt >= 0L && sw.time - sluiceClosedAt >= GuardianSigTimings.SLUICE_TURN) {
+                knocked = true
+                bySluice = true
+                break
+            }
+            if (tick <= t.DRINK && tick > t.DRINK_KNEEL && tick % t.DRINK_HEAL_TICK == 0) heal(maxHealth * HEAL_SHARE)
             yield(Unit)
         }
         drinking = false
+        sluiceClosedAt = -1L
+        if (bySluice) {
+            // Die Schleuse ist zu: Sein Wasser versiegt, die oberste Lage des Innenbeckens sinkt (bis zum nächsten Trinken).
+            openSluice = null
+            arenaOrNull()?.let { launch(GuardianDevices.drainWater(it)) }
+            telegraph.sound(HhaSounds.ARENA_SLUICE, entityPos, 2f, 0.7f)
+        } else {
+            settleSluice()
+        }
         if (knocked) {
             // Direkt PARCHED, ohne 0 dazwischen (Anfrage tantalus.md). Das Wasser weicht zurück.
             kit.act(TantalusAction.PARCHED)
@@ -1937,8 +2348,9 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Tarta
             BossFx.play(sw, "tantalus.ebb", danger, ground(entityPos), a = EBB_RADIUS, b = 1f, life = EBB_RECEDE, entity = self)
             BossFx.screen(sw, BossFx.Screen.HEAT_HAZE, danger, entityPos.add(0.0, 1.5, 0.0), HAZE_RADIUS, HAZE_STRENGTH, t.PARCHED, follow = self)
             hazeActive = true
-            open(t.PARCHED, OPEN_FACTOR)
-            wait(t.PARCHED)
+            val window = if (bySluice) GuardianSigTimings.SLUICE_OPEN_F else t.PARCHED
+            open(window, OPEN_FACTOR)
+            wait(window)
             hazeActive = false
             close()
             kit.act(0)
@@ -1993,6 +2405,9 @@ class TantalusEntity(type: EntityType<out TantalusEntity>, world: World) : Tarta
         const val INTRO_REACH_AT = 20
         const val INTRO_RECEDE_AT = 50
         const val INTRO_RAGE_AT = 86
+
+        /** P21: Das Wasserbild der Schleuse reicht so weit über den Rand des Innenbeckens hinein (Blöcke). */
+        const val SLUICE_INTO_BASIN = 1.0
 
         /** Bei diesen Lebensanteilen trinkt er. */
         private val THIRST = floatArrayOf(0.66f, 0.33f)

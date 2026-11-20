@@ -9,6 +9,7 @@ import dev.henny.hha.logic.FactionLock
 import dev.henny.hha.logic.PassiveEffects
 import dev.henny.hha.net.HhaNetworking
 import net.fabricmc.api.ModInitializer
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents
 import net.minecraft.util.Identifier
 import org.slf4j.LoggerFactory
@@ -18,7 +19,10 @@ class Hha : ModInitializer {
     override fun onInitialize() {
         HhaSounds.init()
         HhaBlocks.init()
+        // Überarbeitung 4 (P00): Deko- und Geräte-Blöcke, danach ihre BlockItems und der Tab „H&H Welt“.
+        HhaDecoBlocks.init()
         HhaItems.init()
+        HhaDecoBlocks.registerItems()
         dev.henny.hha.world.HhaWorldgen.init()
         HhaEntities.init()
         HhaParticles.init()
@@ -41,6 +45,23 @@ class Hha : ModInitializer {
         dev.henny.hha.logic.boss.HermesFights.init()
         // Überarbeitung 2: Arenen der neuen Bosse, Bewohner des Olymp (Gerüst für P11).
         dev.henny.hha.logic.boss.Arenas.init()
+        // Überarbeitung 4 (P00): Baupläne der Arenen, Edit-Register (Absturz-Sicherung), Nachrüstung, Geräte, Wege,
+        // Signatur-Mechaniken der Kämpfe und Prüfbefehle. Die Rümpfe füllen P02–P06 und P14–P22.
+        dev.henny.hha.world.arena.ArenaPlans.init()
+        ServerLifecycleEvents.SERVER_STARTED.register { server -> dev.henny.hha.logic.boss.arena.ArenaEdits.recover(server) }
+        dev.henny.hha.logic.world.WorldRetrofit.init()
+        dev.henny.hha.logic.boss.arena.ArenaDevices.init()
+        dev.henny.hha.logic.world.Approach.init()
+        dev.henny.hha.logic.boss.sig.HermesBells.init()
+        dev.henny.hha.logic.boss.sig.HekateDarkHour.init()
+        dev.henny.hha.logic.boss.sig.BrontesAnvil.init()
+        dev.henny.hha.logic.boss.sig.BiaTarget.init()
+        dev.henny.hha.logic.boss.sig.ZeusIsland.init()
+        dev.henny.hha.logic.boss.sig.HadesFetters.init()
+        dev.henny.hha.logic.boss.sig.KronosStasis.init()
+        dev.henny.hha.logic.boss.sig.GuardianDevices.init()
+        dev.henny.hha.logic.boss.sig.KampeShackles.init()
+        dev.henny.hha.config.Overhaul4Commands.init()
         dev.henny.hha.logic.world.OlympusLife.init()
         // Wolkentor: Zünden mit dem Wassereimer, Sturz vom Olymp, Übergänge, Nachholen des Höllentors (P03).
         dev.henny.hha.logic.world.OlympusGate.init()

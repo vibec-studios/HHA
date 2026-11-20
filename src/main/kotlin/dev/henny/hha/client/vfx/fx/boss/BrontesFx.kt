@@ -49,6 +49,9 @@ import kotlin.math.sin
  * | `brontes.grates` | Roste (Phase II) | pos Mitte, a außen, b innen, c Ansage, d Brand, extra Sektoren `0,2,4` | Glut unter den Gittern, wächst unter der Ansage |
  * | `brontes.ring` | Glutring des Keils, `impact` | pos Mitte, a Radius, b Laufzeit | niedrige Flammenwand an der Front + Bodenwelle |
  * | `brontes.wedge` | Keil-Einschlag, `impact` | pos Ziel, a Radius | Glutsäule, Stoßring, Brandfleck, Funken |
+ * | `brontes.stuck` | Hammer steckt (Ü4, P16) | pos Hammerkopf, dir Schlag, a Splitter-Radius, life Fenster | ruhiger Staubschleier, vier atmende Glutadern im Boden |
+ * | `brontes.anvil_crack` | Riss im Amboss (Ü4, P16) | pos Ambossoberkante, a Zahl der Risse | glühender Sprung über die Oberkante, Staubstoß, wenige Funken |
+ * | `brontes.anvil_break` | Amboss bricht (Ü4, P16), `impact` | pos frühere Oberkante, a Trümmer-Radius | Stoßring am Stumpf, dichter Staub, Funken, Glutfleck auf den Trümmern |
  * | Esse (`FxAttach`) | – | aus dem Wesen (Leben, Phase) | Glutschein und aufsteigende Funken an der Esse |
  */
 object BrontesFx {
@@ -70,8 +73,19 @@ object BrontesFx {
         FxRegistry.register(GRATES) { BrontesGratesFx(it) }
         FxRegistry.register(RING) { BrontesForgeRingFx(it) }
         FxRegistry.register(WEDGE) { BrontesWedgeImpactFx(it) }
+        FxRegistry.register(STUCK) { BrontesStuckFx(it) }
+        FxRegistry.register(ANVIL_CRACK) { BrontesAnvilCrackFx(it, broken = false) }
+        FxRegistry.register(ANVIL_BREAK) { BrontesAnvilCrackFx(it, broken = true) }
         FxAttach.register(HhaEntities.BRONTES) { BrontesForgeGlowFx(it) }
     }
+
+    // --- Überarbeitung 4 (P16): Hammer steckt, Amboss bricht -------------------------------------------------------
+    /** Hammer steckt: pos Hammerkopf am Boden, dir Schlag, a Splitter-Radius, life Fenster. */
+    const val STUCK = "brontes.stuck"
+    /** Riss im Amboss: pos Mitte der Ambossoberkante, a Zahl der Risse (1, 2). */
+    const val ANVIL_CRACK = "brontes.anvil_crack"
+    /** Amboss bricht: pos Mitte der (früheren) Oberkante, a Trümmer-Radius, `impact`. */
+    const val ANVIL_BREAK = "brontes.anvil_break"
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -619,6 +633,172 @@ private class BrontesWedgeImpactFx(args: FxArgs) : FxEffect(args.life.coerceAtLe
         const val SPARK_SPAN = 22f
         const val FLASH_TICKS = 6f
         const val FLASH_SIZE = 3f
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// brontes.stuck (Überarbeitung 4, P16)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * Der Hammer steckt im Boden: Um den Kopf liegt ein ruhiger Staubschleier, der langsam aufsteigt, und vier kurze
+ * Glutadern laufen aus dem Einschlag in den Boden (CRACK-Band, wachsen in [GROW] Ticks, atmen mit [BREATH] ≤ 0,5 Hz).
+ * Keine Funken, kein Blitz: Das Fenster zeigt die goldene Rune des Servers; die Glut sagt nur „hier steckt er“. Die
+ * letzten [FADE] Ticks verblassen die Adern (das Herausreißen bringt Server-Trümmer und Funken).
+ */
+private class BrontesStuckFx(args: FxArgs) : FxEffect(args.life.coerceAtLeast(MIN_LIFE)) {
+    private val pal = args.palette
+    private val seed = args.seed.toInt()
+    private val at = Vec3d(args.pos.x, ground(args.world, args.pos) + 0.03, args.pos.z)
+    private val forward = flatDir(args.dir)
+    private val radius = args.a.coerceIn(1f, 4f)
+    private val veins: List<List<Vec3d>> = Random(args.seed).let { rnd ->
+        List(VEINS) { i ->
+            // Je Ader ein leicht gezackter Weg, gleichmäßig verteilt, leicht gegen die Schlagrichtung gedreht.
+            val base = Math.atan2(forward.z, forward.x) + i * (2.0 * PI / VEINS) + (rnd.nextDouble() - 0.5) * 0.5
+            val length = radius * (VEIN_MIN + rnd.nextFloat() * VEIN_RANGE)
+            List(VEIN_POINTS) { k ->
+                val u = k / (VEIN_POINTS - 1.0)
+                val wobble = (rnd.nextDouble() - 0.5) * 0.35 * u
+                val a = base + wobble
+                at.add(cos(a) * length * u, 0.02, sin(a) * length * u)
+            }
+        }
+    }
+
+    override fun energy(f: FxFrame) {
+        val t = time(f)
+        val grow = Ease.outCubic(t / GROW)
+        val end = 1f - smooth(life - FADE, life.toFloat(), t)
+        val breathe = 0.8f + 0.2f * sin(t * BREATH)
+        val heat = grow * end * breathe
+        for ((i, vein) in veins.withIndex()) {
+            val n = (vein.size * grow).toInt().coerceIn(2, vein.size)
+            FxDraw.strip(f, vein.subList(0, n), UP, width = { u -> VEIN_WIDTH * (1f - 0.6f * u) },
+                color = { u -> alpha(mix(pal.core, pal.main, u), VEIN_ALPHA * heat * (1f - 0.5f * u)) }, mode = FxMode.CRACK, seed = seed + i, progress = heat)
+        }
+        FxDraw.flat(f, at.add(0.0, 0.01, 0.0), UP, radius * HEAT_SCALE, alpha(pal.main, HEAT_ALPHA * heat), FxMode.GLOW, seed = seed + 7)
+        // Staubschleier: hebt sich langsam, wird dünner.
+        val kd = (t / life).coerceIn(0f, 1f)
+        FxDraw.flat(f, at.add(0.0, 0.15 + DUST_LIFT * kd, 0.0), UP, radius * (0.7f + 0.3f * kd), alpha(DUST, DUST_ALPHA * (1f - kd) * end),
+            FxMode.DUST, progress = 0.6f * (1f - kd), seed = seed + 9)
+    }
+
+    companion object {
+        const val MIN_LIFE = 30
+        const val VEINS = 4
+        const val VEIN_POINTS = 6
+        const val VEIN_MIN = 0.55f
+        const val VEIN_RANGE = 0.35f
+        const val VEIN_WIDTH = 0.16f
+        const val VEIN_ALPHA = 0.75f
+        const val GROW = 8f
+        const val FADE = 12f
+        const val BREATH = 0.15f
+        const val HEAT_SCALE = 0.45f
+        const val HEAT_ALPHA = 0.3f
+        const val DUST_LIFT = 0.9
+        const val DUST_ALPHA = 0.3f
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// brontes.anvil_crack / brontes.anvil_break (Überarbeitung 4, P16)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * Riss im Amboss: Über die Oberkante läuft ein glühender Sprung (CRACK-Band, je Riss einer mehr), dazu ein kurzer
+ * Staubstoß und ein schwacher Kernschein (kubisch). Die Blöcke selbst wechseln am Server (`ember_basalt` in den Fugen),
+ * darum klingt die Glut hier in [HEAT_TICKS] ab. **Bruch** ([broken]): Stoßring am Boden um den Stumpf, dichter
+ * Staub, Funken nach oben, ein Glutfleck auf den Trümmern, der langsam abkühlt.
+ */
+private class BrontesAnvilCrackFx(args: FxArgs, private val broken: Boolean) : FxEffect(args.life.coerceAtLeast(MIN_LIFE)) {
+    private val pal = args.palette
+    private val seed = args.seed.toInt()
+    private val top = args.pos
+    private val floor = Vec3d(args.pos.x, args.pos.y - BREAK_DROP, args.pos.z)
+    private val count = if (broken) 0 else args.a.toInt().coerceIn(1, 2)
+    private val radius = if (broken) args.a.coerceIn(1f, 4f) else 1.5f
+    private val sparks = if (broken) SparkSet(BREAK_SPARKS, BREAK_SPARK_SPEED, UP, args.seed) else SparkSet(CRACK_SPARKS, CRACK_SPARK_SPEED, UP, args.seed)
+    private val lines: List<List<Vec3d>> = Random(args.seed).let { rnd ->
+        List(count) { i ->
+            // Quer über die 3 × 3-Oberkante, je Riss in anderer Richtung, leicht gezackt.
+            val a = (i * 0.9 + rnd.nextDouble() * 0.6) * PI
+            val dx = cos(a)
+            val dz = sin(a)
+            List(CRACK_POINTS) { k ->
+                val u = k / (CRACK_POINTS - 1.0) * 2.0 - 1.0
+                val side = (rnd.nextDouble() - 0.5) * 0.3
+                top.add(dx * u * CRACK_HALF - dz * side, 0.03, dz * u * CRACK_HALF + dx * side)
+            }
+        }
+    }
+
+    override fun energy(f: FxFrame) {
+        val t = time(f)
+        val end = 1f - smooth(life - END_FADE, life.toFloat(), t)
+        val heat = (1f - t / HEAT_TICKS).coerceIn(0f, 1f)
+        for ((i, line) in lines.withIndex()) {
+            val n = (line.size * Ease.outCubic(t / CRACK_GROW)).toInt().coerceIn(2, line.size)
+            FxDraw.strip(f, line.subList(0, n), UP, width = { u -> CRACK_WIDTH * (1f - 0.5f * kotlin.math.abs(u * 2f - 1f)) },
+                color = { alpha(mix(pal.main, pal.core, heat), CRACK_ALPHA * (0.35f + 0.65f * heat) * end) }, mode = FxMode.CRACK, seed = seed + i,
+                progress = 0.4f + 0.6f * heat)
+        }
+        val base = if (broken) floor else top
+        if (broken) {
+            val kr = (t / RING_TICKS).coerceIn(0f, 1f)
+            if (kr < 1f) {
+                FxDraw.flat(f, floor.add(0.0, 0.03, 0.0), UP, radius * (0.4f + 0.6f * Ease.outCubic(kr)), alpha(pal.main, RING_ALPHA * (1f - kr) * (1f - kr)),
+                    FxMode.SHOCK, inner = RING_WIDTH, seed = seed + 5)
+            }
+            FxDraw.flat(f, floor.add(0.0, 0.52, 0.0), UP, POOL_RADIUS, alpha(mix(pal.edge, pal.main, heat), POOL_ALPHA * (0.4f + 0.6f * heat) * end),
+                FxMode.GLOW, seed = seed + 6)
+        }
+        val kd = (t / DUST_TICKS).coerceIn(0f, 1f)
+        if (kd < 1f) {
+            val size = if (broken) radius * 1.2f else 1.6f
+            FxDraw.flat(f, base.add(0.0, 0.2 + DUST_LIFT * Ease.bump(kd), 0.0), UP, size * (0.6f + 0.5f * Ease.outQuad(kd)),
+                alpha(DUST, (if (broken) BREAK_DUST_ALPHA else DUST_ALPHA) * (1f - kd).pow(1.5f)), FxMode.DUST, progress = 0.8f * (1f - kd), seed = seed + 1)
+        }
+        sparks.draw(f, base.add(0.0, 0.3, 0.0), t, SPARK_SPAN, end, pal)
+    }
+
+    override fun over(f: FxFrame) {
+        val k = (1f - time(f) / FLASH_TICKS).coerceIn(0f, 1f)
+        if (k <= 0f) return
+        val size = if (broken) BREAK_FLASH else CRACK_FLASH
+        FxDraw.glow(f, (if (broken) floor else top).add(0.0, 0.5, 0.0), size * (0.6f + 0.4f * k), alpha(pal.core, FLASH_ALPHA * k * k * k), seed)
+    }
+
+    companion object {
+        const val MIN_LIFE = 30
+        /** Oberkante → Boden des Ambosses (2 hoch). */
+        const val BREAK_DROP = 2.0
+        const val CRACK_POINTS = 7
+        const val CRACK_HALF = 1.35
+        const val CRACK_WIDTH = 0.14f
+        const val CRACK_ALPHA = 0.85f
+        const val CRACK_GROW = 5f
+        const val HEAT_TICKS = 28f
+        const val END_FADE = 10f
+        const val RING_TICKS = 10f
+        const val RING_WIDTH = 0.9f
+        const val RING_ALPHA = 0.65f
+        const val POOL_RADIUS = 1.6f
+        const val POOL_ALPHA = 0.35f
+        const val DUST_TICKS = 30f
+        const val DUST_LIFT = 0.6
+        const val DUST_ALPHA = 0.3f
+        const val BREAK_DUST_ALPHA = 0.45f
+        const val CRACK_SPARKS = 5
+        const val CRACK_SPARK_SPEED = 0.3f
+        const val BREAK_SPARKS = 12
+        const val BREAK_SPARK_SPEED = 0.5f
+        const val SPARK_SPAN = 20f
+        const val FLASH_TICKS = 6f
+        const val FLASH_ALPHA = 0.6f
+        const val CRACK_FLASH = 1.0f
+        const val BREAK_FLASH = 2.2f
     }
 }
 

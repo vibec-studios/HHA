@@ -1,0 +1,8 @@
+{
+  "parent": "minecraft:block/stairs",
+  "textures": {
+    "bottom": "hha:block/polished_olympus_marble",
+    "side": "hha:block/polished_olympus_marble",
+    "top": "hha:block/polished_olympus_marble"
+  }
+}

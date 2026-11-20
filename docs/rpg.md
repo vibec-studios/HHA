@@ -46,6 +46,22 @@ gewählten Wegs, ein Lichtring unter den Füßen. Die Bedienung liegt im Stil de
 Ein Kapitel ist fertig, wenn sein Boss besiegt ist (bzw. alle fünf Glieder der Kette gesprengt sind). Jedes Kapitel hat
 Ziel-Schritte (Insel erreichen → Rätsel/Siegel → Kampf), das HUD zeigt Ziel, Pfeil und Entfernung.
 
+**Wegpunkte (Überarbeitung 4).** Pfeil und Zieltext folgen den neuen Wegen Punkt für Punkt:
+
+| Wo | Zielkette |
+| --- | --- |
+| Olymp, Brücke zur nächsten Insel | Brückenkopf → Engstelle (Brückenmitte) → Kopftor → Inseleingang → Altar; Texte `hha.rpg.story.<kapitel>.way.<n>` („Zum Brückenkopf …“, „Über den Weg der Boten“, „Durch das Flügeltor“ …) |
+| Olymp, Rückweg (Zwischenspiel *Die Schwelle* von F zum Dreiweg) | dieselben Punkte rückwärts über E–F, D–E, C–D |
+| Tartaros, Wächter (Kapitel *Die Kette*) | Beginn des Zuwegs (Feuerpfosten) → Wegzeichen → Eingang → Kampfplatz; beim Titanenkerker über den Randweg zum Rampenkopf im Westen |
+| Tartaros, Palast | Alleeanfang (zwischen den Kolossen) → Propylon → Gang der Schatten → Halle der Richter → Styx-Brücke → Hundetor → Siegel |
+
+Erreicht ist ein Punkt, wenn man in seiner Nähe war oder ihn auf dem Weg schon überholt hat; der Pfeil springt nie auf
+einen früheren Punkt zurück. Beim ersten Betreten jeder Brücke erscheint einmal je Welt eine Erzählerzeile über der
+Schnellleiste (`hha.rpg.way.bridge_ab` … `_ef`). Am Alleeanfang spielt einmal die Palastszene. Auch im normalen Modus zeigt
+die goldene Fernsäule zuerst auf den fernen Brückenkopf und ab dem Kopftor auf den Altar; Hermes' Geist und die Säulen im
+Tartaros zeigen auf den Beginn des Zuwegs bzw. den nächsten Punkt des Palast-Anmarschs. Wer im RPG bei einem Wächter
+stirbt, steht wieder am Eingang des Zuwegs, nicht in der Arena.
+
 Szenen der Geschichte (alle über die Bühne, überspringbar):
 
 | Szene | Wann |
@@ -53,7 +69,7 @@ Szenen der Geschichte (alle über die Bühne, überspringbar):
 | `rpg.isle.b` … `rpg.isle.f` | erstes Betreten der Inseln B–F (nur Himmelsweg): Fahrt zum Ziel der Insel, goldene Säule, Ortskarte bzw. Kapitelkarte |
 | `rpg.act_end` | nach Zeus: Zeus weist hinab, Blick in die Tiefe, „Ende des ersten Akts“ |
 | `rpg.tartaros` | erstes Betreten des Tartaros; der Seelenführer erscheint |
-| `rpg.palace` | nach dem fünften Glied: Die Kette fällt, das Palastsiegel glüht |
+| `rpg.palace` | nach dem fünften Glied bzw. am Alleeanfang des Palasts: Blick durch den Rundbogen den Gang hinab, grünes Glühen am Siegel, dann die Kuppel über dem Torhaus |
 | `rpg.end` | nach Kronos: Stille, Licht, Aufstieg, danach der Abspann |
 
 Spieler weiter als 48 Blöcke weg sehen eine Szene nicht; während einer Szene ist man unverwundbar.

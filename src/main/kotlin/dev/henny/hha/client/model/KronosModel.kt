@@ -164,6 +164,8 @@ class KronosModel(root: ModelPart) : EntityModel<KronosRenderState>(root) {
                 track(from, t).to(0f, raise - 4f, Keys.HALT_RAISE, s).to(close, close + hard + 1f, Keys.HALT_CLOSE, i)
                     .to(k.HALT_HIT + 4f, k.HALT_HIT + 16f, Keys.IDLE, s).get()
             }
+            // Überarbeitung 4 (P20): Hand erhoben wie beim Stillstand, gehalten, bis der Server die Pose beendet.
+            KronosPose.STASIS -> track(from, t).to(0f, k.HALT_RAISE - 4f, Keys.HALT_RAISE, s).get()
             KronosPose.REWIND -> {
                 val base = track(from, t).to(0f, soft, Keys.REWIND, s).get()
                 // Beide Hände drehen die Harpe wie einen Uhrschlüssel hin und her.
@@ -459,7 +461,7 @@ class KronosModel(root: ModelPart) : EntityModel<KronosRenderState>(root) {
         KronosPose.SLAM -> if (t < BossTimings.Kronos.SLAM_WINDUP) GLOW_CHARGE else 1f
         KronosPose.THROW -> if (t < BossTimings.Kronos.THROW_WINDUP) GLOW_CHARGE else 1f
         KronosPose.DEVOUR -> if (t < BossTimings.Kronos.DEVOUR_BITE) GLOW_CHARGE else GLOW_OPEN
-        KronosPose.HALT, KronosPose.REWIND, KronosPose.HANDS -> GLOW_CHARGE
+        KronosPose.HALT, KronosPose.STASIS, KronosPose.REWIND, KronosPose.HANDS -> GLOW_CHARGE
         KronosPose.STUCK, KronosPose.EMPTY, KronosPose.STAGGER, KronosPose.CHAINED -> GLOW_OPEN
         else -> 1f
     }

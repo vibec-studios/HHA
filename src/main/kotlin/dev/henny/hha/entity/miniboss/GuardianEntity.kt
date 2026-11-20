@@ -5,14 +5,18 @@ import dev.henny.hha.HhaSounds
 import dev.henny.hha.entity.boss.HermesBoltEntity
 import dev.henny.hha.logic.Fx
 import dev.henny.hha.logic.Vfx
+import dev.henny.hha.logic.boss.ArenaNav
+import dev.henny.hha.logic.boss.Arenas
 import dev.henny.hha.logic.boss.BossDefense
 import dev.henny.hha.logic.boss.BossScaling
 import dev.henny.hha.logic.boss.BossTimings
+import dev.henny.hha.logic.boss.GuardianArenas
 import dev.henny.hha.logic.boss.Telegraph
 import net.minecraft.entity.Entity
 import net.minecraft.entity.EntityType
 import net.minecraft.entity.SpawnReason
 import net.minecraft.entity.attribute.DefaultAttributeContainer
+import net.minecraft.entity.attribute.EntityAttributes
 import net.minecraft.entity.damage.DamageSource
 import net.minecraft.entity.effect.StatusEffectInstance
 import net.minecraft.entity.mob.HostileEntity
@@ -220,6 +224,12 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
     /** Pause nach einem Angriff vor Spielerzahl ([BossScaling.pause] verkürzt sie bei mehr Spielern). */
     protected open fun basePause(): Int = BossTimings.Guardian.PAUSE + random.nextInt(8)
 
+    /**
+     * Pause, die das Drehbuch nach einem Angriff wirklich wartet (vor [BossScaling.pause]); Standard [basePause]. Duell-Bosse
+     * rechnen hier das „Letzte Gefecht“ ein (`DuelBossEntity.rageFactor`, P24).
+     */
+    protected open fun pauseTicks(): Int = basePause()
+
     /** Auftritt vor dem ersten Angriff (der Titel kommt aus [MiniBossKit.announce]). */
     protected open fun entrance(): Sequence<Unit> = sequence {
         repeat(BossTimings.Guardian.ENTRANCE) {
@@ -270,7 +280,7 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
             yieldAll(engage(target))
             held = null
             // PLAN 4.3: Wer ihn von oben bearbeitet, bekommt statt der Erholung den Konter.
-            if (usesDefense && guard.counterDue()) yieldAll(counter()) else yieldAll(rest(BossScaling.pause(basePause(), crowdSize)))
+            if (usesDefense && guard.counterDue()) yieldAll(counter()) else yieldAll(rest(BossScaling.pause(pauseTicks(), crowdSize)))
         }
     }
 
@@ -353,14 +363,40 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
             return
         }
         if (age % 8 == 0 || navigation.isIdle) {
-            val goal = clampToLeash(target.entityPos)
+            val goal = routed(clampToLeash(target.entityPos))
             navigation.startMovingTo(goal.x, goal.y, goal.z, chaseSpeed())
         }
     }
 
-    /** Geht auf [goal] zu (für Wege, die kein Ziel-Spieler sind: Standplatz, Rückweg, Mitte). */
+    /**
+     * Geht auf [goal] zu (für Wege, die kein Ziel-Spieler sind: Standplatz, Rückweg, Mitte). Mit Arena-Vertrag über
+     * [ArenaNav.route]: um große Deckung herum, Ziele auf Ebenen auf den Kern gezogen.
+     */
     protected open fun walkTo(goal: Vec3d, speed: Double = 1.0) {
-        if (age % 8 == 0 || navigation.isIdle) navigation.startMovingTo(goal.x, goal.y, goal.z, speed)
+        if (age % 8 == 0 || navigation.isIdle) {
+            val aim = routed(goal)
+            navigation.startMovingTo(aim.x, aim.y, aim.z, speed)
+        }
+    }
+
+    /** [goal] über [ArenaNav.route], wenn eine Arena mit Vertrag da ist; sonst unverändert (wie vor Überarbeitung 4). */
+    private fun routed(goal: Vec3d): Vec3d {
+        val spec = arenaOrNull()?.spec ?: return goal
+        return ArenaNav.route(entityPos, goal, spec)
+    }
+
+    /**
+     * Die Arena, in der er kämpft: Wächter des Tartaros über [GuardianArenas.of], Duell-Bosse ihre eigene; sonst `null`.
+     */
+    protected open fun arenaOrNull(): Arenas.Arena? = (this as? TartarosGuardian)?.let(GuardianArenas::of)
+
+    /**
+     * Boden (Füße) der Fläche unter [pos]: mit Arena-Vertrag die Ebene ([Arenas.Arena.floorAt]), sonst der Boden darunter
+     * per Strahl ([floorAt]).
+     */
+    protected fun floorOf(pos: Vec3d): Double {
+        val arena = arenaOrNull()
+        return if (arena?.spec != null) arena.floorAt(pos) else floorAt(pos)
     }
 
     private fun clampToLeash(goal: Vec3d): Vec3d {
@@ -592,6 +628,17 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
         return player.damage(world, world.damageSources.mobAttack(this), base * damageScale * rageDamage)
     }
 
+    /**
+     * Wie oben, die Höhe aber aus der Ansage-Form [shape]: ihr Höhenband, sonst der Boden der Fläche unter ihrem
+     * Bezugspunkt ([BossDefense.reaches] mit Arena); ohne Arena [defaultFloor]. Rezept „Bodenangriff mit Band“:
+     * `val ring = group.band(floor).ring(...); … for (p in ring.hits(fighters())) strike(p, dmg, Reach.LOW, ring)`.
+     */
+    protected fun strike(player: ServerPlayerEntity, base: Float, reach: BossDefense.Reach, shape: Telegraph.Shape): Boolean {
+        val arena = arenaOrNull()
+        val floor = shape.bandFloor ?: if (arena != null) BossDefense.floorFor(arena, shape.origin) else defaultFloor()
+        return strike(player, base, reach, floor)
+    }
+
     /** Zusatzfaktor auf jeden Treffer, z. B. im letzten Gefecht der Bosse ([dev.henny.hha.entity.boss.DuelBossEntity]). */
     protected var rageDamage = 1f
 
@@ -764,8 +811,11 @@ abstract class GuardianEntity(type: EntityType<out GuardianEntity>, world: World
         /** Waagerechter Abstand. */
         fun flat(a: Vec3d, b: Vec3d): Double = hypot(a.x - b.x, a.z - b.z)
 
-        /** Grundwerte; die Wächter setzen ihre eigenen über [MiniBossKit.stats]. */
-        fun guardianAttributes(): DefaultAttributeContainer.Builder = createHostileAttributes()
+        /** Schritthöhe aller Wächter und Bosse: eine Stufe (Treppen der Arenen, Absätze) ohne Sprung (PLAN 7.4). */
+        const val STEP_HEIGHT = 1.1
+
+        /** Grundwerte samt [STEP_HEIGHT]; die Wächter setzen ihre eigenen über [MiniBossKit.stats]. */
+        fun guardianAttributes(): DefaultAttributeContainer.Builder = createHostileAttributes().add(EntityAttributes.STEP_HEIGHT, STEP_HEIGHT)
     }
 }
 

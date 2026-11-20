@@ -58,6 +58,12 @@ ALIAS = {
     'lantern': ('lantern', 'lantern'), 'soul_lantern': ('soul_lantern', 'soul_lantern'),
     'waxed_copper_bulb': ('copper_bulb_lit', 'copper_bulb_lit'), 'copper_bulb': ('copper_bulb_lit', 'copper_bulb_lit'),
     'bone_block': ('bone_block_top', 'bone_block_side'), 'magma_block': ('magma', 'magma'),
+    # Überarbeitung 4 (P01): Deko-Säulen (Stirn/Schaft) und Geräte (Zustand 0). Die übrigen Deko-Blöcke und ihre
+    # Treppen/Stufen/Mauern finden ihre Textur über den Namen; animierte zählen als Mittel über den ganzen Streifen.
+    'olympus_marble_pillar': ('olympus_marble_pillar_top', 'olympus_marble_pillar'),
+    'tartarus_basalt_pillar': ('tartarus_basalt_pillar_top', 'tartarus_basalt_pillar'),
+    'messenger_bell': ('messenger_bell_mode0', 'messenger_bell_mode0'), 'grounding_rod': ('grounding_rod_mode0', 'grounding_rod_mode0'),
+    'chain_post': ('chain_post_mode0', 'chain_post_mode0'), 'sluice_wheel': ('sluice_wheel_mode0', 'sluice_wheel_mode0'),
 }
 
 
@@ -237,7 +243,8 @@ def colors(name):
 
 
 # Blöcke, die selbst leuchten: im Bild etwas heller, damit Licht im dunklen Ödland lesbar bleibt.
-GLOW = ('lantern', 'froglight', 'fire', 'shroomlight', 'magma', 'bulb', 'sea_lantern', 'glowstone', 'end_rod', 'cave_vines', 'crying_obsidian')
+GLOW = ('lantern', 'froglight', 'fire', 'shroomlight', 'magma', 'bulb', 'sea_lantern', 'glowstone', 'end_rod', 'cave_vines', 'crying_obsidian',
+        'storm_marble', 'soul_vein_basalt', 'ember_basalt')
 
 
 def main():

@@ -6,6 +6,7 @@ import dev.henny.hha.stage.EaseKind
 import dev.henny.hha.stage.Key
 import dev.henny.hha.stage.StageScripts
 import dev.henny.hha.stage.stage
+import dev.henny.hha.world.olymp.OlympusArenas
 import dev.henny.hha.world.olymp.OlympusLayout
 
 /**
@@ -18,8 +19,8 @@ import dev.henny.hha.world.olymp.OlympusLayout
  *
  * | ID | Länge | Ablauf |
  * | --- | --- | --- |
- * | `hekate.intro` | 240 (12 s) | Blende aus Schwarz; Kamera schleicht als Kurve den Südweg hinauf, die Fackelsäulen entzünden sich paarweise (Marken `torch1`–`torch6`, Server spielt `hekate.kindle`); Stimme aus dem Hekataion; ein Wirbel öffnet sich an der Statue (Marke `emerge`), sie gleitet heraus (ab `glide`); Titelkarte; zurück in die Augen |
- * | `hekate.phase2`/`phase3` | 100 (5 s) | Kamera aus den Augen vor sie, halber Bogen um sie (Phase III andersherum), der Kopfkranz dreht (Modell), Titel und Zeile; Phase II setzt `music.hekate_2`; zurück in die Augen |
+ * | `hekate.intro` | 240 (12 s) | Blende aus Schwarz; Kamera schleicht als Kurve den Südweg hinauf (durch die Öffnung des Südtors, unter dem Sturz), die Feuer entzünden sich (Marken `torch1`–`torch4`: die Fackeltürme 30° und 150° beiderseits des Südwegs, der Turm 270°, zuletzt das Seelenfeuer auf dem Hekataion; Server spielt `hekate.kindle`); Stimme aus dem Hekataion; ein Wirbel öffnet sich an der Statue (Marke `emerge`), sie gleitet heraus (ab `glide`); Titelkarte; zurück in die Augen |
+ * | `hekate.phase2`/`phase3` | 100 (5 s) | Kamera aus den Augen vor sie, halber Bogen um sie (Phase III andersherum), der Kopfkranz dreht (Modell), Titel und Zeile; Phase II setzt `music.hekate_2`; zurück in die Augen. Der Server dreht sie vorher so, dass kein Punkt aus [phaseCameraPoints] in einem Block liegt (Tore, Türme, Terrassen stehen auf dem Platz) |
  * | `hekate.defeat` | 200 (10 s) | sie tritt zur Seite, Schlüssel dreht und rastet ein (`hekate.key_ring`, Nicken 1,5°); Kamera fährt über den Platz zum Höllentor (Weltlage aus [OlympusLayout.HELL_GATE]), das sich ab Marke `gate` Reihe für Reihe füllt; zurück in die Augen |
  *
  * Die Niederlage nutzt feste Weltpunkte am Höllentor und läuft deshalb nur im Olymp; außerhalb (Test per
@@ -41,21 +42,70 @@ object HekateStages {
     const val MARK_GLIDE = "glide"
     const val MARK_GATE = "gate"
 
-    /** Auftritt: Zündzeitpunkte der sechs Fackelsäulen (Marken `torch1` … `torch6`). */
-    val TORCH_TICKS = intArrayOf(26, 36, 70, 80, 104, 114)
+    /**
+     * Auftritt: Zündzeitpunkte der vier Feuer (Marken `torch1` … `torch4`). Überarbeitung 4 (P15): Die sechs alten
+     * Fackelsäulen am Rand gibt es seit P07 nicht mehr (zwei stehen noch an der Höllentreppe, außer Sicht); es zünden
+     * die drei Fackeltürme und das Hekataion.
+     */
+    val TORCH_TICKS = intArrayOf(26, 36, 80, 140)
 
     fun torchMark(i: Int): String = "torch${i + 1}"
 
     /**
-     * Feuerschalen der sechs Fackelsäulen am Dreiweg relativ zur Platzmitte (`OlympusLayout.C.centerVec`): x, Höhe über
-     * dem Boden, z (wie `OlympusPlans.torchPillar`: Schaft 6 hoch, Seelen-Lagerfeuer darauf). Reihenfolge = Zündfolge:
-     * Südweg, Nordostweg, Nordwestweg (zum Höllentor).
+     * Feuer am Dreiweg relativ zur Platzmitte (`OlympusLayout.C.centerVec`): x, Höhe über dem Boden, z. Aus dem Vertrag
+     * (`OlympusArenas.cTower`, Lagerfeuer in der obersten Lage des Turms; Seelenfeuer auf der Spitze des Hekataion bei
+     * `HEKATAION_HEIGHT` + 1, Bericht P07). Reihenfolge = Zündfolge: Turm 30° (Südost) und 150° (Südwest) beiderseits des
+     * Südwegs, Turm 270° (Nord, hinter dem Hekataion), Hekataion kurz vor dem Hervortreten.
      */
-    val TORCHES: List<DoubleArray> = listOf(
-        doubleArrayOf(-6.0, 6.45, 29.0), doubleArrayOf(6.0, 6.45, 29.0),
-        doubleArrayOf(29.0, 6.45, -25.0), doubleArrayOf(29.0, 6.45, -15.0),
-        doubleArrayOf(-27.0, 6.45, -22.0), doubleArrayOf(-27.0, 6.45, -8.0),
-    )
+    val TORCHES: List<DoubleArray> by lazy {
+        val c = OlympusLayout.C.centerVec
+        val towers = OlympusArenas.C_TOWER_ANGLES.indices.map { i ->
+            val t = OlympusArenas.cTower(i)
+            doubleArrayOf(t.x + 0.5 - c.x, OlympusArenas.C_TOWER_HEIGHT - 1 + FIRE_LIFT, t.z + 0.5 - c.z)
+        }
+        towers + listOf(doubleArrayOf(0.0, OlympusLayout.HEKATAION_HEIGHT + 1 + FIRE_LIFT, 0.0))
+    }
+
+    /** Das Bild sitzt so weit über der Unterkante des Feuerblocks. */
+    private const val FIRE_LIFT = 0.45
+
+    /** Phasen-Szene: Kamera beginnt bei (vorn, rechts, hoch) relativ zu Anker und Blick … */
+    val PHASE_CAM_START = doubleArrayOf(6.5, -3.5, 2.6)
+
+    /** … und endet ihren Bogen hier (rechts gespiegelt in Phase III). */
+    val PHASE_CAM_END = doubleArrayOf(-2.5, 6.8, 3.2)
+
+    /** Stichproben auf dem Bogen zwischen Anfang und Ende (für die Prüfung auf dem Server). */
+    private const val PHASE_ARC_SAMPLES = 6
+
+    /**
+     * Kamerapunkte der Phasen-Szene als (vorn, rechts, hoch) relativ zu Anker und Blick: Anfang, Stichproben auf dem
+     * Bogen um sie (kürzerer Winkel, Radius und Höhe linear), Ende. Der Server prüft damit vor der Szene, ob ein Punkt in
+     * einem Block läge.
+     */
+    fun phaseCameraPoints(mirror: Boolean): List<Triple<Double, Double, Double>> {
+        val m = if (mirror) -1.0 else 1.0
+        val a = PHASE_CAM_START
+        val b = PHASE_CAM_END
+        val a0 = kotlin.math.atan2(a[1] * m, a[0])
+        val a1 = kotlin.math.atan2(b[1] * m, b[0])
+        var d = a1 - a0
+        while (d > Math.PI) d -= 2 * Math.PI
+        while (d < -Math.PI) d += 2 * Math.PI
+        val r0 = kotlin.math.hypot(a[0], a[1])
+        val r1 = kotlin.math.hypot(b[0], b[1])
+        val list = ArrayList<Triple<Double, Double, Double>>()
+        for (i in 0..PHASE_ARC_SAMPLES + 1) {
+            val t = i.toDouble() / (PHASE_ARC_SAMPLES + 1)
+            val ang = a0 + d * t
+            val r = r0 + (r1 - r0) * t
+            list += Triple(r * kotlin.math.cos(ang), r * kotlin.math.sin(ang), a[2] + (b[2] - a[2]) * t)
+        }
+        return list
+    }
+
+    /** Auftritt: erster Kamerapunkt so weit vor ihr (den Südweg hinab, vor dem Kopftor der Brücke). */
+    const val INTRO_CAM_FROM = 33.0
 
     /** Auftritt: der Wirbel öffnet sich, sie gleitet von [MARK_GLIDE] an so lange vor. */
     const val EMERGE_TICK = 150
@@ -79,10 +129,12 @@ object HekateStages {
     // -----------------------------------------------------------------------------------------------------------------
 
     private fun intro() = stage(INTRO, INTRO_LENGTH) {
-        // Kamera: Weite am Südweg nach kurzer Blende, schleicht als Kurve zwischen den Säulen hinauf zum Platz.
+        // Kamera: Weite am Südweg nach kurzer Blende, schleicht als Kurve hinauf zum Platz und durch das Südtor (unter
+        // dem Sturz, y 145). Überarbeitung 4 (P15): Start 33 statt 36 vor ihr, sonst begänne die Handkamera 0,3 unter dem
+        // Bogen des Brücken-Kopftors (P06, z −242).
         shot(
             0, EMERGE_TICK,
-            cam = listOf(Key.At(36.0, 2.5, 4.2), Key.At(27.0, -1.6, 3.4), Key.At(17.0, 1.8, 2.8), Key.At(10.0, -0.8, 2.5)),
+            cam = listOf(Key.At(INTRO_CAM_FROM, 2.5, 4.2), Key.At(27.0, -1.6, 3.4), Key.At(17.0, 1.8, 2.8), Key.At(10.0, -0.8, 2.5)),
             look = listOf(Key.At(0.0, 0.0, 3.6), Key.At(0.0, 0.0, 2.6)),
             fov = 60f to 54f, ease = EaseKind.SMOOTH, follow = 0.25f, handheld = 0.8f, cut = true,
         )
@@ -113,10 +165,10 @@ object HekateStages {
     /** Phasenwechsel: Kopfkranz dreht (Modell, über `phase`), halber Bogen um sie; [mirror] = andere Richtung. */
     private fun phase(id: String, number: Int, mirror: Boolean) = stage(id, PHASE_LENGTH) {
         val m = if (mirror) -1.0 else 1.0
-        val start = Key.At(6.5, -3.5 * m, 2.6)
+        val start = Key.At(PHASE_CAM_START[0], PHASE_CAM_START[1] * m, PHASE_CAM_START[2])
         shot(0, 16, cam = listOf(Key.Last, start), look = listOf(Key.Last, Key.Actor(0, 2.6)), fov = 70f to 60f)
         shot(
-            16, 80, cam = listOf(start, Key.At(-2.5, 6.8 * m, 3.2)), look = listOf(Key.Actor(0, 2.6)),
+            16, 80, cam = listOf(start, Key.At(PHASE_CAM_END[0], PHASE_CAM_END[1] * m, PHASE_CAM_END[2])), look = listOf(Key.Actor(0, 2.6)),
             fov = 60f to 56f, arc = true, ease = EaseKind.SMOOTH, follow = 0.12f,
         )
         shot(80, PHASE_LENGTH, cam = listOf(Key.Last, Key.Eye), look = listOf(Key.Last, Key.EyeLook), ease = EaseKind.SMOOTH, handheld = 0f)

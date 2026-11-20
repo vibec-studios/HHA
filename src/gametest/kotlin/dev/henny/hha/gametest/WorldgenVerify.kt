@@ -115,6 +115,9 @@ class WorldgenVerify : ModInitializer {
         override fun chest(x: Int, y: Int, z: Int) = put(x, y, z, net.minecraft.block.Blocks.CHEST.defaultState)
         override fun spawner(x: Int, y: Int, z: Int, type: net.minecraft.entity.EntityType<*>) = put(x, y, z, net.minecraft.block.Blocks.SPAWNER.defaultState)
 
+        /** Sicht für die Prüfungen der Überarbeitung 4: Gelände gilt unter `ground − 1` als fest, wo der Plan nichts gesetzt hat. */
+        fun grid(name: String): Grid = Grid(name, blocks) { x, y, z -> y <= ground(x, z) - 1 && key(x, y, z) !in touched }
+
         fun write(name: String, terrain: Boolean = true) {
             val out = java.io.File("plan_$name.txt").bufferedWriter()
             for ((k, state) in blocks) {
@@ -153,6 +156,8 @@ class WorldgenVerify : ModInitializer {
             val canvas = MemoryCanvas(center.x - r, center.x + r, center.z - r, center.z + r, level)
             dev.henny.hha.world.TartarusPlans.draw(canvas, kind, center)
             canvas.write(name)
+            grids[name] = canvas.grid(name)
+            tartarosCenters[name] = Triple(kind, if (kind == dev.henny.hha.world.TartarusKind.PUNISHMENT) dev.henny.hha.world.TartarusPlans.siteVariant(center) else -1, center)
         }
         // Olymp-Tempel: auf einem Gipfel, die Treppe läuft nach Süden den Hang hinab.
         val temple = dev.henny.hha.world.OlympusTemplePiece
@@ -162,12 +167,14 @@ class WorldgenVerify : ModInitializer {
         }
         dev.henny.hha.world.OlympusTemplePlan.draw(templeCanvas, net.minecraft.util.math.BlockPos(0, 166, 0))
         templeCanvas.write("temple")
+        grids["temple"] = templeCanvas.grid("temple")
         // Hades-Halle tief unten, der Schacht führt zur Oberfläche bei y = 70.
         val hall = dev.henny.hha.world.HadesHallPiece
         val floor = dev.henny.hha.logic.world.HadesGate.FLOOR_Y
         val hallCanvas = MemoryCanvas(-hall.REACH, hall.REACH, -hall.REACH, hall.SHAFT_Z + hall.SHAFT_R + hall.SHRINE_EXTRA, 70, wavy = false)
         dev.henny.hha.world.HadesHallPlan.draw(hallCanvas, net.minecraft.util.math.BlockPos(0, floor, 0), 70)
         hallCanvas.write("hall", terrain = false)
+        grids["hall"] = hallCanvas.grid("hall")
         // Zwei Ruinen: eine mit Altar, eine mit Statue (die Wahl hängt am Zufall).
         var found = 0
         var seed = 1L
@@ -178,6 +185,7 @@ class WorldgenVerify : ModInitializer {
             val altar = ruinCanvas.blocks.values.any { it.isOf(net.minecraft.block.Blocks.CHEST) }
             if (seen.add(altar)) {
                 ruinCanvas.write("ruin$found")
+                grids["ruin$found"] = ruinCanvas.grid("ruin$found")
                 found++
             }
             seed++
@@ -209,6 +217,8 @@ class WorldgenVerify : ModInitializer {
 
         fun state(x: Int, y: Int, z: Int): net.minecraft.block.BlockState = blocks[key(x, y, z)] ?: net.minecraft.block.Blocks.AIR.defaultState
 
+        fun grid(name: String): Grid = Grid(name, blocks, null)
+
         fun write(name: String) {
             val out = java.io.File("plan_$name.txt").bufferedWriter()
             for ((k, state) in blocks) {
@@ -223,12 +233,17 @@ class WorldgenVerify : ModInitializer {
 
     private val olympusAllowed = setOf("olympus_portal", "hades_portal", "boss_altar", "stele", "offering_pedestal", "olympus_altar", "green_fire")
 
-    /** Nur Vanilla-Blöcke außer den Funktionsblöcken (PLAN 8.3). */
-    private fun checkVanilla(name: String, canvas: SkyMemory) {
-        val foreign = canvas.blocks.values.map { net.minecraft.registry.Registries.BLOCK.getId(it.block) }
-            .filter { it.namespace != "minecraft" && it.path !in olympusAllowed }.toSet()
-        require(foreign.isEmpty()) { "Olymp-Plan $name enthält fremde Blöcke: $foreign" }
+    /**
+     * Erlaubte Blöcke (Überarbeitung 4, PLAN 7.11; vorher `checkVanilla`): `minecraft:*`, die Funktionsblöcke und die
+     * Deko- und Geräte-Blöcke aus `HhaDecoBlocks.DECO_IDS`.
+     */
+    private fun checkBlocks(name: String, blocks: Map<Long, net.minecraft.block.BlockState>) {
+        val foreign = blocks.values.map { net.minecraft.registry.Registries.BLOCK.getId(it.block) }
+            .filter { it.namespace != "minecraft" && it.path !in olympusAllowed && it.path !in dev.henny.hha.HhaDecoBlocks.DECO_IDS }.toSet()
+        require(foreign.isEmpty()) { "Plan $name enthält fremde Blöcke: $foreign" }
     }
+
+    private fun checkBlocks(name: String, canvas: SkyMemory) = checkBlocks(name, canvas.blocks)
 
     /**
      * Wolkentor (P03/P13): Selbsttest der Rahmenerkennung (leere Liste = bestanden) und Ankunft auf Insel A: Unter
@@ -254,44 +269,6 @@ class WorldgenVerify : ModInitializer {
         val canvas = SkyMemory(box.minX, box.maxX, box.minZ, box.maxZ, isle.floorY - 1)
         dev.henny.hha.world.olymp.OlympusPlans.draw(canvas, isle)
         return canvas
-    }
-
-    /**
-     * Jede Kampffläche ist in ihrem Radius eben und frei: Boden ein voller Block, darüber bis 23 hoch nur Luft, außer
-     * Hekataion, Amboss, Sockeln, Pfeilern und dem Altar (PLAN 12.2, Abnahme P04).
-     */
-    private fun checkArena(isle: dev.henny.hha.world.olymp.OlympusLayout.Isle, canvas: SkyMemory) {
-        if (isle.arenaRadius <= 0) return
-        val layout = dev.henny.hha.world.olymp.OlympusLayout
-        val cx = isle.center.x
-        val cz = isle.center.z
-        val fy = isle.floorY
-        fun allowed(x: Int, h: Int, z: Int): Boolean {
-            val altar = isle.altar
-            if (altar != null && x == altar.x && z == altar.z && fy + h == altar.y) return true
-            return when (isle.letter) {
-                'C' -> kotlin.math.abs(x - cx) <= layout.HEKATAION_HALF && kotlin.math.abs(z - cz) <= layout.HEKATAION_HALF && h < layout.HEKATAION_HEIGHT
-                'D' -> kotlin.math.abs(x - layout.ANVIL.x) <= layout.ANVIL_HALF && kotlin.math.abs(z - layout.ANVIL.z) <= layout.ANVIL_HALF && h < layout.ANVIL_HEIGHT
-                'E' -> listOf(layout.PLINTH_LEFT, layout.PLINTH_RIGHT).any { kotlin.math.abs(x - it.x) <= layout.PLINTH_HALF && kotlin.math.abs(z - it.z) <= layout.PLINTH_HALF && h < layout.PLINTH_HEIGHT }
-                'F' -> layout.PILLARS.any { it.x == x && it.z == z && h <= layout.PILLAR_HEIGHT }
-                else -> false
-            }
-        }
-        val problems = ArrayList<String>()
-        var cells = 0
-        for (x in cx - isle.arenaRadius..cx + isle.arenaRadius) for (z in cz - isle.arenaRadius..cz + isle.arenaRadius) {
-            if (kotlin.math.hypot((x - cx).toDouble(), (z - cz).toDouble()) > isle.arenaRadius) continue
-            cells++
-            val floor = canvas.state(x, fy - 1, z)
-            val shape = floor.getCollisionShape(net.minecraft.world.EmptyBlockView.INSTANCE, net.minecraft.util.math.BlockPos.ORIGIN)
-            if (!net.minecraft.block.Block.isShapeFullCube(shape)) problems.add("Boden $x ${fy - 1} $z: ${net.minecraft.registry.Registries.BLOCK.getId(floor.block).path}")
-            for (h in 0 until 24) {
-                val state = canvas.state(x, fy + h, z)
-                if (!state.isAir && !allowed(x, h, z)) problems.add("frei? $x ${fy + h} $z: ${net.minecraft.registry.Registries.BLOCK.getId(state.block).path}")
-            }
-        }
-        require(problems.isEmpty()) { "Kampffläche ${isle.letter} nicht eben/frei (${problems.size}): ${problems.take(12)}" }
-        println("HHA-VERIFY Kampffläche ${isle.letter}: Radius ${isle.arenaRadius}, $cells Felder eben und frei")
     }
 
     /** Dimension, Biome, feste Platzierung und Reichweite der Pfad-Teile. */
@@ -331,6 +308,8 @@ class WorldgenVerify : ModInitializer {
             require((bridge.sealedBy != null) == (bridge.gap != null)) { "Brücke ${bridge.id}: Lücke fehlt oder ist zu viel" }
             println("HHA-VERIFY Brücke ${bridge.id}: ${bridge.length} Zellen, ${bridge.y1 - bridge.y0} Stufen, Pfeiler ${bridge.piers}, Lücke ${bridge.gap}, Siegel ${bridge.sealedBy}")
         }
+        // Lage von Toren, Engstelle, Rahmen und Ereignissen je Brücke (PZ1, Wunsch P06 2).
+        dev.henny.hha.world.olymp.OlympusBridges.describe().forEach { println("HHA-VERIFY Weg $it") }
         println("HHA-VERIFY Olymp-Pfad: ${want.size} Starts ${want.sorted()}, alle in Reichweite")
     }
 
@@ -348,29 +327,30 @@ class WorldgenVerify : ModInitializer {
         }
         for (isle in layout.ISLES) {
             val canvas = drawIsle(isle)
-            checkVanilla("isle_${isle.letter}", canvas)
-            checkArena(isle, canvas)
+            checkBlocks("isle_${isle.letter}", canvas)
             canvas.write("olymp_${isle.letter}")
+            grids["olymp_${isle.letter}"] = canvas.grid("olymp_${isle.letter}")
             fold(canvas)
         }
         for (bridge in dev.henny.hha.world.olymp.OlympusBridges.ALL) {
             val box = bridge.box
             val canvas = SkyMemory(box.minX, box.maxX, box.minZ, box.maxZ, bridge.y0)
             dev.henny.hha.world.olymp.OlympusBridges.draw(canvas, bridge, dev.henny.hha.world.olymp.OlympusBridges.Part.OUTSIDE)
-            checkVanilla("bridge_${bridge.id}", canvas)
+            checkBlocks("bridge_${bridge.id}", canvas)
             fold(canvas)
-            if (bridge.id == "ab" || bridge.id == "cd") {
-                val whole = SkyMemory(box.minX, box.maxX, box.minZ, box.maxZ, bridge.y0)
-                dev.henny.hha.world.olymp.OlympusBridges.draw(whole, bridge, dev.henny.hha.world.olymp.OlympusBridges.Part.ALL)
-                whole.write("olymp_bridge_${bridge.id}")
-            }
-            if (bridge.id == "cd") {
-                // Die Siegelbrücke nach dem Nachsetzen: so sieht sie aus, wenn Hermes besiegt ist.
+            // Überarbeitung 4 (PLAN 7.11): alle fünf Brücken ganz (versiegelt) und jede Siegelbrücke offen.
+            val whole = SkyMemory(box.minX, box.maxX, box.minZ, box.maxZ, bridge.y0)
+            dev.henny.hha.world.olymp.OlympusBridges.draw(whole, bridge, dev.henny.hha.world.olymp.OlympusBridges.Part.ALL)
+            whole.write("olymp_bridge_${bridge.id}")
+            grids["olymp_bridge_${bridge.id}"] = whole.grid("olymp_bridge_${bridge.id}")
+            if (bridge.sealedBy != null) {
+                // Die Siegelbrücke nach dem Nachsetzen: so sieht sie aus, wenn ihr Boss besiegt ist.
                 val open = SkyMemory(box.minX, box.maxX, box.minZ, box.maxZ, bridge.y0)
                 dev.henny.hha.world.olymp.OlympusBridges.draw(open, bridge, dev.henny.hha.world.olymp.OlympusBridges.Part.ALL, sealed = false)
                 val marker = bridge.marker()!!
-                require(open.state(marker.x, marker.y, marker.z).isOf(net.minecraft.block.Blocks.CHISELED_QUARTZ_BLOCK)) { "Markierblock der Siegelbrücke fehlt" }
-                open.write("olymp_bridge_cd_open")
+                require(open.state(marker.x, marker.y, marker.z).isOf(net.minecraft.block.Blocks.CHISELED_QUARTZ_BLOCK)) { "Markierblock der Siegelbrücke ${bridge.id} fehlt" }
+                open.write("olymp_bridge_${bridge.id}_open")
+                grids["olymp_bridge_${bridge.id}_open"] = open.grid("olymp_bridge_${bridge.id}_open")
             }
         }
         for ((i, kind) in dev.henny.hha.world.olymp.SkyIslets.Kind.entries.withIndex()) {
@@ -378,8 +358,9 @@ class WorldgenVerify : ModInitializer {
             val box = dev.henny.hha.world.olymp.SkyIslets.box(kind, center)
             val canvas = SkyMemory(box.minX, box.maxX, box.minZ, box.maxZ, center.y)
             dev.henny.hha.world.olymp.SkyIslets.draw(canvas, kind, center, 4242 + i * 17)
-            checkVanilla("islet_$kind", canvas)
+            checkBlocks("islet_$kind", canvas)
             canvas.write("olymp_islet_${kind.name.lowercase()}")
+            grids["olymp_islet_${kind.name.lowercase()}"] = canvas.grid("olymp_islet_${kind.name.lowercase()}")
         }
         val out = java.io.File("olymp_top.txt").bufferedWriter()
         for ((column, entry) in top) {
@@ -479,6 +460,357 @@ class WorldgenVerify : ModInitializer {
         println("HHA-VERIFY Tartaros-Höhen: $low bis $high")
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Überarbeitung 4 (PLAN 3.8, 7.11): Verträge, Schwebe-Zähler, Bauplan-Selbsttest, Teile abziehen
+    // ---------------------------------------------------------------------------------------------
+
+    /** Eine Blocktabelle zum Prüfen; [terrain] sagt, wo Gelände fest ist (nur Tartaros-Pläne). */
+    class Grid(val name: String, val blocks: Map<Long, net.minecraft.block.BlockState>, val terrain: ((Int, Int, Int) -> Boolean)?) {
+        fun state(x: Int, y: Int, z: Int): net.minecraft.block.BlockState =
+            blocks[net.minecraft.util.math.BlockPos.asLong(x, y, z)] ?: net.minecraft.block.Blocks.AIR.defaultState
+
+        /** Fester Körper (Kollisionsform) oder Gelände. */
+        fun solid(x: Int, y: Int, z: Int): Boolean {
+            val s = blocks[net.minecraft.util.math.BlockPos.asLong(x, y, z)]
+            if (s != null) return !s.getCollisionShape(net.minecraft.world.EmptyBlockView.INSTANCE, net.minecraft.util.math.BlockPos.ORIGIN).isEmpty
+            return terrain?.invoke(x, y, z) == true
+        }
+
+        fun without(name: String, remove: (Int, Int, Int) -> Boolean): Grid {
+            val copy = HashMap<Long, net.minecraft.block.BlockState>(blocks.size)
+            for ((k, v) in blocks) {
+                if (!remove(net.minecraft.util.math.BlockPos.unpackLongX(k), net.minecraft.util.math.BlockPos.unpackLongY(k), net.minecraft.util.math.BlockPos.unpackLongZ(k))) copy[k] = v
+            }
+            return Grid(name, copy, terrain)
+        }
+
+        fun write(file: String, box: net.minecraft.util.math.BlockBox? = null) {
+            val out = java.io.File(file).bufferedWriter()
+            var n = 0
+            for ((k, state) in blocks) {
+                if (state.isAir) continue
+                val pos = net.minecraft.util.math.BlockPos.fromLong(k)
+                if (box != null && !box.contains(pos)) continue
+                out.write("${pos.x} ${pos.y} ${pos.z} ${net.minecraft.registry.Registries.BLOCK.getId(state.block).path}")
+                out.newLine()
+                n++
+            }
+            out.close()
+            println("HHA-VERIFY Plan ${file.removePrefix("plan_").removeSuffix(".txt")}: $n Blöcke")
+        }
+    }
+
+    private val grids = LinkedHashMap<String, Grid>()
+    private val tartarosCenters = LinkedHashMap<String, Triple<dev.henny.hha.world.TartarusKind, Int, net.minecraft.util.math.BlockPos>>()
+
+    /**
+     * Warnungen der Vertragsprüfung sind Fehler (seit P24 dauerhaft streng); nur `-Dhha.verify.strict=false` meldet sie
+     * bloß (zum Nachsehen während eines Umbaus).
+     */
+    private val strict = System.getProperty("hha.verify.strict")?.toBoolean() != false
+
+    /** `-Dhha.verify.only=<id>`: Vertragsprüfung, Arena-Dumps und Selbsttest nur für diesen Bauplan. */
+    private val only: String? = System.getProperty("hha.verify.only")?.takeIf { it.isNotBlank() && it != "true" }
+
+    private val warnings = LinkedHashMap<String, LinkedHashSet<String>>()
+
+    private fun warn(arena: String, message: String) {
+        warnings.getOrPut(arena) { LinkedHashSet() }.add(message)
+    }
+
+    /** Mitte des Forums im Prüflauf (über Insel B, wie `HermesArena.chooseHeight` es ungefähr wählt). */
+    private val forumTest = net.minecraft.util.math.BlockPos(0, 208, -130)
+
+    /** Zählt nicht als schwebend und nicht als fester Nachbar: Licht, Ketten, Pflanzen, Wolken, Teppiche, Feuer. */
+    private fun exempt(state: net.minecraft.block.BlockState): Boolean {
+        if (state.isAir || !state.fluidState.isEmpty) return true
+        if (state.isIn(net.minecraft.registry.tag.BlockTags.LEAVES) || state.isIn(net.minecraft.registry.tag.BlockTags.FLOWERS) ||
+            state.isIn(net.minecraft.registry.tag.BlockTags.SAPLINGS) || state.isIn(net.minecraft.registry.tag.BlockTags.REPLACEABLE_BY_TREES) ||
+            state.isIn(net.minecraft.registry.tag.BlockTags.WOOL_CARPETS) || state.isIn(net.minecraft.registry.tag.BlockTags.CAVE_VINES) ||
+            state.isIn(net.minecraft.registry.tag.BlockTags.CANDLES) || state.isIn(net.minecraft.registry.tag.BlockTags.FIRE)
+        ) return true
+        val path = net.minecraft.registry.Registries.BLOCK.getId(state.block).path
+        return "lantern" in path || "chain" in path || "torch" in path || "vine" in path || path in SOFT_BLOCKS
+    }
+
+    private val SOFT_BLOCKS = setOf(
+        "storm_cloud", "snow_block", "white_stained_glass", "white_concrete", "gray_concrete", "light_gray_concrete",
+        "moss_carpet", "green_fire", "lightning_rod", "waxed_lightning_rod", "end_rod",
+    )
+
+    private val NEIGHBOURS = listOf(intArrayOf(1, 0, 0), intArrayOf(-1, 0, 0), intArrayOf(0, 1, 0), intArrayOf(0, -1, 0), intArrayOf(0, 0, 1), intArrayOf(0, 0, -1))
+
+    /** Schwebe-Zähler: Blöcke ohne festen Nachbarn in den sechs Richtungen (PLAN 7.11). */
+    private fun floating(g: Grid): Set<Long> {
+        val out = HashSet<Long>()
+        for ((k, state) in g.blocks) {
+            if (exempt(state)) continue
+            val x = net.minecraft.util.math.BlockPos.unpackLongX(k)
+            val y = net.minecraft.util.math.BlockPos.unpackLongY(k)
+            val z = net.minecraft.util.math.BlockPos.unpackLongZ(k)
+            val held = NEIGHBOURS.any { d ->
+                val n = g.blocks[net.minecraft.util.math.BlockPos.asLong(x + d[0], y + d[1], z + d[2])]
+                if (n != null) !exempt(n) else g.terrain?.invoke(x + d[0], y + d[1], z + d[2]) == true
+            }
+            if (!held) out.add(k)
+        }
+        return out
+    }
+
+    private fun fmt(k: Long) = "${net.minecraft.util.math.BlockPos.unpackLongX(k)} ${net.minecraft.util.math.BlockPos.unpackLongY(k)} ${net.minecraft.util.math.BlockPos.unpackLongZ(k)}"
+
+    /** Prüft alle Pläne mit dem Schwebe-Zähler gegen die Ausnahmeliste und schreibt `float_report.txt`. */
+    private fun checkFloating() {
+        val report = java.io.File("float_report.txt").bufferedWriter()
+        val problems = ArrayList<String>()
+        var total = 0
+        for ((name, g) in grids) {
+            val now = floating(g)
+            total += now.size
+            val allowed = FloatBaseline.allowed(name)
+            val fresh = now.filter { fmt(it) !in allowed }
+            for (k in now.sortedBy { fmt(it) }) report.write("$name ${fmt(k)} ${net.minecraft.registry.Registries.BLOCK.getId(g.blocks.getValue(k).block).path}\n")
+            if (fresh.isNotEmpty()) problems.add("$name: ${fresh.size} neu schwebend, z. B. ${fresh.take(12).map { fmt(it) }}")
+            if (now.isNotEmpty()) println("HHA-VERIFY Schwebe-Zähler $name: ${now.size} (Ausnahmeliste ${allowed.size}, neu ${fresh.size})")
+        }
+        report.close()
+        println("HHA-VERIFY Schwebe-Zähler: $total schwebende Blöcke in ${grids.size} Plänen (Liste in float_report.txt)")
+        require(problems.isEmpty()) { "Schwebende Blöcke außerhalb der Ausnahmeliste: $problems" }
+    }
+
+    /** Liegt (x, z) unter/über dem Kasten [b] (nur waagerecht)? */
+    private fun inColumns(b: net.minecraft.util.math.BlockBox, x: Int, z: Int) = x in b.minX..b.maxX && z in b.minZ..b.maxZ
+
+    /** Strahl in kleinen Schritten über die Tabelle: blockiert, sobald er durch einen festen Block läuft. */
+    private fun rayBlocked(g: Grid, from: net.minecraft.util.math.Vec3d, to: net.minecraft.util.math.Vec3d): Boolean {
+        val d = to.subtract(from)
+        val steps = (d.length() / 0.05).toInt().coerceAtLeast(1)
+        var last = Long.MIN_VALUE
+        for (i in 0..steps) {
+            val p = from.add(d.multiply(i.toDouble() / steps))
+            val x = kotlin.math.floor(p.x).toInt()
+            val y = kotlin.math.floor(p.y).toInt()
+            val z = kotlin.math.floor(p.z).toInt()
+            val k = net.minecraft.util.math.BlockPos.asLong(x, y, z)
+            if (k == last) continue
+            last = k
+            if (g.solid(x, y, z)) return true
+        }
+        return false
+    }
+
+    /**
+     * Prüft eine Arena gegen ihren Vertrag (PLAN 3.8): Kern eben und frei, Deckung fest und mit Sichtschutz, Ebenen mit
+     * Boden und Zugang, Geräte an ihrem Platz, Teile. [coreHard]: Kernfehler sind immer Fehler (Olymp wie bisher).
+     */
+    private fun checkSpec(spec: dev.henny.hha.world.arena.ArenaSpec, g: Grid, clear: Int, coreHard: Boolean, altar: net.minecraft.util.math.BlockPos? = null) {
+        val id = spec.id
+        // 1. Kern
+        val skip = HashSet<Long>()
+        // Deckung samt einem Rand von 1 (Sockelstufen, Fasen gehören zur Deckung).
+        for (c in spec.cover) for (x in c.box.minX - 1..c.box.maxX + 1) for (z in c.box.minZ - 1..c.box.maxZ + 1) skip.add(net.minecraft.util.math.ChunkPos.toLong(x, z))
+        for (d in spec.devices) skip.add(net.minecraft.util.math.ChunkPos.toLong(d.pos.x, d.pos.z))
+        for (l in spec.levels) for (a in l.access) skip.add(net.minecraft.util.math.ChunkPos.toLong(a.x, a.z))
+        if (altar != null) skip.add(net.minecraft.util.math.ChunkPos.toLong(altar.x, altar.z))
+        // Tor-Stürze: Über einem Teil mit fills (Fallgitter) darf ab part.maxY + 1 gebaut sein, in der Teilzone und eine
+        // Zelle nach außen und innen (Sturz 2 tief). (PZ1, Wunsch P07 1.)
+        val lintelFrom = HashMap<Long, Int>()
+        for (p in spec.parts) if (p.fills) for ((x, z) in p.zone.cells()) for (dx in -1..1) for (dz in -1..1) {
+            val k = net.minecraft.util.math.ChunkPos.toLong(x + dx, z + dz)
+            lintelFrom[k] = minOf(lintelFrom[k] ?: Int.MAX_VALUE, p.maxY + 1)
+        }
+        val coreProblems = ArrayList<String>()
+        var cells = 0
+        for ((x, z) in spec.core.cells()) {
+            if (net.minecraft.util.math.ChunkPos.toLong(x, z) in skip) continue
+            if (spec.levels.any { it.zone.containsCell(x, z) }) continue
+            cells++
+            val floor = g.state(x, spec.coreY - 1, z)
+            val shape = floor.getCollisionShape(net.minecraft.world.EmptyBlockView.INSTANCE, net.minecraft.util.math.BlockPos.ORIGIN)
+            if (!net.minecraft.block.Block.isShapeFullCube(shape) && g.terrain?.invoke(x, spec.coreY - 1, z) != true) {
+                coreProblems.add("Boden $x ${spec.coreY - 1} $z: ${net.minecraft.registry.Registries.BLOCK.getId(floor.block).path}")
+            }
+            val lintel = lintelFrom[net.minecraft.util.math.ChunkPos.toLong(x, z)] ?: Int.MAX_VALUE
+            for (h in 0 until clear) {
+                if (spec.coreY + h >= lintel) continue
+                val state = g.state(x, spec.coreY + h, z)
+                if (!state.isAir && !exempt(state)) coreProblems.add("frei? $x ${spec.coreY + h} $z: ${net.minecraft.registry.Registries.BLOCK.getId(state.block).path}")
+            }
+        }
+        if (coreProblems.isNotEmpty()) {
+            val message = "Kern nicht eben/frei (${coreProblems.size}): ${coreProblems.take(12)}"
+            if (coreHard) throw IllegalStateException("Kampffläche $id: $message") else warn(id, message)
+        }
+        // 2. Deckung und Sichtstrahl
+        val eye = spec.coreY + 1.62
+        val source = net.minecraft.util.math.Vec3d(spec.center.x + 0.5, eye, spec.center.z + 0.5)
+        var sheltered = 0
+        for (c in spec.cover) {
+            val b = c.box
+            var solid = 0
+            var all = 0
+            for (x in b.minX..b.maxX) for (y in b.minY..b.maxY) for (z in b.minZ..b.maxZ) {
+                all++
+                if (g.solid(x, y, z)) solid++
+            }
+            val top = (b.minX..b.maxX).any { x -> (b.minZ..b.maxZ).any { z -> g.solid(x, b.maxY, z) } }
+            // Fester Körper: mindestens ein Drittel des Kastens fest (Statuen, Bäume) und oben noch ein Block.
+            if (solid * 3 < all || !top) warn(id, "Deckung ${c.id} unvollständig: $solid/$all fest, oben ${if (top) "ja" else "nein"} (Kasten ${b.minX} ${b.minY} ${b.minZ} … ${b.maxX} ${b.maxY} ${b.maxZ})")
+            if (inColumns(b, spec.center.x, spec.center.z)) continue
+            val cx = (b.minX + b.maxX + 1) / 2.0
+            val cz = (b.minZ + b.maxZ + 1) / 2.0
+            val dir = net.minecraft.util.math.Vec3d(cx - source.x, 0.0, cz - source.z).normalize()
+            val hw = (b.maxX - b.minX + 1) / 2.0
+            val hd = (b.maxZ - b.minZ + 1) / 2.0
+            val edge = minOf(if (kotlin.math.abs(dir.x) > 1e-6) hw / kotlin.math.abs(dir.x) else Double.MAX_VALUE, if (kotlin.math.abs(dir.z) > 1e-6) hd / kotlin.math.abs(dir.z) else Double.MAX_VALUE)
+            val ty = eye.coerceIn(b.minY + 0.5, b.maxY + 0.5)
+            val target = net.minecraft.util.math.Vec3d(cx + dir.x * (edge + 1.5), ty, cz + dir.z * (edge + 1.5))
+            if (rayBlocked(g, source, target)) sheltered++ else warn(id, "Sichtstrahl hinter ${c.id} nicht blockiert")
+        }
+        // 3. Ebenen
+        for (l in spec.levels) {
+            var support = 0
+            var count = 0
+            for ((x, z) in l.zone.cells()) {
+                count++
+                if (g.solid(x, l.floorY - 1, z)) support++
+            }
+            if (count == 0 || support * 10 < count * 9) warn(id, "Ebene ${l.id}: Boden auf y ${l.floorY - 1} nur $support/$count")
+            val access = l.access.any { val b = g.state(it.x, it.y, it.z).block; b is net.minecraft.block.StairsBlock || b is net.minecraft.block.SlabBlock }
+            if (!access) warn(id, "Ebene ${l.id}: kein Treppen-/Stufenblock an den ${l.access.size} Zugängen (z. B. ${l.access.take(2)})")
+        }
+        // 4. Geräte
+        for (d in spec.devices) {
+            val state = g.state(d.pos.x, d.pos.y, d.pos.z)
+            if (state.block !== d.block()) warn(id, "Gerät ${d.id} fehlt an ${d.pos.x} ${d.pos.y} ${d.pos.z} (dort ${net.minecraft.registry.Registries.BLOCK.getId(state.block).path})")
+        }
+        // 5. Teile
+        for (p in spec.parts) {
+            var n = 0
+            for ((x, z) in p.zone.cells()) for (y in p.minY..p.maxY) if (!g.state(x, y, z).isAir) n++
+            if (p.fills && n > 0) warn(id, "Teil ${p.id} soll im Plan leer sein, hat $n Blöcke")
+            if (!p.fills && n == 0) warn(id, "Teil ${p.id} enthält keinen Block")
+        }
+        // 6. Blockschutz (P24, fester Punkt 6): Deckung, Geräte, Zugänge, Ebenen (Boden bis Kopf) und Teile liegen im
+        // geschützten Kasten `spec.box`; sonst könnten Spieler dort im Kampf abbauen oder bauen.
+        val outside = LinkedHashSet<String>()
+        fun inBox(x: Int, y: Int, z: Int) = spec.box.contains(net.minecraft.util.math.BlockPos(x, y, z))
+        for (c in spec.cover) if (!inBox(c.box.minX, c.box.minY, c.box.minZ) || !inBox(c.box.maxX, c.box.maxY, c.box.maxZ)) outside.add("Deckung ${c.id}")
+        for (d in spec.devices) if (!spec.box.contains(d.pos)) outside.add("Gerät ${d.id}")
+        for (l in spec.levels) {
+            if (l.access.any { !spec.box.contains(it) }) outside.add("Zugang ${l.id}")
+            if (l.zone.cells().any { (x, z) -> !inBox(x, l.floorY - 1, z) || !inBox(x, l.floorY + 1, z) }) outside.add("Ebene ${l.id}")
+        }
+        for (p in spec.parts) if (p.zone.cells().any { (x, z) -> !inBox(x, p.minY, z) || !inBox(x, p.maxY, z) }) outside.add("Teil ${p.id}")
+        if (outside.isNotEmpty()) warn(id, "Blockschutz: außerhalb von spec.box: $outside")
+        println("HHA-VERIFY Arena $id: Kern $cells Felder${if (coreProblems.isEmpty()) " eben und frei" else " (${coreProblems.size} Mängel)"}, Deckung ${spec.cover.size} (Sichtschutz $sheltered), Ebenen ${spec.levels.size}, Teile ${spec.parts.size}, Geräte ${spec.devices.size}, Warnungen ${warnings[id]?.size ?: 0}")
+    }
+
+    /** Teile abziehen: Nach dem Abbruch darf nichts zusätzlich schweben (PLAN 7.11). */
+    private fun checkLost(spec: dev.henny.hha.world.arena.ArenaSpec, g: Grid, parts: List<dev.henny.hha.world.arena.Part>, suffix: String) {
+        val removable = parts.filter { !it.fills }
+        if (removable.isEmpty()) return
+        val lost = g.without("${spec.id}_$suffix") { x, y, z -> removable.any { p -> y in p.minY..p.maxY && p.zone.containsCell(x, z) } }
+        lost.write("plan_arena_${spec.id}_$suffix.txt", spec.box)
+        val before = floating(g)
+        val fresh = floating(lost).filter { it !in before && spec.box.contains(net.minecraft.util.math.BlockPos.fromLong(it)) }
+        if (fresh.isNotEmpty()) warn(spec.id, "nach Abzug ($suffix) schweben ${fresh.size} Blöcke, z. B. ${fresh.take(12).map(::fmt)}")
+        println("HHA-VERIFY Teile abgezogen ${spec.id} ($suffix): ${removable.size} Teile, ${fresh.size} Blöcke schweben danach")
+    }
+
+    /**
+     * Bauplan-Selbsttest (PLAN 3.8/7.11): die echte Logik aus `ArenaBlueprints.selfTest` (Design, Edit-Register,
+     * Reparatur über `BlueprintLogic`), dieselbe wie im Spiel. (PZ1, Wunsch P02 1.)
+     */
+    private fun selfTest(id: String, origin: net.minecraft.util.math.BlockPos) {
+        val r = dev.henny.hha.logic.boss.arena.ArenaBlueprints.selfTest(id, origin)
+        println("HHA-VERIFY Bauplan $id: ${r.cells} Zellen aufgenommen, Selbsttest (${r.changed} Zellen, ${r.viaEdits} über Edits, ${r.repaired} repariert): ${r.message}")
+        require(r.ok) { "Bauplan $id: ${r.message}" }
+    }
+
+    /** Vertragszahlen als Datei für `API.md` (Deckung, Ebenen, Teile, Geräte, Wegpunkte). */
+    private fun writeContract(specs: List<dev.henny.hha.world.arena.ArenaSpec>) {
+        val out = java.io.File("contract.txt").bufferedWriter()
+        fun box(b: net.minecraft.util.math.BlockBox) = "${b.minX} ${b.minY} ${b.minZ} … ${b.maxX} ${b.maxY} ${b.maxZ}"
+        for (s in specs) {
+            out.write("== ${s.id}: Mitte ${s.center.x} ${s.center.y} ${s.center.z}, Radius ${s.radius}, Kern y ${s.coreY}, Kasten ${box(s.box)}\n")
+            for (c in s.cover) out.write("  Deckung ${c.id}: ${box(c.box)} schützt ${c.protects.sorted()} ${if (c.breakable) "verbrauchbar" else "fest"}\n")
+            for (l in s.levels) out.write("  Ebene ${l.id}: y ${l.floorY}, ${l.zone.cells().count()} Felder, Zugang ${l.access.take(3).joinToString { "${it.x} ${it.y} ${it.z}" }}${if (l.access.size > 3) " … (${l.access.size})" else ""}\n")
+            for (p in s.parts) out.write("  Teil ${p.id}: y ${p.minY} … ${p.maxY}, ${p.zone.cells().count()} Spalten${if (p.fills) ", füllt" else ""}\n")
+            for (d in s.devices) out.write("  Gerät ${d.id}: ${d.pos.x} ${d.pos.y} ${d.pos.z} ${net.minecraft.registry.Registries.BLOCK.getId(d.block()).path} ${d.facing.asString()}\n")
+        }
+        val approaches = dev.henny.hha.world.olymp.OlympusArenas.APPROACHES + dev.henny.hha.world.TartarusArenas.palaceApproach(net.minecraft.util.math.BlockPos(0, 72, 0))
+        for (a in approaches) {
+            out.write("== Weg ${a.id} (${a.bossKey}), halbe Breite ${a.halfWidth}\n")
+            for (w in a.points) out.write("  ${w.id}: ${"%.1f".format(java.util.Locale.ROOT, w.pos.x)} ${"%.1f".format(java.util.Locale.ROOT, w.pos.y)} ${"%.1f".format(java.util.Locale.ROOT, w.pos.z)} (r ${w.reach})\n")
+        }
+        out.close()
+    }
+
+
+    private fun overhaul4() {
+        // Forum: alle vier Stages.
+        for (stage in 1..4) {
+            val box = dev.henny.hha.world.olymp.ForumPlan.box(forumTest)
+            val canvas = SkyMemory(box.minX, box.maxX, box.minZ, box.maxZ, forumTest.y)
+            dev.henny.hha.world.olymp.ForumPlan.draw(canvas, forumTest, stage, emptySet())
+            checkBlocks("forum_$stage", canvas)
+            canvas.write("forum_$stage")
+            grids["forum_$stage"] = canvas.grid("forum_$stage")
+        }
+        // Schnitt durch den Palast-Anmarsch: dz +40 … +120, |dx| ≤ 20.
+        grids["palace"]?.let { palace ->
+            palace.without("palace_approach") { x, _, z -> kotlin.math.abs(x) > 20 || z !in 40..120 }.write("plan_palace_approach.txt")
+        }
+        // Verträge: Olymp-Arenen auf den Inselplänen, Forum je Stage, Tartaros-Kerne auf den vollen Bauplänen.
+        val layout = dev.henny.hha.world.olymp.OlympusLayout
+        val checks = ArrayList<Triple<dev.henny.hha.world.arena.ArenaSpec, Grid, net.minecraft.util.math.BlockPos?>>()
+        for ((letter, spec) in listOf('C' to dev.henny.hha.world.olymp.OlympusArenas.C, 'D' to dev.henny.hha.world.olymp.OlympusArenas.D, 'E' to dev.henny.hha.world.olymp.OlympusArenas.E, 'F' to dev.henny.hha.world.olymp.OlympusArenas.F)) {
+            checks.add(Triple(spec, grids.getValue("olymp_$letter"), layout.ISLES.first { it.letter == letter }.altar))
+        }
+        val forum = dev.henny.hha.world.olymp.OlympusArenas.FORUM(forumTest)
+        val tartaros = tartarosCenters.map { (name, t) -> name to dev.henny.hha.world.TartarusArenas.spec(t.first, t.second, t.third) }
+        val all = checks.map { it.first } + forum + tartaros.map { it.second }
+        writeContract(all)
+        val scope: (String) -> Boolean = { only == null || it == only }
+        for ((spec, g, altar) in checks) if (scope(spec.id)) {
+            checkSpec(spec, g, 24, coreHard = true, altar = altar)
+            g.write("plan_arena_${spec.id}.txt", spec.box)
+            checkLost(spec, g, spec.parts, "lost")
+            if (spec.id == "olymp_f") checkLost(spec, g, spec.parts.filter { it.id == "floe_0" || it.id == "floe_3" }, "lost03")
+        }
+        if (scope(forum.id)) {
+            for (stage in 1..4) checkSpec(forum, grids.getValue("forum_$stage"), 24, coreHard = false)
+            grids.getValue("forum_1").write("plan_arena_forum.txt", forum.box)
+            checkLost(forum, grids.getValue("forum_1"), forum.parts, "lost")
+        }
+        for ((name, spec) in tartaros) if (scope(spec.id)) {
+            val g = grids.getValue(name)
+            checkSpec(spec, g, 4, coreHard = false)
+            g.write("plan_arena_${spec.id}.txt", spec.box)
+            checkLost(spec, g, spec.parts, "lost")
+        }
+        // Bauplan-Selbsttest
+        for (id in dev.henny.hha.world.arena.ArenaPlans.IDS) {
+            if (!scope(id)) continue
+            val origin = when {
+                id == "forum" -> forumTest
+                id.startsWith("olymp_") -> net.minecraft.util.math.BlockPos.ORIGIN
+                else -> tartaros.first { it.second.id == id }.let { tartarosCenters.getValue(it.first).third }
+            }
+            selfTest(id, origin)
+        }
+        checkFloating()
+        // Zusammenfassung: Warnungen je Arena; mit -Dhha.verify.strict=true sind sie Fehler.
+        val count = warnings.values.sumOf { it.size }
+        for ((arena, list) in warnings) {
+            println("HHA-VERIFY Warnungen $arena (${list.size}):")
+            for (line in list) println("HHA-VERIFY   - $line")
+        }
+        println("HHA-VERIFY Vertragsprüfung: $count Warnungen in ${warnings.size} Arenen${if (only != null) " (nur $only)" else ""}${if (strict) ", streng" else ", Modus melden"}")
+        if (strict) require(count == 0) { "Vertragsprüfung streng: $count Warnungen (${warnings.keys})" }
+    }
+
     private fun check(server: MinecraftServer) {
         // Mixins erzwingen: So fällt ein falsches Ziel hier auf und nicht erst bei der ersten Explosion.
         Class.forName("net.minecraft.world.explosion.ExplosionImpl")
@@ -507,6 +839,10 @@ class WorldgenVerify : ModInitializer {
         println("HHA-VERIFY Oberwelt: ${keys.size} Biome, kein Olymp, kein Hades, keine Tempel und Hallen")
         checkOlympus(server)
         checkPortals()
+        // Selbsttest des Regelwerks (P03): leere Liste = bestanden. (PZ1, Wunsch P03 1.)
+        val rules = dev.henny.hha.logic.boss.ArenaRulesCheck.run()
+        require(rules.isEmpty()) { "Selbsttest Regelwerk (P03): $rules" }
+        println("HHA-VERIFY Regelwerk (P03): Selbsttest bestanden (${dev.henny.hha.logic.boss.ArenaRulesCheck.CASES} Fälle)")
 
         // Dieselbe Prüfung wie beim Erzeugen des Chunk-Generators: Widersprüche in der Feature-Reihenfolge wären ein Absturz.
         PlacedFeatureIndexer.collectIndexedFeatures(entries.distinct(), { it.value().generationSettings.features }, true)
@@ -522,5 +858,6 @@ class WorldgenVerify : ModInitializer {
         if (System.getProperty("hha.mapTartaros") != null) mapTartaros(server)
         dumpPlans()
         dumpOlympus()
+        overhaul4()
     }
 }

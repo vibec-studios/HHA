@@ -96,6 +96,33 @@ object HhaSounds {
     val RPG_FALLEN = register("rpg.fallen")
     val RPG_DISSOLVE = register("rpg.dissolve")
 
+    // Überarbeitung 4 (PLAN 7.10): IDs vorab registriert (P00), zunächst auf vorhandene Dateien gelegt
+    // (tmp/overhaul4/snippets/P00/sounds.json); eigene Dateien und Einträge liefert P06.
+    // Anmarsch (wird zum Boss hin lauter, Approach.kt):
+    val APPROACH_WIND = register("ambient.approach_wind")
+    val APPROACH_HOWL = register("ambient.approach_howl")
+    val APPROACH_ANVIL = register("ambient.approach_anvil")
+    val APPROACH_DRUMS = register("ambient.approach_drums")
+    val APPROACH_THUNDER = register("ambient.approach_thunder")
+    val APPROACH_HEART = register("ambient.approach_heart")
+    val APPROACH_TICKING = register("ambient.approach_ticking")
+    val APPROACH_CHAINS = register("ambient.approach_chains")
+    val APPROACH_DREAD = register("ambient.approach_dread")
+    // Arena: Geräte, Einsturz, Teilziele, Deckung:
+    val ARENA_BELL = register("arena.bell")
+    val ARENA_ROD = register("arena.rod")
+    val ARENA_POST = register("arena.post")
+    val ARENA_SLUICE = register("arena.sluice")
+    val ARENA_COLLAPSE = register("arena.collapse")
+    val ARENA_CRUMBLE = register("arena.crumble")
+    val ARENA_GATE = register("arena.gate")
+    val ARENA_SUB_BREAK = register("arena.sub_break")
+    val ARENA_SUB_HIT = register("arena.sub_hit")
+    val ARENA_STUCK = register("arena.stuck")
+    val ARENA_FETTER = register("arena.fetter")
+    /** Leiser Ton beim Wechsel gedeckt/gesehen. */
+    val ARENA_COVER = register("arena.cover")
+
     private fun register(path: String): SoundEvent {
         val id = Hha.id(path)
         return Registry.register(Registries.SOUND_EVENT, id, SoundEvent.of(id))

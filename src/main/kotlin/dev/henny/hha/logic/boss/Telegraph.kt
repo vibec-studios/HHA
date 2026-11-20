@@ -222,12 +222,52 @@ object Telegraph {
         /** Liegt [pos] in der Form? [margin] weitet sie um so viele Blöcke (z. B. halbe Spielerbreite). */
         abstract fun contains(pos: Vec3d, margin: Double = 0.0): Boolean
 
-        /** Steht [entity] in der Form (mit halber Breite als Spielraum)? */
-        fun contains(entity: Entity): Boolean = contains(entity.entityPos, entity.width * 0.5)
+        /**
+         * Steht [entity] in der Form (mit halber Breite als Spielraum)? Waagerecht wie [contains] (`pos`), dazu das
+         * Höhenband ([reaches]). Ohne [band] ist das Band unbegrenzt, das Ergebnis also wie vor Überarbeitung 4.
+         */
+        fun contains(entity: Entity): Boolean = contains(entity.entityPos, entity.width * 0.5) && reaches(entity)
 
-        /** Alle aus [candidates], die in der Form stehen. */
+        /** Alle aus [candidates], die in der Form stehen (waagerecht und im Höhenband). */
         fun <T : Entity> hits(candidates: Iterable<T>): List<T> = candidates.filter { contains(it) }
+
+        // --- Höhenband (Überarbeitung 4, PLAN 7.5) ----------------------------------------------------------------
+
+        /** Untere Grenze des Höhenbands (Füße); ohne [band] unbegrenzt. */
+        var yMin: Double = Double.NEGATIVE_INFINITY
+
+        /** Obere Grenze des Höhenbands (Füße); ohne [band] unbegrenzt. */
+        var yMax: Double = Double.POSITIVE_INFINITY
+
+        /** Boden, um den [band] das Band gelegt hat (`null` = kein Band). [BossDefense.reaches] misst von hier. */
+        var bandFloor: Double? = null
+            private set
+
+        /**
+         * Setzt das Höhenband um [floorY] (Füße auf der Fläche der Ansage): von [below] darunter bis [above] darüber.
+         * Gibt die Form zurück. Nur Treffer prüfen das Band; der Client zeichnet die Form wie bisher.
+         */
+        fun band(floorY: Double, below: Double = 1.0, above: Double = 3.0): Shape {
+            yMin = floorY - below
+            yMax = floorY + above
+            bandFloor = floorY
+            return this
+        }
+
+        /** Stehen die Füße von [entity] im Höhenband? Ohne [band] immer. */
+        fun reaches(entity: Entity): Boolean = inBand(entity.y, yMin, yMax)
+
+        /** Bezugspunkt der Form (Kreismitte, Linienanfang, Kegelspitze); seine Höhe liegt auf dem Boden der Ansage. */
+        val origin: Vec3d
+            get() = when (this) {
+                is Ring -> center
+                is Line -> from
+                is Cone -> apex
+            }
     }
+
+    /** Liegt die Fußhöhe [y] im Band [yMin] … [yMax] (beide eingeschlossen)? Reine Funktion, auch für den Selbsttest. */
+    fun inBand(y: Double, yMin: Double, yMax: Double): Boolean = y >= yMin && y <= yMax
 
     /** Kreis ([inner] = 0) oder Ring um [center]. */
     class Ring internal constructor(
@@ -495,8 +535,24 @@ object Telegraph {
         ) {
             private val list = ArrayList<Shape>()
 
+            /** Höhenband für alle danach angelegten Formen (Überarbeitung 4, PLAN 7.5); `null` = keins. */
+            private var bandFloor: Double? = null
+            private var bandBelow = 1.0
+            private var bandAbove = 3.0
+
             /** Alle Formen der Gruppe, in Reihenfolge. */
             val shapes: List<Shape> get() = list
+
+            /**
+             * Höhenband um [floorY] für alle Formen, die die Gruppe ab jetzt anlegt (schon angelegte bleiben, wie sie
+             * sind). Für eine zweite Ebene: erneut `band(...)` mit deren Boden, dann deren Form anlegen.
+             */
+            fun band(floorY: Double, below: Double = 1.0, above: Double = 3.0): Group {
+                bandFloor = floorY
+                bandBelow = below
+                bandAbove = above
+                return this
+            }
 
             /** Welt-Tick, bis zu dem die Gruppe im Budget zählt (ausschließlich). */
             var until: Long = now() + max(1, reserve)
@@ -510,6 +566,7 @@ object Telegraph {
 
             /** Nimmt die Form auf und hält die Gruppe bis zu ihrem Treffer im Budget (auch nach einer Pause zwischen Wellen). */
             private fun add(shape: Shape): Shape {
+                bandFloor?.let { shape.band(it, bandBelow, bandAbove) }
                 list.add(shape)
                 until = max(until, shape.hitTick)
                 if (groups.none { it === this }) groups.add(this)
@@ -600,14 +657,7 @@ object Telegraph {
              * getroffen wird).
              */
             fun cancel() {
-                for (shape in list) {
-                    val origin = when (shape) {
-                        is Ring -> shape.center
-                        is Line -> shape.from
-                        is Cone -> shape.apex
-                    }
-                    Vfx.telegraphClear(world, origin)
-                }
+                for (shape in list) Vfx.telegraphClear(world, shape.origin)
                 end()
             }
         }

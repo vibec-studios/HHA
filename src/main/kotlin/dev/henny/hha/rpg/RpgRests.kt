@@ -2,7 +2,12 @@ package dev.henny.hha.rpg
 
 import dev.henny.hha.logic.boss.Arenas
 import dev.henny.hha.logic.boss.Cine
+import dev.henny.hha.logic.world.HadesGate
 import dev.henny.hha.net.RpgEventPayload
+import dev.henny.hha.world.TartarusArenas
+import dev.henny.hha.world.TartarusKind
+import dev.henny.hha.world.TartarusPiece
+import dev.henny.hha.world.TartarusStructure
 import dev.henny.hha.world.olymp.OlympusLayout
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents
@@ -169,9 +174,23 @@ object RpgRests {
                 rest(player, "hha.rpg.rest.isle.${isle.letter.lowercaseChar()}", isle.entrance, world)
             } else {
                 val key = if (boss == "hades" || boss == "kronos") "hha.rpg.rest.palace" else "hha.rpg.rest.site.$boss"
-                rest(player, key, ground(world, player.entityPos), world)
+                rest(player, key, ground(world, outsideArena(world, player.entityPos)), world)
             }
         }
+    }
+
+    /**
+     * Rast nach einem Sieg im Tartaros nicht in der Arena (Überarbeitung 4, P23, Briefing 6): Steht [pos] in einem
+     * Tartaros-Bauwerk, liegt die Rast am Eingang seines Zuwegs (`siteApproach(…).points.last()`, dort führt auch der
+     * K. o. hin) bzw. beim Palast vor dem Siegel (`palaceEntrance`, außerhalb des Saals). Sonst [pos].
+     */
+    private fun outsideArena(world: ServerWorld, pos: Vec3d): Vec3d {
+        if (world.registryKey != HadesGate.TARTAROS) return pos
+        val start = world.structureAccessor.getStructureContaining(BlockPos.ofFloored(pos)) { it.value() is TartarusStructure }
+        if (!start.hasChildren()) return pos
+        val piece = start.children.firstOrNull() as? TartarusPiece ?: return pos
+        if (piece.kind == TartarusKind.PALACE) return Vec3d.ofBottomCenter(TartarusArenas.palaceEntrance(piece.middle))
+        return TartarusArenas.siteApproach(piece.kind, piece.siteVariant(), piece.middle).points.last().pos
     }
 
     private fun isleOf(place: String) = if (place.startsWith("isle.")) {

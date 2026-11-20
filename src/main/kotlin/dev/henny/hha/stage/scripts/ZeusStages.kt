@@ -57,6 +57,20 @@ object ZeusStages {
     const val PHASE_BACK = 72
     const val PHASE_LENGTH = 100
 
+    // --- Phasenwechsel III: der erste Bruch (Überarbeitung 4, P18) ----------------------------------------------
+    // Anker von `zeus.phase3` = Hof-Mitte (Füße auf dem Kern), Blick nach Osten auf Scholle 0; Darsteller 0 = Zeus.
+
+    /** Schnitt nach außen: Blick von jenseits der Kante auf Scholle 0, an deren Fugen die Risse aufgehen. */
+    const val PHASE3_FLOE = 20
+    /** Server: Risse an den Fugen der Schollen 0 und 3 (`ZeusIsland.omen`), kurz nach dem Schnitt. */
+    const val PHASE3_OMEN = 24
+    /** Schnitt zurück auf ihn, dann in die Augen. */
+    const val PHASE3_ZEUS = 62
+    const val PHASE3_BACK = 76
+    /** Scholle 0 liegt so weit östlich der Mitte (Ring der Schollenmitte) und so hoch über dem Kern (+2). */
+    const val FLOE_RING = 25.0
+    const val FLOE_UP = 2.0
+
     // --- Niederlage ---------------------------------------------------------------------------------------------
 
     const val DEFEAT_LINE_1 = 6
@@ -79,7 +93,7 @@ object ZeusStages {
     fun register() {
         StageScripts.register(intro())
         StageScripts.register(phase(PHASE2, third = false))
-        StageScripts.register(phase(PHASE3, third = true))
+        StageScripts.register(phase3())
         StageScripts.register(defeat())
     }
 
@@ -100,12 +114,13 @@ object ZeusStages {
         shot(INTRO_BACK, INTRO_LENGTH, cam = listOf(Key.Last, Key.Eye), look = listOf(Key.Last, Key.EyeLook), handheld = 0f)
 
         fade(0, 0x000000, 1f, 0f, INTRO_FADE)
-        // Der Blitz trifft genau `delay + 6` nach dem Aufruf (P03): Aufruf 6 Ticks vorher, ohne Verzögerung.
-        fx(INTRO_SPLIT - SKY_LEAD, "core.sky_strike", Vfx.Style.THUNDER, Key.At(2.8, 0.0, 0.0), a = 1.2f, b = 30f, c = 0f,
+        // Der Blitz trifft genau `delay + 6` nach dem Aufruf (P03): Aufruf 6 Ticks vorher, ohne Verzögerung. Überarbeitung 4:
+        // Der Anker steht auf der Thronstufe (y 236), der Einschlag auf dem Bühnenboden davor (y 235, eine Stufe tiefer).
+        fx(INTRO_SPLIT - SKY_LEAD, "core.sky_strike", Vfx.Style.THUNDER, Key.At(2.8, 0.0, -THRONE_STEP), a = 1.2f, b = 30f, c = 0f,
             life = SKY_LEAD + 14)
         flash(INTRO_SPLIT, 0xE6F0FF, 0.22f, 8)
         kick(INTRO_SPLIT, pitch = 2.2f, roll = 0.6f, ticks = 7)
-        screen(INTRO_SPLIT, BossFx.Screen.SHOCK_RIPPLE, Key.At(2.8, 0.0, 0.0), radius = 8f, strength = 0.4f, ticks = 6)
+        screen(INTRO_SPLIT, BossFx.Screen.SHOCK_RIPPLE, Key.At(2.8, 0.0, -THRONE_STEP), radius = 8f, strength = 0.4f, ticks = 6)
         // Landung im Hof: Stoß durchs Bild, kurzer Ruck.
         screen(INTRO_APPEAR, BossFx.Screen.SHOCK_RIPPLE, Key.Actor(0, 0.1), radius = 10f, strength = 0.45f, ticks = 6)
         kick(INTRO_APPEAR, pitch = 1.8f, ticks = 6)
@@ -133,6 +148,32 @@ object ZeusStages {
     }
 
     /**
+     * `zeus.phase3` (5 s, Überarbeitung 4): aus den Augen auf ihn, der Blitz fährt in ihn; Schnitt nach außen über die
+     * Kante auf Scholle 0, an deren Fugen die Risse aufgehen (die Scholle bricht nach der Szene mit eigener Ansage, die
+     * Spieler haben dann wieder die Kontrolle); Schnitt zurück auf ihn, in die Augen. Anker = Hof-Mitte, Blick nach Osten.
+     */
+    private fun phase3() = stage(PHASE3, PHASE_LENGTH) {
+        shot(0, PHASE3_FLOE, cam = listOf(Key.Last, Key.ActorRel(0, 9.0, -4.0, 2.8)), look = listOf(Key.Last, Key.Actor(0, 3.2)),
+            fov = 70f to 60f, ease = EaseKind.OUT)
+        // Von jenseits der Kante (r 37, etwas seitlich, hoch) auf die Scholle; langsam heran.
+        shot(PHASE3_FLOE, PHASE3_ZEUS,
+            cam = listOf(Key.At(FLOE_RING + 12.0, -9.0, 9.0), Key.At(FLOE_RING + 9.0, -5.5, 6.5)),
+            look = listOf(Key.At(FLOE_RING, 0.0, FLOE_UP + 1.0), Key.At(FLOE_RING - 1.0, 0.0, FLOE_UP)),
+            fov = 58f to 50f, ease = EaseKind.SMOOTH, handheld = 0.3f, cut = true)
+        shot(PHASE3_ZEUS, PHASE3_BACK, cam = listOf(Key.ActorRel(0, 7.0, 3.5, 3.4), Key.ActorRel(0, 6.5, 3.0, 3.0)),
+            look = listOf(Key.Actor(0, 3.3)), fov = 54f to 50f, cut = true)
+        shot(PHASE3_BACK, PHASE_LENGTH, cam = listOf(Key.Last, Key.Eye), look = listOf(Key.Last, Key.EyeLook), handheld = 0f)
+
+        flash(PHASE_BOLT, 0xE6F0FF, 0.22f, 8)
+        kick(PHASE_BOLT, pitch = 2.5f, roll = -0.8f, ticks = 7)
+        screen(PHASE_BOLT, BossFx.Screen.SHOCK_RIPPLE, Key.Actor(0, 0.2), radius = 10f, strength = 0.5f, ticks = 8)
+        // Ein kurzer Ruck, wenn die Risse aufgehen (kein Rütteln).
+        kick(PHASE3_OMEN, pitch = 1.2f, ticks = 6)
+        mark(PHASE_BOLT, "bolt")
+        mark(PHASE3_OMEN, "omen")
+    }
+
+    /**
      * `zeus.defeat` (12 s): Er senkt den Blitz; Schnitt auf den Sieger, Nike schwebt als Lichtgestalt herab und setzt
      * den Kranz (goldener Ring und Schein: Gold heißt hier Ziel/Lohn); Schnitt zurück, er zeigt nach unten; in die Augen.
      */
@@ -151,4 +192,7 @@ object ZeusStages {
 
     /** Ein Himmelsblitz (`core.sky_strike`) erreicht den Boden so viele Ticks nach seinem `delay` (P03). */
     const val SKY_LEAD = 6
+
+    /** Thronstufe über dem Bühnenboden (Anker des Auftritts steht auf ihr, P09: Stufe y 235, Füße 236). */
+    const val THRONE_STEP = 1.0
 }

@@ -58,6 +58,9 @@ loom {
             vmArg("-Dhha.verifyWorldgen=true")
             if (System.getProperty("hha.benchLocate") != null) vmArg("-Dhha.benchLocate=true")
             if (System.getProperty("hha.mapTartaros") != null) vmArg("-Dhha.mapTartaros=true")
+            // Überarbeitung 4 (P00): Vertragsprüfung streng bzw. nur für einen Bauplan (python tools/hha_assets/gradle_locked.py runVerifyWorldgen -Dhha.verify.strict=true -Dhha.verify.only=olymp_c)
+            if (System.getProperty("hha.verify.strict") != null) vmArg("-Dhha.verify.strict=${System.getProperty("hha.verify.strict")}")
+            if (System.getProperty("hha.verify.only") != null) vmArg("-Dhha.verify.only=${System.getProperty("hha.verify.only")}")
             ideConfigGenerated(false)
         }
     }

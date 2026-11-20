@@ -197,6 +197,12 @@ object BossClient {
         net.fabricmc.fabric.api.client.rendering.v1.BlockRenderLayerMap.putBlock(dev.henny.hha.HhaBlocks.GREEN_FIRE, net.minecraft.client.render.BlockRenderLayer.CUTOUT)
         net.fabricmc.fabric.api.client.rendering.v1.BlockRenderLayerMap.putBlock(dev.henny.hha.HhaBlocks.HADES_PORTAL, net.minecraft.client.render.BlockRenderLayer.TRANSLUCENT)
         net.fabricmc.fabric.api.client.rendering.v1.BlockRenderLayerMap.putBlock(dev.henny.hha.HhaBlocks.OLYMPUS_PORTAL, net.minecraft.client.render.BlockRenderLayer.TRANSLUCENT)
+        // Überarbeitung 4 (PLAN 7.1, 7.6): Gewitterwolke durchscheinend, Geräte mit Ausschnitt; Renderer der Teilziele.
+        net.fabricmc.fabric.api.client.rendering.v1.BlockRenderLayerMap.putBlock(dev.henny.hha.HhaDecoBlocks.STORM_CLOUD, net.minecraft.client.render.BlockRenderLayer.TRANSLUCENT)
+        for (device in listOf(dev.henny.hha.HhaDecoBlocks.MESSENGER_BELL, dev.henny.hha.HhaDecoBlocks.GROUNDING_ROD, dev.henny.hha.HhaDecoBlocks.CHAIN_POST, dev.henny.hha.HhaDecoBlocks.SLUICE_WHEEL)) {
+            net.fabricmc.fabric.api.client.rendering.v1.BlockRenderLayerMap.putBlock(device, net.minecraft.client.render.BlockRenderLayer.CUTOUT)
+        }
+        net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry.register(dev.henny.hha.HhaEntities.SUB_TARGET) { SubTargetRenderer.Renderer(it) }
         net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry.register(dev.henny.hha.HhaEntities.DIVINE_PARCEL, ::ParcelRenderer)
         net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry.register(dev.henny.hha.HhaEntities.HERMES_BOLT, ::BoltRenderer)
         registerOlymp()

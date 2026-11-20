@@ -34,15 +34,31 @@ zünden.
 | --- | --- | --- | --- |
 | A Wolkentor der Horen | 0 120 −11 | Ehrenbogen mit dem Ankunftstor, die drei Horen als Statuen, Stelen 6 und 7, keine Gegner | `/hha tp olymp` |
 | B Tempel des Boten | 0 129 −98 | Der Tempel mit den vier Opfersteinen: Hermes | `/hha tp tempel` |
-| C Dreiweg der Hekate | 0 141 −246 | Ebener Platz mit drei Wegen, Hekataion und Altar; im Nordwesten das vermauerte runde **Höllentor** (−36 135 −301) | `/hha tp dreiweg` |
-| D Schmiede der Kyklopen | 126 161 −371 | Amboss, sechs Roste über Glut, die Esse mit Rauchsäule: Brontes | `/hha tp schmiede` |
-| E Stufen der Macht | 150 193 −528 | Platz vor einer Freitreppe, zwei Sockel: Kratos und Bia | `/hha tp stufen` |
-| F Thron des Zeus | 32 233 −655 | Hof mit sechs Kupferpfeilern und Blitzableitern, der Thron im Norden, eine Gewitterwolke darüber: Zeus | `/hha tp thron` |
+| C Dreiweg der Hekate | 0 141 −246 | Platz mit drei Wegen, drei Torbauten mit Fallgittern, drei Fackeltürmen und drei Terrassen (+3), in der Mitte das 7 hohe Hekataion; im Nordwesten das vermauerte runde **Höllentor** (−36 135 −301), der Weg dorthin wird in gestuften Bändern zu Basalt | `/hha tp dreiweg` |
+| D Schmiede der Kyklopen | 126 161 −371 | Amboss, drei Kokillen (Gussformen), sechs Roste über Glut, zwei Essebühnen (+2) am Feuermaul; dahinter die begehbare Schmiedehalle mit Herd, Blasebalg und Löschbecken, im Hof eine Galerie: Brontes | `/hha tp schmiede` |
+| E Stufen der Macht | 150 193 −528 | Platz vor einer Freitreppe mit Treppenabsatz (+4), zwei Sockel, vier Standarten; Unterbau mit Lisenen, Blendbögen und Bronzeband: Kratos und Bia | `/hha tp stufen` |
+| F Thron des Zeus | 32 233 −655 | Ebener Kern mit Hexagramm, darum sechs Schollen als Terrasse (+2) mit je einem Blitzpfeiler (3 × 3, Kupferkern) und Erdungsgriff, im Norden die Thronbühne (+3); außen ein Gewitterkranz aus Sturmwolken statt des alten Deckels: Zeus | `/hha tp thron` |
 
+- **Schlachtwege (Überarbeitung 4):** Jede Brücke ist ein Weg mit eigenem Thema: ein **Kopftor** an beiden Enden, eine
+  **Engstelle** (3 breit), drei Ereignisse, die zum Ziel dichter werden, und ein leiser **Puls**, der zum Boss hin
+  schneller und lauter wird. Er schweigt im Kampf, in Szenen, im Flug hoch über der Brücke und nach dem Sieg über den Boss
+  dieses Wegs. `/hha approach` zeigt Weg, Fortschritt und den nächsten Wegpunkt.
+
+  | Brücke | Name | Was man sieht | Klang |
+  | --- | --- | --- | --- |
+  | A → B | Weg der Boten | Hermen-Allee, Windbögen mit Glocken, Aussicht mit Botenstatue, **Flügeltor** am Kopf von B | Wind |
+  | B → C | Weg der Schwelle | Marmor wird in drei Bändern zu Basalt, Seelenlaternen, drei Bögen der Trivia, **zwei Hunde** am Kopf von C | Heulen |
+  | C → D | Schlackenweg | rußiger Marmor, Bronze-Feuerschalen, Kettenkräne mit Schlackekübeln, **Wachturm am Knick**, Glutrisse vor D | Amboss |
+  | D → E | Heerstraße | roter Läufer, Standarten, zwei Wachtürme, Tropaia, **Torhaus** als Engstelle | Kriegstrommel |
+  | E → F | Himmelstreppe | Sturmmarmor, drei Götterstatuen (zum Thron hin höher), Blitzableiter, Wolkenfetzen, **Tor der Blitze** | Donner |
+
+  Insel A hat zwei Pylone am Wolkentor und einen Aussichtsplatz am Nordrand mit Blick den Weg entlang.
 - **Siegelbrücken:** In der Mitte der Brücken B→C und C→D (nach Hermes), D→E (nach Brontes) und E→F (nach Kratos) fehlt
   ein Stück. Ist der Boss davor besiegt und jemand näher als 96 Blöcke, schließt sich die Lücke mit hellem Klang und
-  goldenen Federn, einmal je Welt. An den Sperren steht, wen man vorher besiegen muss.
-- **Goldene Fernsäule:** Nach der Ankunft und nach jedem Sieg zeigt eine goldene Säule am Horizont zum nächsten Ziel.
+  goldenen Federn, einmal je Welt. An den Sperren steht, wen man vorher besiegen muss. Vor und hinter jeder Lücke steht
+  ein Torrahmen (auch bei offener Lücke).
+- **Goldene Fernsäule:** Nach der Ankunft und nach jedem Sieg zeigt eine goldene Säule am Horizont zum nächsten Ziel:
+  zuerst auf den fernen Brückenkopf, ab dem Kopftor auf den Altar.
 - **Stelen** an jeder Insel erzählen, wer dort wartet und worauf es ankommt (Stelen 6–13 auf dem Pfad, 14 und 15 auf
   Nebeninseln).
 - **Nebeninseln** zwischen y 96 und 190: Wiesen mit einem Baum, Ruinen mit drei Säulen und einer Truhe (Olymp-Beute:
@@ -50,8 +66,17 @@ zünden.
 - Im Olymp regnet es nie, es spawnen keine Monster, Betten funktionieren. Wer fliegend abkürzt, spart nur Laufweg: Die
   Altäre prüfen den Fortschritt.
 
-Gebaut ist alles aus Vanilla-Blöcken. Eigene Blöcke gibt es nur dort, wo sie eine Funktion haben: Wolkentor,
-Höllentor, Altar der Prüfung (`boss_altar`), Stelen.
+Grundmaterial sind Vanilla-Blöcke. Seit Überarbeitung 4 setzen eigene **Deko-Blöcke** Akzente: Olymp-Marmor in
+Ziegeln, poliert, gemeißelt, vergoldet und als Säule, Olymp-Bronze, Sturmmarmor und Sturmwolken (siehe
+[Blöcke](bloecke.md)). Funktionsblöcke sind Wolkentor, Höllentor, Altar der Prüfung (`boss_altar`), Stelen und die
+Arena-Geräte (Botenglocke, Erdungsgriff).
+
+**Bestehende Welten:** Der Olymp hat feste Koordinaten. Darum richtet sich der Pfad in alten Welten von selbst neu auf:
+Sobald jemand einer Insel oder Brücke näher als 160 Blöcke kommt und alle ihre Chunks geladen sind, wird sie gegen den
+Bauplan geprüft und, wenn weniger als 97 % stimmen, in Scheiben neu gezeichnet (nur abweichende Blöcke; Truhen und andere
+Blöcke mit Inventar bleiben stehen; wer in entstehenden Blöcken steht, wird nach oben gesetzt). Eigene Bauten auf den
+Inseln und Brücken werden dabei überschrieben. Abschalten: `world_retrofit` (HHA-Einstellungen bzw.
+`/hha toggle world_retrofit false`). Stand: `/hha world retrofit status`.
 
 ## Die Kämpfe
 
@@ -64,6 +89,16 @@ Gestartet wird am **Altar der Prüfung** der Insel (Rechtsklick), für Tests mit
 ist geschützt: Blöcke bleiben heil, Fallschaden gibt es nicht, wer über den Rand fällt, wird von einer Bö zurückgeworfen
 (4 Schaden). Wer k. o. geht, wacht mit 6 Leben vor der Arena auf und behält sein Inventar. Gehen alle, verschwindet der
 Boss, und der Altar ist wieder frei.
+
+**Die Arena spielt mit (Überarbeitung 4).** Jede Arena hat eine ebene **Kernfläche**, auf der der Boss läuft, und am Rand
+**Ebenen** (Terrassen, Bühnen, Empore). Erhöht ist man nur vor Bodenangriffen sicher; jeder Boss hat Angriffe, die die
+Ebenen erreichen (die Ansage liegt dann auch oben). **Deckung ist Sichtlinie:** Säulen, Tore, Pfeiler und Standarten decken
+gegen bestimmte Angriffe; wer gedeckt ist, sieht eine goldene Rune an der Deckung und „gedeckt“ in der Statuszeile.
+Manche Deckung wird verbraucht und kehrt erst zum Phasenbeginn oder nach dem Kampf zurück. Teile der Arena brechen an
+festen Stellen weg (Schollen, Emporenbögen); nach jedem Kampfende, Abbruch oder Neustart steht die Arena wieder genau nach
+Bauplan. Neue Mechaniken je Boss: Botenglocken und brechende Säulen (Hermes), die dunkle Stunde (Hekate), Hammer steckt
+und Amboss bricht (Brontes), Bia als Teilziel (Kratos), Schollen und Erdungsgriff (Zeus). Allgemeines dazu in
+[Bosse allgemein](bosse-allgemein.md#arena).
 
 ### Hermes: „Die letzte Zustellung“ (Insel B)
 
@@ -78,7 +113,9 @@ Gaben von Hermes' erstem Lebenstag, in der Reihenfolge des Sonnenlaufs:
 | Norden | Nacht: Zeus macht ihn zum Boten | Papier |
 
 Eine falsche Gabe ruft einen Blitz und setzt die Steine zurück, die vierte startet den Kampf. Über dem Tempel entsteht das
-**Himmelsforum**; nach dem Kampf ist es wieder weg. Der versiegelte Botenbrief ruft Hermes nicht mehr, er zeigt nur noch
+**Himmelsforum**: ein Kern (r 22) mit zwei gemeißelten Ringbändern und Speichen, acht
+wuchtige **Botensäulen** auf Ring 20 mit je einer **Botenglocke** davor und ringsum eine **Empore** zwei Blöcke höher
+(vier Bögen, Aufgänge im Osten, Süden, Westen und Norden). Nach dem Kampf ist es wieder weg. Der versiegelte Botenbrief ruft Hermes nicht mehr, er zeigt nur noch
 den Weg zum Wolkentor. Alte Opfersteine in der Oberwelt antworten mit einem Hinweis.
 
 Die Kernidee: **Fang den Boten.** Triffst du ihn, während er im Kurierstoß an dir vorbeifliegt, zählt der Treffer
@@ -87,13 +124,31 @@ anderthalbfach und er stolpert.
 | Stage | Leiste | Angriffe (feste Reihenfolge) | Worauf es ankommt |
 | --- | --- | --- | --- |
 | I – Der Bote | 1000 → 700 | Kurierstoß × 3 → Federfächer × 2 → Sturmschlag mit Bodenwelle | Seitlich aus der Linie oder ihn im Vorbeiflug abfangen; zwischen die Federn; raus aus dem Kreis, dann über die Welle springen, solange der Stab steckt |
-| II – Der Dieb | 700 → 400 | Spiegel-Stoß (drei Körper) → Diebesgriff → Wegkreuzungen → Spiegel-Stoß → Herma-Sprung | Nur der Echte hat den goldenen Kreis. Nach dem Diebesgriff hält er deine Effekte als Kugel: triff ihn in 12 s, dann bekommst du sie zurück. Zerschlag den glühenden Herma-Stein, bevor er landet |
-| III – Der Seelenführer | 400 → 150 | Die Zwillinge → Seelensäulen → Lanzenreihe → Styx-Flut → Kurierstoß × 2 | Zwischen den Bahnen der Schlangen bleiben; Säulen: in Bewegung bleiben; Lanzen: quer laufen; Flut: in den goldenen Bereich |
+| II – Der Dieb | 700 → 400 | Spiegel-Stoß (drei Körper) → Diebesgriff → **Botenlauf** → Spiegel-Stoß → Herma-Sprung | Nur der Echte hat den goldenen Kreis. Nach dem Diebesgriff hält er deine Effekte als Kugel: triff ihn in 12 s, dann bekommst du sie zurück. Beim Botenlauf die goldenen Glocken schlagen. Zerschlag den glühenden Herma-Stein, bevor er landet |
+| III – Der Seelenführer | 400 → 150 | Die Zwillinge → **Botenlauf** → Seelensäulen → Lanzenreihe → Styx-Flut → Kurierstoß × 2 | Zwischen den Bahnen der Schlangen bleiben; Glocken schlagen; Säulen: in Bewegung bleiben; Lanzen: quer laufen; Flut: in den goldenen Bereich |
 | IV – Der Götterbote | 150 → 0 | Sturzflug × 3, Speere des Olymp × 2, Letztes Wort | Verwundbar nur in der Erschöpfung danach (goldene Rune). Über die Strahlen des Letzten Worts springen |
 
 In der Luft treffen Seelensäulen, Speere, Sturzflug und Konter weiter; über Bodenwellen und die Strahlen des Letzten
 Worts springt man. Wer k. o. geht, landet am Eingang der Insel B. **Finale:** Paket öffnen (Beute, siehe Reliquien),
 dann wirft Hermes dem Öffner den **Schwarzen Brief** zu und geht. Den Brief braucht man für Hekate.
+
+**Die Arena spielt mit (Überarbeitung 4).**
+
+- **Botenlauf:** Hermes sagt drei Stoßlinien nacheinander an (Linie 3 breit, 24 Ticks Ansage, 10 Schaden). Mit der
+  ersten Ansage leuchten zwei Botenglocken golden, je eine auf jeder Seite der dritten Linie. Wer beide anschlägt
+  (Rechtsklick oder Schlag; allein genügt eine), bevor die dritte Linie fällt, ruft einen Windstoß: Er läuft die dritte
+  Linie entlang, wirft Hermes aus der Bahn und lässt ihn 40 Ticks offen taumeln. Die Glocken bedienen nur Kampfteilnehmer.
+- **Säule als Köder:** Stell dich hinter eine Botensäule, wenn er zum Kurierstoß oder Botenlauf ansetzt. Führt seine
+  Bahn durch die Säule, endet sie dort, er kracht hinein, die Säule bricht bis auf den Stumpf, und er taumelt 40 Ticks
+  offen. Jede Säule bricht höchstens einmal je Stage (ihre Glocke schweigt dann); zum Stage-Beginn stehen alle wieder.
+- **Deckung:** Die Federn des Federfächers enden an den Säulen. Wer gedeckt ist, sieht die goldene Rune an der Säule und
+  „gedeckt“ in der Statuszeile.
+- **Empore:** Bodenwellen (Sturmschlag-Welle, Wellen nach Sturzflug und Speer), Lanzenreihe, die Schlangen und das
+  Letzte Wort treffen sie nicht. Kurierstoß, Botenlauf, Spiegel-Stoß, Diebesgriff, Sturmschlag, Sturzflug, Speere,
+  Seelensäulen und Styx-Flut erreichen sie; ihre Ansage erscheint auch oben.
+- **Die Empore stürzt ab:** zu Beginn von Stage III die Bögen im Osten und Westen, zu Beginn von Stage IV die übrigen,
+  jeweils in der Szene mit goldenem Kern als Ansage. Wer hinunterfällt, wird von einer Bö zurück aufs Forum geworfen.
+- **Leiste:** Hermes hat jetzt die HHA-Leiste mit vier Abschnitten in der Farbe der Stage.
 
 **Inszenierung (Überarbeitung 3):** Der Prolog läuft als Bühnen-Szene: Kreis um den Altar, Sog nach oben, die Kamera
 folgt dem Kometen hinab. Der Kurierstoß zieht eine Lichtbahn mit Kopf und Schweif (`hermes.streak`), das Blinzeln öffnet
@@ -112,19 +167,21 @@ Fackeln. Effektiv 1300 Leben, Phasen bei 66 % und 33 %.
 | Fackelwurf | Kreise Radius 3 am Ziel und davor | ausweichen; das Feuer brennt 3 s am Boden. **Solange die Fackel fehlt, ist sie offen** (goldene Rune) |
 | Feuerpfad | Linie 6 breit auf dem Weg, dem du am nächsten stehst | den Weg wechseln |
 | Schwellentritt (ab II) | Rune am Wegende hinter dir, Linie durch dich zur Mitte | aus der Linie; sie erscheint dort und stößt durch |
-| Schlüsseldrehung (ab II, Saal-Gefahr) | alles rot, ein Weg mit goldenem Rand | auf den goldenen Weg, nie zweimal derselbe; die Ansage ist so lang, dass jeder hinkommt |
+| Schlüsseldrehung (ab II, Saal-Gefahr) | alles rot, ein Weg mit goldenem Rand; **in den zwei anderen Toren fällt ein Fallgitter** | auf den goldenen Weg, nie zweimal derselbe; wer hinter einem geschlossenen Tor steht, läuft um den Pfeiler herum (die Ansage ist dafür lang genug). Nach dem Fenster heben sich die Gitter |
 | Dreigestalt (III) | drei Körper an den Wegenden, nur einer mit brennender Fackel | **die Echte in der Ansage treffen** (auch mit Pfeil): Die Trugbilder verwehen samt ihren Ansagen, sie taumelt lange offen. Ein Trugbild zu schlagen bringt nichts |
-| Mondfinsternis (III, Saal-Gefahr) | der Himmel wird nachtblau, zwei goldene Kreise | in einen goldenen Kreis |
+| Die dunkle Stunde (III, Saal-Gefahr, 10 s) | der Himmel wird nachtblau, die Fackeln erlöschen; sie tritt an das Hekataion und greift nicht an. Ihr Blick schwenkt dreimal: zwei Kegel 60° (außen Radius 18, innen 9), darunter ein kalter Lichtkegel, dann steht der Blick 1 s | **hinter Stein** (Tor, Fackelturm, Hekataion; goldene Rune, Statuszeile „Gedeckt“) oder **in die Hocke**: Wer schleicht, wird erst im inneren Kegel gesehen. Wer gewittert wird, bekommt einen roten Kreis unter die Füße (1 s, ausweichen). **Wird in der ganzen Stunde niemand gewittert, flammen die Fackeln auf und blenden sie: 3 s offen.** Ein Fackelturm, hinter dem sich jemand versteckt hat, bröckelt danach bis auf den Sockel (bis Kampfende) |
 
-Der Himmel wird dabei nur dunkler (Stimmung, keine Blindheit). Nach dem Sieg tritt sie zur Seite, und das **Höllentor**
+In der dunklen Stunde wird der Himmel nur dunkler (Stimmung, keine Blindheit, keine Langsamkeit); Ansagen und Gold
+bleiben voll sichtbar. Sie ersetzt die frühere Mondfinsternis. Die Terrassen zwischen den Wegen (+3) schützen vor dem
+Bodenfeuer des Fackelwurfs; alle anderen Angriffe erreichen sie, und dem Blick steht man dort offen. Nach dem Sieg tritt sie zur Seite, und das **Höllentor**
 am Nordwest-Ende des Platzes öffnet sich Reihe für Reihe. Es führt in den [Tartaros](tartaros.md). Hekate gibt keine
 Reliquie, aber die Schmiedevorlage, Netheritschrott und goldene Äpfel.
 
 **Inszenierung (Überarbeitung 3):** Auftritt (`hekate.intro`, 12 s): Die Kamera schleicht den Südweg hinauf, die
-Fackelsäulen flammen paarweise blau auf, Hekate gleitet aus einem Wirbel an der Statue. Der Fackelschwung zieht ein
+Fackeltürme beiderseits des Südwegs, dann der Nordturm und zuletzt das Seelenfeuer auf dem Hekataion flammen auf, Hekate gleitet aus einem Wirbel an der Statue. Der Fackelschwung zieht ein
 Flammenband am Fackelkopf, der Wurf eine Flammenspur, der Feuerpfad frisst sich als glühender Sprung voran, der
-Runenring der Schlüsseldrehung rastet zum Treffer ein. Die Mondfinsternis ist der einzige Bildschirm-Pass des Kampfs
-(abgedunkelt, kühler Lichtkranz, die goldenen Kreise bleiben klar) und endet bei jedem Ausgang sofort. Niederlage
+Runenring der Schlüsseldrehung rastet zum Treffer ein. Die dunkle Stunde ist der einzige Bildschirm-Pass des Kampfs
+(abgedunkelt, kühler Lichtkegel des Blicks, Ansagen und Gold bleiben klar) und endet bei jedem Ausgang sofort. Niederlage
 (`hekate.defeat`): Kamerafahrt zum Höllentor, das sich Reihe für Reihe füllt. Musik `music.hekate`, ab Phase II
 `music.hekate_2`.
 
@@ -134,16 +191,29 @@ Runenring der Schlüsseldrehung rastet zum Treffer ein. Die Mondfinsternis ist d
 
 | Angriff | Ansage | Was tun |
 | --- | --- | --- |
-| Hammerschlag | Linie 3 × 10, danach ein schmaler Riss dahinter | seitlich raus; der Hammer steckt danach: offen |
-| Doppelschlag (II) | zwei Linien nacheinander, die zweite leicht gedreht | zweimal ausweichen |
-| Rundschwung (nah) | Kegel 100°, Radius 7 | Abstand oder hinter den Amboss |
-| Glutwurf (fern) | Kreis Radius 3 am Ziel | ausweichen. Der Rohling bleibt glühend liegen und kühlt nach 8 s ab (wird dunkel) |
-| Blasebalg (fern) | Kegel 35°, Radius 16 | zur Seite, er schiebt etwa 6 Blöcke weg |
+| Hammerschlag | Linie 3 × 10, danach ein schmaler Riss dahinter | seitlich raus. Weichst du sauber aus, **steckt der Hammer** (siehe unten): 3 s offen |
+| Doppelschlag (II) | zwei Linien nacheinander, die zweite leicht gedreht | zweimal ausweichen; jeder der beiden Schläge kann stecken bleiben |
+| Rundschwung (nah) | Kegel 100°, Radius 7 | Abstand oder hinter Amboss bzw. Kokille |
+| Glutwurf (fern) | Kreis Radius 3 am Ziel | ausweichen. Der Rohling bleibt glühend liegen und kühlt nach 8 s ab (wird dunkel). Wer länger als 5 s auf einer Essebühne steht, wird bevorzugt beworfen |
+| Blasebalg (fern) | Kegel 35°, Radius 16 | zur Seite oder hinter eine **Kokille**: dort schiebt und verletzt er nicht |
 | **Fehlschlag** | – | Stell dich so, dass ein **glühender Rohling** zwischen dir und ihm liegt: Der Hammer trifft den Rohling, Funken fliegen ihm ins Auge, er ist 4 s offen |
-| Roste (II, Saal-Gefahr, alle 14 s) | drei von sechs Sektoren rot, die kühlen mit goldenem Rand | auf einen kühlen Rost |
-| Der Keil (35 % und 15 %) | drei wachsende Glutringe, dann ein Kreis Radius 6 am Entferntesten | springen, wenn die Welle kommt; danach 2 s offen |
+| Roste (II, Saal-Gefahr, alle 14 s) | drei von sechs Sektoren rot, die kühlen mit goldenem Rand | auf einen kühlen Rost oder auf eine Essebühne |
+| Der Keil (35 % und 15 %) | drei wachsende Glutringe, dann ein Kreis Radius 6 am Entferntesten | springen, wenn die Welle kommt (auf den Bühnen trifft sie nicht); danach 2 s offen |
 
-Der **Amboss** deckt: Hammer und Riss enden an ihm, wer dahinter steht, ist vor dem Rundschwung sicher.
+**Der Hammer steckt.** Trifft der Hammerschlag niemanden, endet er nicht am Amboss und zerschlägt keinen Rohling, und
+stand sein Ziel mindestens 2 Blöcke neben der Linie (höchstens 14 von ihm entfernt), bleibt der Hammer im Boden stecken:
+goldene Rune am Hammerkopf, 3 s offen. Kurz vor dem Ende zeigt ein roter Ring (Radius 2,6) um den Kopf, wo beim
+Herausreißen die Splitter fliegen. Höchstens einmal je 15 s; sonst steht er nach dem Schlag nur kurz (ohne Rune).
+
+**Der Amboss** deckt: Hammer und Riss enden an ihm, hinter ihm ist man vor dem Rundschwung sicher (goldene Rune am
+Amboss während der Ansage). Aber jeder Hammerschlag, den er für jemanden abfängt, **reißt ihn** (Unterleiste „Amboss“,
+drei Kerben). Beim dritten Riss bricht er: Es bleiben nur Trümmer, die nicht mehr decken, und Brontes taumelt 5 s offen.
+Zu Beginn von Phase II holt er einen neuen aus der Esse. Bricht der Amboss in Phase II, bleibt er gebrochen; die drei
+Schläge des Keils fallen dann dumpf auf den Stumpf.
+
+Die drei **Kokillen** (Gussformen bei 60°, 180°, 300°) decken gegen Blasebalg und Rundschwung. Die zwei **Essebühnen**
+(+2, beiderseits des Feuermauls) schützen vor Rosten und Glutringen; Hammer, Riss, Blasebalg, Glutwurf und Keil
+erreichen sie.
 
 **Inszenierung (Überarbeitung 3):** Auftritt (`brontes.intro`): ein Hammerschlag im Dunkeln, die Kamera fährt an ihm hoch,
 das Auge öffnet sich. Der Hammer reißt echte Bodenblöcke heraus und hinterlässt glühende Risse und einen Brandfleck, der
@@ -154,7 +224,9 @@ mit seinem Leben. Musik `music.brontes`, ab 50 % `music.brontes_2`.
 ### Kratos und Bia, die Thronwache (Insel E)
 
 **Start:** nach Brontes, Altar am Fuß der Treppe. Kratos kommt die Treppe herab; Bia steht als Statue auf dem linken
-Sockel. Effektiv 1700 Leben, Phase II bei 50 %. **Bia nimmt nie Schaden und hat keine Leiste.**
+Sockel. Effektiv 1700 Leben, Phase II bei 50 %. **Bia hat eine eigene kleine Leiste** (unter seiner, 25 % seines Lebens).
+Verwundbar ist sie nur, solange sie taumelt und golden leuchtet: 4 s nach dem Zusammenstoß und 1 s nach „KNIET!“, wenn
+sie am Rand steht. Ein Treffer nimmt ihr höchstens 12 % der Leiste. Sonst prallt jeder Schlag ab.
 
 | Angriff | Ansage | Was tun |
 | --- | --- | --- |
@@ -163,18 +235,33 @@ Sockel. Effektiv 1700 Leben, Phase II bei 50 %. **Bia nimmt nie Schaden und hat 
 | Hammerfall | zwei Schritte, Kreis Radius 3,5 am Ziel | aus dem Kreis; der Hammer steckt danach: offen |
 | „WEICHT!“ | großes rotes Wort, Kreis Radius 7 um ihn | weglaufen (aus dem Nahkampf ohne Sprint zu schaffen) |
 | „HERAN!“ | Ring um ihn, nur innerhalb Radius 7 sicher | zu ihm laufen, dann hinter ihn: Der Schildstoß folgt sofort. Die Ansage dauert so lange, dass jeder hinkommt; ist jemand zu weit weg, ruft er das nicht |
-| „KNIET!“ | Kreis über den ganzen Platz, Bia läuft mit der Klinge quer hinüber | **Schleichtaste halten**, bis die Klingenreihe über dich hinweg ist (trifft auch in der Luft) |
-| Bias Sturm (Saal-Gefahr, etwa alle 14 s) | Linie vom Sockel durch einen Spieler | seitlich raus |
-| **Der Zusammenstoß** | – | Stell dich so, dass Kratos zwischen dir und Bia steht: Sie rammt ihn, beide taumeln, 4 s offen |
+| „KNIET!“ | Kreis über den ganzen Platz, Bia läuft mit der Klinge quer hinüber | **Schleichtaste halten**, bis die Klingenreihe über dich hinweg ist (trifft auch in der Luft), oder auf den Treppenabsatz. Danach steht Bia 1 s golden am Rand |
+| Bias Sturm (Saal-Gefahr, etwa alle 14 s) | Linie vom Sockel durch einen Spieler; sie endet an der ersten Standarte | seitlich raus, hinter eine Standarte (goldene Rune, Zeile „gedeckt“) oder auf den Treppenabsatz |
+| **Der Zusammenstoß** | – | Stell dich so, dass Kratos zwischen dir und Bia steht: Sie rammt ihn, beide taumeln 4 s und sind offen. Auf ihn schlagen oder auf sie |
 
 In Phase II wirft er den Schild weg, schlägt doppelt (zweiter Kreis 18 Ticks später), gibt Befehle paarweise, und Bia
-stürmt dreimal hintereinander.
+stürmt dreimal hintereinander. Unter 20 % Leben kommt das **Letzte Gefecht**: Die Pausen zwischen seinen Angriffen
+werden kürzer (× 0,7; das gilt für alle Duell-Bosse des Olymp).
+
+**Bias Bruch und Zorn (Überarbeitung 4).** Ist Bias Leiste leer, zerspringt die Statue (kurze Szene `kratos.bia_break`,
+überspringbar) und ihr Sockel liegt in Trümmern. Danach gibt es weder Bias Sturm noch „KNIET!“. Kratos tobt: Wo er einen
+Befehl geben würde, schlägt er doppelt (auch in Phase I), und seine Pausen sind kürzer (× 0,85, im Letzten Gefecht nie
+unter 60 % der Grundpause). „WEICHT!“ und „HERAN!“ ruft er nur noch gegen Ferne. Wer Bia ignoriert, kämpft wie bisher.
+
+**Standarten und Treppenabsatz.** Vier Standarten (Bronze, rotes Tuch) decken gegen Bias Sturm. Schlägt sein Hammer
+näher als 2,5 Blöcke neben einer ein, zerbricht sie bis auf den Sockel und kommt erst nach dem Kampf zurück; ist Bia
+schon zerschlagen, steckt sein Hammer dann fest: 2 s offen. Der Treppenabsatz (+4) liegt über Bias Sturm und „KNIET!“;
+Schildstoß, Hammerfall, Doppelschlag, „WEICHT!“ und „HERAN!“ erreichen ihn (die Ansage liegt dort zusätzlich auf dem
+Absatz). Der Hammer schlägt auf dem Platz oder auf dem Absatz ein, nie auf den Stufen.
 
 **Inszenierung (Überarbeitung 3):** Auftritt (`kratos.intro`): Die Kamera steigt neben Kratos die Treppe hinauf, er schlägt
 den Schild auf, dann läuft ein glühender Riss über die Statue der Bia und ihre Augen leuchten auf. Schildstoß als roter
 Schleier-Bogen, Hammerfall mit Ring, Staub und echten Marmorblöcken, Befehle als roter Bogen von seiner Hand zu Bia,
 „KNIET!“ als breites Band auf Brusthöhe. In Phase II fliegt der Schild davon und zerspringt; Umhang und Busch schwingen
-nach. Musik `music.kratos`, ab Phase II `music.kratos_2`.
+nach. Musik `music.kratos`, ab Phase II `music.kratos_2`. Seit Überarbeitung 4: Solange Bia verwundbar ist, laufen
+goldene Risse über die Statue (`kratos.bia_open`), unter ihr liegt eine goldene Rune. Beim Bruch glüht ein Rissnetz auf,
+große Brocken fliegen, der Sockel bricht (`kratos.bia_break`); Phasenwechsel und Niederlage zeigen danach Kratos allein
+(`kratos.phase2_alone`, `kratos.defeat_alone`).
 
 ### Zeus (Insel F)
 
@@ -186,17 +273,34 @@ nach. Musik `music.kratos`, ab Phase II `music.kratos_2`.
 | Keraunos-Wurf (fern) | Linie 2,4 × 30 | seitlich raus; mit leerer Hand ist er offen |
 | Aigis-Stoß (nah) | Kegel 70°, Radius 7 | zur Seite |
 | Donnerschlag (nah) | Kreis Radius 8, dann zwei Ringe | raus, dann über die Ringe springen; der Blitz steckt: offen |
-| Himmelsblitz (fern) | Kreis Radius 3,5 unter jedem Spieler | raus oder **neben einen Kupferpfeiler** (siehe Erdung) |
+| Himmelsblitz (fern) | Kreis Radius 3,5 unter jedem Spieler, auf Kern, Terrasse und Bühne | raus oder **neben einen Blitzpfeiler** (siehe Erdung) |
 | Donnerschritt (fern) | Kreis Radius 5 am Ziel | raus, er erscheint dort |
 | Gorgonenblick (II) | Kegel 60°, Radius 26 | wegschauen, aus dem Kegel gehen oder hinter einen Pfeiler |
 | Adler, Sturmwand (II, Saal-Gefahren) | Linie quer durch den Hof bzw. zwei Linien mit goldener Lücke | aus der Linie bzw. in die Lücke |
 | Ketten (III) | „Brontes“ (Schlag → Ringe → Wurf), „Steropes“ (Schritt → Stoß → Wurf), „Arges“ (Blick → drei Himmelsblitze) | wie oben, am Ende offen |
 | **Die Waage** (III, bei 66 % und 33 % der letzten Leiste) | goldene Schale am Rand, draußen Sturm | in die Schale, den vier Blitzen darin ausweichen: Er taumelt 5,5 s. Bleibt die Schale leer, heilt er sich |
+| **Die Insel bricht** (III, zu Beginn und bei 50 % der letzten Leiste) | rote Kreise über zwei Schollen, Kern und bleibende Schollen golden | runter von der roten Scholle; wer fällt, holt die Bö |
 
-- **Erdung:** Steht man am Boden höchstens 3 Blöcke neben einem frischen Pfeiler, fährt der Himmelsblitz in den Pfeiler
-  (kein Schaden, goldene Rune am Fuß). Kommt Zeus einem geladenen Pfeiler nahe oder wirft er den Keraunos hindurch,
-  entlädt sich der Pfeiler in ihn: Er taumelt 4,5 s, der Pfeiler oxidiert. Zu Beginn von II und III werden zwei Pfeiler
-  wieder frisch, nach dem Kampf alle.
+- **Arena (Überarbeitung 4):** Ebener Kern (r 19,5), darum sechs Schollen als Terrasse (+2) mit je einem Blitzpfeiler
+  (3 × 3, Sockel, Kupferkern), im Norden die Thronbühne (+3). Die Ringe des Donnerschlags laufen nur über den Kern: Auf
+  der Terrasse ist man vor ihnen sicher. Alle anderen Angriffe erreichen Kern, Terrasse und Bühne. Zeus selbst bleibt im
+  Kern; sein Donnerschritt landet immer dort.
+- **Erdung:** Steht man am Boden höchstens 3 Blöcke neben dem Sockel eines frischen Pfeilers – auf dessen Scholle oder im
+  Kern –, fährt der Himmelsblitz in den Pfeiler (kein Schaden, goldene Rune am Fuß). Kommt Zeus einem geladenen Pfeiler
+  auf 4 Blöcke nahe oder endet sein Keraunos am Pfeiler, entlädt sich der Pfeiler in ihn: Er taumelt 4,5 s, der Pfeiler
+  oxidiert. Zu Beginn von II und III werden zwei Pfeiler wieder frisch (nur solche, deren Scholle bleibt), nach dem Kampf alle.
+- **Deckung:** Die Pfeiler decken gegen den Gorgonenblick und den Keraunos-Wurf. Wer gedeckt ist, sieht eine goldene Rune
+  am Pfeiler und „gedeckt“ in der Statuszeile. Wegsehen schützt weiter vor dem Blick.
+- **Erdungsgriff:** Ist ein Pfeiler geladen, leuchtet sein Griff in der Terrassenwand golden. Rechtsklick: Steht Zeus
+  höchstens 14 Blöcke vom Pfeiler und sieht der Pfeilerkopf ihn, springt nach einer goldenen Linie (0,8 s) der Blitz zu
+  ihm. Steht er dann noch in der Linie: Entladung wie oben (Taumeln 4,5 s). Ist er ausgewichen, verpufft der Blitz, und der
+  Pfeiler ist trotzdem verbraucht. Zwischen zwei Griffen liegen mindestens 10 s. Fehlt eine Bedingung, sagt die
+  Statuszeile, warum („Zeus ist zu weit“ usw.).
+- **Die Insel bricht:** Zu Beginn von Phase III brechen die Schollen 0 (Osten) und 3 (Westen) samt Pfeilern, bei 50 %
+  der letzten Leiste die Schollen 1 und 4; es bleiben 2 und 5 und die Thronbühne. Vorher eine Ansage von mindestens 3 s
+  (länger, wenn jemand weit draußen steht): rote Kreise über der Scholle, Risse an den Fugen, Kern und bleibende Schollen
+  golden. Liegt gerade die Waage an, kommt zuerst die Waage. Wer mitfällt, den holt die Bö auf die nächste Fläche, nie ein
+  Sturz in die Tiefe. Nach dem Kampf steht alles wieder (Bauplan).
 - **Luftregel:** Wer länger als 1,5 s mehr als 3 Blöcke über dem Boden bleibt, bekommt einen eigenen Blitz (angesagt).
 - Echte Vanilla-Blitze schlagen nur noch an den großen Momenten ein (Pfeiler lädt sich, Entladung, Szenen), höchstens
   einer je Sekunde; alle anderen Blitze sind gezeichnet und hellen den Himmel nicht auf.
@@ -241,5 +345,9 @@ kleinen Staubring; der Dampfstoß der goldenen Wächterin ist ein weicher weiße
 | `/hha tp olymp\|tempel\|dreiweg\|schmiede\|stufen\|thron\|tartaros` | Schnellreise zu den Stationen |
 | `/hha olymp bridges` | alle Siegelbrücken sofort schließen (nur geladene Chunks) |
 | `/hha olymp spawn <kurete\|griffin\|automaton>` | Testposten 8 Blöcke vor dir |
+| `/hha arena list`, `/hha arena show <olymp_c\|olymp_d\|olymp_e\|olymp_f\|forum> cover\|levels\|parts\|devices` | Arenen auflisten; Deckung, Ebenen, bewegliche Teile bzw. Geräte als Partikel zeigen |
+| `/hha arena part <teil>` (im Kampf), `/hha arena restore`, `/hha arena repair <id>` | ein Teil abwerfen (z. B. `floe_0`); alle Änderungen zurücksetzen; die Arena gegen den Bauplan reparieren |
+| `/hha world retrofit status\|run <teil>\|all` | Nachrüstung der Inseln und Brücken in alten Welten |
+| `/hha approach` | Weg, Fortschritt und nächster Wegpunkt |
 
 `/hha progress set hermes false` öffnet eine schon geschlossene Brücke nicht wieder, damit niemand mitten auf ihr abstürzt.

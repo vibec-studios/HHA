@@ -157,7 +157,7 @@ Client (`config/hha/client.json`, `/hhac toggle <schlüssel>`, im Kontrollzentru
 
 | Schlüssel | Standard | Wirkung |
 | --- | --- | --- |
-| `screen_fx` | `true` | Bildschirm-Pässe der Bosse (Stoßring, Hitzeflimmern, Mondfinsternis, Zeitstopp, Gravitationslinse). Aus = 2D-Abdunklung/Tönung mit gleicher Dauer |
+| `screen_fx` | `true` | Bildschirm-Pässe der Bosse (Stoßring, Hitzeflimmern, dunkle Stunde der Hekate, Zeitstopp, Gravitationslinse). Aus = 2D-Abdunklung/Tönung mit gleicher Dauer |
 | `cine_handheld` | `true` | leichtes Schwanken der Szenenkamera wie aus der Hand |
 | `rpg_hud` | `true` | eigenes HUD und Pausenmenü in RPG-Welten; aus = Vanilla (wirkt sofort) |
 
@@ -175,3 +175,29 @@ Server (`/hha toggle` bzw. `/hha set`, im Kontrollzentrum in der Gruppe **RPG**)
 
 Neue Taste: **Tagebuch** (`key.hha.journal`, Standard J, Kategorie H&H Armors) – nur in RPG-Welten. Details:
 [RPG-Modus](rpg.md).
+
+## Neue Schalter und Befehle (Überarbeitung 4)
+
+Server (`/hha toggle <schlüssel> <true|false>`, HHA-Einstellungen):
+
+| Schlüssel | Standard | Wirkung |
+| --- | --- | --- |
+| `world_retrofit` | `true` | Olymp-Inseln und -Brücken in alten Welten automatisch nach dem neuen Bauplan nachrüsten (beim Näherkommen, in Scheiben; Truhen bleiben). Aus = nichts ändert sich von selbst; `/hha world retrofit run <teil>` wirkt trotzdem |
+
+Befehle (OP 2, `config/Overhaul4Commands.kt`):
+
+| Befehl | Wirkung |
+| --- | --- |
+| `/hha arena list` | alle Arenen mit Bauplan |
+| `/hha arena show <id> cover\|levels\|parts\|devices` | Deckung, Ebenen, bewegliche Teile bzw. Geräte 10 s als Partikel |
+| `/hha arena repair <id>` | Arena gegen den Bauplan reparieren (im Tartaros im Bauwerk stehen) |
+| `/hha arena restore` | alle Änderungen des laufenden Kampfs zurücksetzen |
+| `/hha arena part <teil>` | ein Teil im laufenden Kampf abwerfen |
+| `/hha world retrofit status\|run <teil>\|all` | Stand bzw. Nachrüstung der Pfad-Teile `isle_A` … `isle_F`, `bridge_ab` … `bridge_ef` |
+| `/hha sub test <0–4>` | Unterleisten zur Probe |
+| `/hha device <0\|1\|2>` | Gerät im Blick umschalten |
+| `/hha approach` | Weg, Fortschritt, nächster Wegpunkt |
+| `/hha deco give` | je 64 aller 35 Deko- und Geräte-Blöcke |
+
+Neuer Kreativ-Tab **„H&H Welt“** mit allen Deko-Blöcken und Geräten ([Blöcke](bloecke.md)). Die Statuszeile zeigt in
+Kämpfen „gedeckt“/„gesehen“ und warum ein Gerät gerade nichts tut. Arenen und Begriffe: [Bosse allgemein](bosse-allgemein.md#arena).

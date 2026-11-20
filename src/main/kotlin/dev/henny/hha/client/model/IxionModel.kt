@@ -3,6 +3,7 @@ package dev.henny.hha.client.model
 import dev.henny.hha.entity.miniboss.IxionAction
 import dev.henny.hha.logic.boss.BossDefense
 import dev.henny.hha.logic.boss.BossTimings
+import dev.henny.hha.logic.boss.timings.GuardianSigTimings
 import net.minecraft.client.model.ModelPart
 import kotlin.math.PI
 import kotlin.math.abs
@@ -137,8 +138,9 @@ class IxionModel(root: ModelPart) : GuardianModel(root) {
                 press = 1f; scream = 1f
                 bounce = -abs(sin(a * 0.8f)) * 1.2f
             }
-            IxionAction.WOBBLE -> {
-                val open = BossTimings.Ixion.WOBBLE_WINDOW.toFloat()
+            IxionAction.WOBBLE, IxionAction.TILT -> {
+                // P21: Mit Fesseln (TILT) kippt das Rad länger ([GuardianSigTimings.TILT_TICKS]), sonst wie bisher.
+                val open = (if (act == IxionAction.TILT) GuardianSigTimings.TILT_TICKS else BossTimings.Ixion.WOBBLE_WINDOW).toFloat()
                 val right = 1f - step(a, open, open + BossTimings.Ixion.WOBBLE_RIGHT)
                 val angle = step(a, 0f, 6f) * (WOBBLE_MID + WOBBLE_AMP * sin(a * 0.45f - HALF_PI)) * right
                 tTilt = angle
@@ -350,7 +352,7 @@ class IxionModel(root: ModelPart) : GuardianModel(root) {
         // Gestürzt schlingert das Rad wie eine auslaufende Münze aus; beim Kippen und beim Ende des Rollens ein kleiner Stoß.
         if (rig.changed) when {
             act == IxionAction.FALLEN -> rig.springs[0].kick(FALL_KICK)
-            act == IxionAction.WOBBLE -> rig.springs[0].kick(WOBBLE_KICK)
+            act == IxionAction.WOBBLE || act == IxionAction.TILT -> rig.springs[0].kick(WOBBLE_KICK)
             rig.previous == IxionAction.ROLL -> rig.springs[0].kick(STOP_KICK)
         }
         val rim = rig.spring(0)

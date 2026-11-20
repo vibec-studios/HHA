@@ -46,7 +46,10 @@ import kotlin.math.sqrt
  * | `bia.rush` | Linienanfang | Linienende (absolut) | Linienbreite | Laufdauer | – | – | Lauf + 14 | Bia | Staubwolken auf der Linie (schmaler als sie), kurzer Schweif |
  * | `bia.awake` | Bias Füße | – | – | 1 = erstarrt | – | – | 60 | (gesucht) | Riss läuft über die Statue, Steinbrocken und Sockelblöcke platzen ab; erstarrt: Riss kühlt und schließt |
  *
- * Gold kommt nirgends vor; Gefahrenfarbe kommt über die Palette des Kampfes (Crimson). Bodeneffekte beginnen erst mit
+ * | `kratos.bia_open` (P17) | Bias Füße | – | – | – | – | – | Fenster (20/80) | Bia | goldene Risse vorn und hinten über die Statue, ruhiges Atmen 0,8 Hz, schwacher Schein an der Brust |
+ * | `kratos.bia_break` (P17) | Bias Füße | weg von Kratos | – | – | – | – | 70 | Bia | Rissnetz glüht auf, Statue birst: 14 Steinbrocken, Staubkuppel, 6 echte Blöcke, kurzer Schein; Ton `boss.thud` |
+ *
+ * Gold kommt nur in `kratos.bia_open` vor (Server schickt dort `Style.GOLD`: Bia ist offen). Sonst Gefahrenfarbe über die Palette des Kampfes (Crimson). Bodeneffekte beginnen erst mit
  * dem Treffer bzw. der Landung (die Ansage ist dann vorbei oder liegt darunter).
  */
 object KratosFx {
@@ -59,6 +62,9 @@ object KratosFx {
         FxRegistry.register("bia.blade") { BladeFx(it) }
         FxRegistry.register("bia.rush") { RushFx(it) }
         FxRegistry.register("bia.awake") { awake(it) }
+        // Überarbeitung 4 (P17): Bia als Teilziel.
+        FxRegistry.register("kratos.bia_open") { BiaOpenFx(it) }
+        FxRegistry.register("kratos.bia_break") { breakFx(it) }
     }
 
     // ---------------------------------------------------------------------------------------------------------------
@@ -642,4 +648,223 @@ object KratosFx {
     private const val PETRIFY_PULSE = -0.35f
     private const val PETRIFY_HEAT = 0.8f
     private const val PETRIFY_COOL_TICKS = 40f
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // Überarbeitung 4 (P17): kratos.bia_open – Bia taumelt und ist verwundbar (Gold = offen)
+    // ---------------------------------------------------------------------------------------------------------------
+
+    /**
+     * Goldene Risse leuchten über Vorder- und Rückseite der Statue, so lange sie verwundbar ist (`life` = Fenster).
+     * Ruhiges Atmen mit [OPEN_BREATH_HZ] (unter 2 Hz), weich ein- und ausgeblendet, dazu ein schwacher Schein an der
+     * Brust. Folgt ihr (`entity`); ist sie fort, endet das Bild. Farbe: Palette des Aufrufs (Server schickt `GOLD`).
+     */
+    private class BiaOpenFx(args: FxArgs) : FxEffect(args.life.coerceIn(OPEN_MIN_LIFE, OPEN_MAX_LIFE)) {
+        private val bia = args.entity
+        private val fallback = args.pos
+        private val palette = args.palette
+        private val seed = args.seed.toInt()
+        /** Zwei Risse (vorn, hinten) als Bruchteile ihrer Höhe und seitliche Versätze, fest je Aufruf. */
+        private val jitter: DoubleArray
+
+        init {
+            val rnd = Random(args.seed)
+            jitter = DoubleArray(OPEN_POINTS * 2) { (if (it % 2 == 0) 1.0 else -1.0) * OPEN_JITTER * (0.4 + rnd.nextDouble()) }
+        }
+
+        override fun energy(f: FxFrame) {
+            val e = bia
+            if (e != null && e.isRemoved) return
+            val t = time(f)
+            val fade = Ease.inOut((t / OPEN_FADE_IN).coerceIn(0f, 1f)) * (1f - Ease.inOut(((t - (life - OPEN_FADE_OUT)) / OPEN_FADE_OUT).coerceIn(0f, 1f)))
+            if (fade <= 0.01f) return
+            val breath = OPEN_BREATH_LOW + (1f - OPEN_BREATH_LOW) * (0.5f + 0.5f * sin(t / 20f * 2f * PI.toFloat() * OPEN_BREATH_HZ))
+            val feet = e?.getLerpedPos(f.tickDelta) ?: fallback
+            val yaw = Math.toRadians(((e as? BiaEntity)?.bodyYaw ?: 0f).toDouble())
+            val facing = Vec3d(-sin(yaw), 0.0, cos(yaw))
+            val right = Vec3d(-cos(yaw), 0.0, -sin(yaw))
+            val height = (e?.height ?: AWAKE_DEFAULT_HEIGHT).toDouble()
+            for (side in 0..1) {
+                val normal = if (side == 0) facing else facing.multiply(-1.0)
+                val pts = List(OPEN_POINTS) { i ->
+                    val k = i / (OPEN_POINTS - 1.0)
+                    feet.add(normal.multiply(OPEN_FRONT)).add(right.multiply(jitter[side * OPEN_POINTS + i] * (if (i == 0) 0.0 else 1.0)))
+                        .add(0.0, OPEN_FOOT + (height * OPEN_TOP - OPEN_FOOT) * k, 0.0)
+                }
+                FxDraw.strip(f, pts, normal, width = { _ -> OPEN_GLOW_WIDTH }, color = { _ -> FxLib.alpha(palette.main, OPEN_GLOW_ALPHA * fade * breath) },
+                    mode = FxMode.CRACK, seed = seed + side, progress = 1f)
+                FxDraw.strip(f, pts, normal, width = { u -> OPEN_CORE_WIDTH * (0.5f + 0.5f * edge(u)) },
+                    color = { _ -> FxLib.alpha(palette.core, OPEN_CORE_ALPHA * fade * breath) }, mode = FxMode.CRACK, seed = seed + 2 + side, progress = 1f)
+            }
+            FxDraw.glow(f, feet.add(0.0, height * OPEN_GLOW_UP, 0.0), OPEN_HALO_SIZE, FxLib.alpha(palette.main, OPEN_HALO_ALPHA * fade * breath), seed)
+        }
+    }
+
+    private const val OPEN_MIN_LIFE = 10
+    private const val OPEN_MAX_LIFE = 200
+    private const val OPEN_POINTS = 9
+    private const val OPEN_JITTER = 0.14
+    private const val OPEN_FRONT = 0.48
+    private const val OPEN_FOOT = 0.3
+    private const val OPEN_TOP = 0.85
+    private const val OPEN_FADE_IN = 6f
+    private const val OPEN_FADE_OUT = 8f
+    /** Atmen: so oft je Sekunde (ruhig, deutlich unter 2 Hz), nie dunkler als dieser Anteil. */
+    private const val OPEN_BREATH_HZ = 0.8f
+    private const val OPEN_BREATH_LOW = 0.55f
+    private const val OPEN_GLOW_WIDTH = 0.18f
+    private const val OPEN_GLOW_ALPHA = 0.4f
+    private const val OPEN_CORE_WIDTH = 0.07f
+    private const val OPEN_CORE_ALPHA = 0.95f
+    private const val OPEN_GLOW_UP = 0.55
+    private const val OPEN_HALO_SIZE = 1.1f
+    private const val OPEN_HALO_ALPHA = 0.18f
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // Überarbeitung 4 (P17): kratos.bia_break – die Statue zerspringt
+    // ---------------------------------------------------------------------------------------------------------------
+
+    /**
+     * Bias Bruch: ein Rissnetz glüht in einem Augenblick auf (Gefahrenfarbe), dann fliegen große Steinbrocken nach außen
+     * und fallen, Staubkuppel am Boden, echte Blöcke springen. `dir` = weg von Kratos (die meisten Brocken fliegen so).
+     * Bia selbst entfernt der Server zwei Ticks später; das Bild steht an ihren Füßen (`pos`).
+     */
+    private fun breakFx(args: FxArgs): VfxEffect {
+        if (FxLib.enabled()) BlockDebris.burst(args.world, args.pos, BREAK_DEBRIS_INNER, BREAK_DEBRIS_OUTER, BREAK_BLOCKS, BREAK_DEBRIS_UP, BREAK_DEBRIS_OUT)
+        thud(args.world, args.pos, BREAK_THUD_VOLUME, BREAK_THUD_PITCH)
+        return BiaBreakFx(args)
+    }
+
+    private class BiaBreakFx(args: FxArgs) : FxEffect(args.life.coerceIn(BREAK_MIN_LIFE, BREAK_MAX_LIFE)) {
+        private class Chip(val start: Vec3d, val v: Vec3d, val size: Float, val spin: Float)
+
+        private val feet = args.pos
+        private val palette = args.palette
+        private val seed = args.seed.toInt()
+        private val height = ((args.entity as? BiaEntity)?.height ?: AWAKE_DEFAULT_HEIGHT).toDouble()
+        private val cracks: List<List<Vec3d>>
+        private val chips: List<Chip>
+
+        init {
+            val rnd = Random(args.seed)
+            val away = Vec3d(args.dir.x, 0.0, args.dir.z).let { if (it.lengthSquared() < 1e-6) Vec3d(0.0, 0.0, 1.0) else it.normalize() }
+            val side = Vec3d(-away.z, 0.0, away.x)
+            // Ein Stamm-Riss je Seite um den Körper, schräg nach oben, mit Zacken.
+            cracks = List(BREAK_CRACKS) { c ->
+                val a = c * 2.0 * PI / BREAK_CRACKS + rnd.nextDouble() * 0.4
+                val n = Vec3d(cos(a), 0.0, sin(a))
+                List(BREAK_CRACK_POINTS) { i ->
+                    val k = i / (BREAK_CRACK_POINTS - 1.0)
+                    val wobble = (if (i % 2 == 0) 1.0 else -1.0) * 0.1 * rnd.nextDouble()
+                    feet.add(n.multiply(BREAK_CRACK_OUT + wobble)).add(0.0, BREAK_CRACK_FOOT + (height * BREAK_CRACK_TOP - BREAK_CRACK_FOOT) * k, 0.0)
+                }
+            }
+            chips = List(BREAK_CHIPS) {
+                val h = BREAK_CHIP_LOW + rnd.nextDouble() * (height * 0.9 - BREAK_CHIP_LOW)
+                val ang = (rnd.nextDouble() - 0.5) * PI * 1.6
+                val out = away.multiply(cos(ang)).add(side.multiply(sin(ang)))
+                val speed = BREAK_CHIP_SPEED * (0.7 + 0.6 * rnd.nextDouble())
+                val start = feet.add(out.multiply(0.3)).add(0.0, h, 0.0)
+                Chip(start, out.multiply(speed).add(0.0, BREAK_CHIP_UP * (0.4 + rnd.nextDouble()), 0.0), BREAK_CHIP_MIN + rnd.nextFloat() * BREAK_CHIP_RANGE, rnd.nextFloat() * 6.28f)
+            }
+        }
+
+        private fun ending(t: Float): Float = 1f - Ease.inOut((t - (life - BREAK_FADE_OUT)) / BREAK_FADE_OUT)
+
+        override fun solid(f: FxFrame) {
+            val t = time(f)
+            if (t < BREAK_BURST) return
+            val tt = t - BREAK_BURST
+            val shrink = ending(t)
+            if (shrink <= 0.02f) return
+            for ((i, c) in chips.withIndex()) {
+                val y = c.start.y + c.v.y * tt - 0.5 * BREAK_CHIP_GRAVITY * tt * tt
+                val floor = feet.y + c.size * 0.5
+                val landed = y <= floor
+                val at = if (landed) {
+                    val lt = landTime(c, floor)
+                    Vec3d(c.start.x + c.v.x * lt, floor, c.start.z + c.v.z * lt)
+                } else {
+                    Vec3d(c.start.x + c.v.x * tt, y, c.start.z + c.v.z * tt)
+                }
+                val s = c.size * shrink
+                val m = FxDraw.place(at, up = UP, spin = c.spin + (if (landed) landTime(c, floor) else tt) * BREAK_CHIP_SPIN, scaleXYZ = Vector3f(s * 1.25f, s * 0.85f, s))
+                FxDraw.mesh(f, FxMeshes.SPHERE, m, STONE, FxSolidMode.STONE, solid = true, seed = seed + i)
+            }
+        }
+
+        private fun landTime(c: Chip, floor: Double): Float {
+            val drop = c.start.y - floor
+            val g = BREAK_CHIP_GRAVITY.toDouble()
+            return ((c.v.y + sqrt(c.v.y * c.v.y + 2.0 * g * drop.coerceAtLeast(0.0))) / g).toFloat()
+        }
+
+        override fun energy(f: FxFrame) {
+            val t = time(f)
+            // Rissnetz: wächst bis zum Bersten, glüht kurz nach und erlischt.
+            val grow = Ease.outCubic((t / BREAK_BURST).coerceIn(0f, 1f))
+            val heat = 1f - Ease.inOut(((t - BREAK_BURST) / BREAK_COOL).coerceIn(0f, 1f))
+            if (heat > 0.01f) {
+                for ((ci, pts) in cracks.withIndex()) {
+                    val shown = FxLib.partial(pts, FxLib.arcFractions(pts), grow)
+                    if (shown.size < 2) continue
+                    val normal = Vec3d(pts[0].x - feet.x, 0.0, pts[0].z - feet.z).let { if (it.lengthSquared() < 1e-6) Vec3d(0.0, 0.0, 1.0) else it.normalize() }
+                    FxDraw.strip(f, shown, normal, width = { _ -> BREAK_GLOW_WIDTH }, color = { _ -> FxLib.alpha(palette.main, BREAK_GLOW_ALPHA * heat) },
+                        mode = FxMode.CRACK, seed = seed + ci, progress = heat)
+                    FxDraw.strip(f, shown, normal, width = { u -> BREAK_CORE_WIDTH * (0.5f + 0.5f * edge(u)) },
+                        color = { _ -> FxLib.alpha(FxLib.mix(palette.main, palette.core, heat), BREAK_CORE_ALPHA * heat) }, mode = FxMode.CRACK, seed = seed + 20 + ci, progress = heat)
+                }
+            }
+            // Staub: eine flache Kuppel am Boden nach dem Bersten.
+            val dk = ((t - BREAK_BURST) / BREAK_DUST_TICKS).coerceIn(0f, 1f)
+            if (t >= BREAK_BURST && dk < 1f) {
+                FxDraw.flat(f, feet.add(0.0, DUST_LIFT, 0.0), UP, BREAK_DUST_R0 + BREAK_DUST_GROW * Ease.outQuad(dk),
+                    FxLib.alpha(DUST, BREAK_DUST_ALPHA * (1f - dk).pow(1.4f)), FxMode.DUST, rotation = seed * 0.31f, progress = 0.8f, seed = seed)
+            }
+        }
+
+        override fun over(f: FxFrame) {
+            val t = time(f)
+            if (t > BREAK_BURST + BREAK_FLASH) return
+            val k = (t / (BREAK_BURST + BREAK_FLASH)).coerceIn(0f, 1f)
+            FxDraw.glow(f, feet.add(0.0, height * 0.55, 0.0), BREAK_FLASH_SIZE, FxLib.alpha(palette.core, BREAK_FLASH_ALPHA * Ease.bump(k)), seed)
+        }
+    }
+
+    private const val BREAK_MIN_LIFE = 30
+    private const val BREAK_MAX_LIFE = 120
+    /** Das Rissnetz wächst so lange, dann birst die Statue. */
+    private const val BREAK_BURST = 6f
+    private const val BREAK_COOL = 14f
+    private const val BREAK_FLASH = 4f
+    private const val BREAK_FLASH_SIZE = 1.6f
+    private const val BREAK_FLASH_ALPHA = 0.55f
+    private const val BREAK_FADE_OUT = 14f
+    private const val BREAK_CRACKS = 4
+    private const val BREAK_CRACK_POINTS = 8
+    private const val BREAK_CRACK_OUT = 0.5
+    private const val BREAK_CRACK_FOOT = 0.2
+    private const val BREAK_CRACK_TOP = 0.92
+    private const val BREAK_GLOW_WIDTH = 0.2f
+    private const val BREAK_GLOW_ALPHA = 0.4f
+    private const val BREAK_CORE_WIDTH = 0.07f
+    private const val BREAK_CORE_ALPHA = 0.95f
+    private const val BREAK_CHIPS = 14
+    private const val BREAK_CHIP_LOW = 0.4
+    private const val BREAK_CHIP_SPEED = 0.14
+    private const val BREAK_CHIP_UP = 0.12
+    private const val BREAK_CHIP_GRAVITY = 0.04f
+    private const val BREAK_CHIP_SPIN = 0.25f
+    private const val BREAK_CHIP_MIN = 0.16f
+    private const val BREAK_CHIP_RANGE = 0.18f
+    private const val BREAK_DUST_TICKS = 34f
+    private const val BREAK_DUST_R0 = 1.4f
+    private const val BREAK_DUST_GROW = 1.4f
+    private const val BREAK_DUST_ALPHA = 0.38f
+    private const val BREAK_BLOCKS = 6
+    private const val BREAK_DEBRIS_INNER = 0.5f
+    private const val BREAK_DEBRIS_OUTER = 1.6f
+    private const val BREAK_DEBRIS_UP = 0.45f
+    private const val BREAK_DEBRIS_OUT = 0.1f
+    private const val BREAK_THUD_VOLUME = 0.9f
+    private const val BREAK_THUD_PITCH = 0.75f
 }

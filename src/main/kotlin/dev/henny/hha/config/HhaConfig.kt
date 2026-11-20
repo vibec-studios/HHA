@@ -63,6 +63,8 @@ object HhaConfig {
         "boss_anti_air" to true,
         // Überarbeitung 3 (PLAN 6.6): Hunger im RPG (aus = Sättigung bleibt voll), siehe rpg/RpgRules.kt.
         "rpg_hunger" to false,
+        // Überarbeitung 4 (PLAN 6.3): Olymp-Pfad in alten Welten nach dem Bauplan nachrüsten (WorldRetrofit, P02).
+        "world_retrofit" to true,
     )
 
     /** Zahlenwerte: Schaden und Trigger-Schwellen. */

@@ -13,6 +13,7 @@ import dev.henny.hha.logic.Vfx
 import dev.henny.hha.logic.world.OlympusPath
 import dev.henny.hha.stage.StageScripts
 import dev.henny.hha.stage.scripts.HermesStages
+import dev.henny.hha.world.olymp.OlympusArenas
 import net.minecraft.entity.Entity
 import net.minecraft.entity.SpawnReason
 import net.minecraft.entity.effect.StatusEffectInstance
@@ -330,6 +331,8 @@ class HermesCutscenes(private val fight: HermesFight) {
         sound(HhaSounds.IMPACT, 4f, 0.55f)
         sound(HhaSounds.SOUL, 3f, 0.8f)
         fight.arena.repaint(3)
+        // Überarbeitung 4 (PLAN 3.1): Der Schlag bricht die Empore im Osten und Westen (Ansage ROOM, goldener Kern).
+        fight.dropGallery(OlympusArenas.FORUM_ARCS_STAGE3)
         Cine.atmosphere(everyone, Vfx.Style.SOUL, center, 60)
         wait(90)
 
@@ -391,6 +394,8 @@ class HermesCutscenes(private val fight: HermesFight) {
         // Der Himmel antwortet.
         Cine.atmosphere(everyone, Vfx.Style.STORM, center, 90)
         fight.arena.repaint(4)
+        // Überarbeitung 4 (PLAN 3.1): Der Himmel reißt die übrigen Bögen der Empore fort (Norden und Süden).
+        fight.dropGallery(OlympusArenas.FORUM_ARCS_STAGE4)
         fight.lightning(center.add(5.0, 0.0, 3.0))
         Vfx.rift(world, Vfx.Style.STORM, center.add(0.0, 60.0, 0.0), Vec3d(0.0, -1.0, 0.0), 30f, 170)
         Vfx.bolt(world, Vfx.Style.STORM, center.add(0.0, 60.0, 0.0), center.add(0.0, 0.3, 0.0), 1.2f, 12)

@@ -40,6 +40,8 @@ import kotlin.math.sin
  * | `hekate.kindle` | Auftritt, je Fackelsäule (Marke `torch<n>`) | pos = Feuerschale |
  * | `hekate.ground_fire` | Fackelwurf, liegendes Feuer | pos = Mitte am Boden, a = Radius, life = Brenndauer |
  * | `hekate.path_fire` | Feuerpfad, Treffer (Flächeneffekt) | pos = Wegende, dir = Weganfang (absolut), a = Wegbreite |
+ * | `hekate.gaze` | Dunkle Stunde, je Schwenk ab Beginn der Ansage (Überarbeitung 4, P15) | pos = Kegelspitze am Boden, dir = Blick, a = Reichweite außen, b = halber Winkel (°), c = Reichweite innen (Schleichen), d = Ansage (Ticks), life = Ansage + Blick |
+ * | `hekate.dawn` | Ende der dunklen Stunde ohne Entdeckung, je Feuerstelle (P15) | pos = Feuer, a = Flammenhöhe; Stil Gold (sie ist offen) |
  *
  * Dauer-Effekt ([FxAttach]) für jede Hekate: die Echte trägt eine weiche Flamme an der rechten Fackel (Stärke folgt dem
  * Kampfzustand), die Trugbilder einen kalten Mantel (SHELL). So bleibt die Echte in der Dreigestalt erkennbar.
@@ -52,6 +54,8 @@ object HekateFx {
     const val KINDLE = "hekate.kindle"
     const val GROUND_FIRE = "hekate.ground_fire"
     const val PATH_FIRE = "hekate.path_fire"
+    const val GAZE = "hekate.gaze"
+    const val DAWN = "hekate.dawn"
 
     fun init() {
         FxRegistry.register(TORCH_ARC) { HekateTorchArcFx(it) }
@@ -60,6 +64,8 @@ object HekateFx {
         FxRegistry.register(KINDLE) { HekateKindleFx(it) }
         FxRegistry.register(GROUND_FIRE) { HekateGroundFireFx(it) }
         FxRegistry.register(PATH_FIRE) { HekatePathFireFx(it) }
+        FxRegistry.register(GAZE) { HekateGazeFx(it) }
+        FxRegistry.register(DAWN) { HekateDawnFx(it) }
         FxAttach.register(HhaEntities.HEKATE) { HekatePresenceFx(it) }
     }
 }
@@ -542,6 +548,145 @@ private class HekatePathFireFx(args: FxArgs) : FxEffect(args.life.coerceAtLeast(
 }
 
 // =====================================================================================================================
+// hekate.gaze – kalter Lichtkegel des Blicks (dunkle Stunde, Überarbeitung 4, P15)
+// =====================================================================================================================
+
+/**
+ * Ruhiger, kalter Lichtfächer am Boden unter der Ansage: [RAYS] liegende Strahlen von der Spitze bis zur äußeren
+ * Reichweite, im inneren Teil (bis zur Schleich-Reichweite) heller, dazu je ein feiner Bogen auf beiden Reichweiten.
+ * Über die Ansage blendet er weich ein ([WINDUP_ALPHA]), im Blick steht er still auf [HOLD_ALPHA], am Ende blendet er in
+ * [FADE_OUT] Ticks aus. Keine Bewegung, kein Rauschlauf (Scroll fest), keine Helligkeitsstufen. Gezeichnet in `over`,
+ * also nach dem Pass „eclipse“: Der Blick liegt hell in der Dunkelheit. Farben fest kalt ([HekateCold]), kein Gold.
+ */
+private class HekateGazeFx(args: FxArgs) : FxEffect(args.life.coerceAtLeast(MIN_LIFE)) {
+    private val apex = args.pos.add(0.0, LIFT, 0.0)
+    private val dir = hekFlat(args.dir)
+    private val outer = args.a.coerceIn(2f, MAX_REACH)
+    private val half = Math.toRadians(args.b.coerceIn(5f, 89f).toDouble())
+    private val inner = args.c.coerceIn(0.5f, outer)
+    private val windup = args.d.coerceIn(1f, life.toFloat())
+    private val seed = args.seed.toInt()
+
+    private fun envelope(t: Float): Float {
+        val rise = if (t < windup) {
+            WINDUP_ALPHA * Ease.inOut(t / windup)
+        } else {
+            WINDUP_ALPHA + (HOLD_ALPHA - WINDUP_ALPHA) * Ease.outQuad((t - windup) / HOLD_RISE)
+        }
+        val fade = 1f - Ease.inQuad((t - (life - FADE_OUT)) / FADE_OUT)
+        return rise * fade
+    }
+
+    private fun ray(angle: Double): Vec3d = Vec3d(dir.x * cos(angle) - dir.z * sin(angle), 0.0, dir.x * sin(angle) + dir.z * cos(angle))
+
+    override fun over(f: FxFrame) {
+        val env = envelope(time(f))
+        if (env <= 0.01f) return
+        val step = (2.0 * half / (RAYS - 1)).toFloat()
+        val share = inner / outer
+        for (i in 0 until RAYS) {
+            val u = i / (RAYS - 1f) * 2f - 1f
+            val d = ray(u * half)
+            val points = List(RAY_POINTS) { j -> apex.add(d.multiply((outer * j / (RAY_POINTS - 1f)).toDouble())) }
+            val side = 1f - SIDE_DIM * kotlin.math.abs(u)
+            FxDraw.strip(
+                f, points, HEK_UP,
+                width = { s -> RAY_WIDTH_MIN + outer * s * sin(step * 0.5f) * RAY_OVERLAP },
+                color = { s ->
+                    val near = if (s <= share) 1f else 1f - Ease.inOut((s - share) / (1f - share)) * (1f - OUTER_LEVEL)
+                    hekAlpha(hekMix(HekateCold.CORE, HekateCold.MAIN, s), RAY_ALPHA * env * side * near)
+                },
+                mode = FxMode.RIBBON, seed = seed + i,
+            )
+        }
+        arc(f, inner, hekAlpha(HekateCold.CORE, EDGE_ALPHA * env), seed + 40)
+        arc(f, outer, hekAlpha(HekateCold.EDGE, EDGE_ALPHA * OUTER_LEVEL * env), seed + 41)
+    }
+
+    /** Feiner liegender Bogen auf dem Radius [r] über den ganzen Winkel. */
+    private fun arc(f: FxFrame, r: Float, argb: Int, seed: Int) {
+        val points = List(ARC_POINTS) { j -> apex.add(ray(-half + 2.0 * half * j / (ARC_POINTS - 1)).multiply(r.toDouble())) }
+        FxDraw.strip(f, points, HEK_UP, width = { EDGE_WIDTH }, color = { argb }, mode = FxMode.RIBBON, seed = seed)
+    }
+
+    companion object {
+        const val MIN_LIFE = 20
+        const val MAX_REACH = 32f
+        /** Knapp über dem Boden (nicht schwebend). */
+        const val LIFT = 0.06
+        const val RAYS = 9
+        const val RAY_POINTS = 5
+        const val RAY_WIDTH_MIN = 0.12f
+        /** Strahlen überlappen leicht, damit der Fächer geschlossen wirkt. */
+        const val RAY_OVERLAP = 1.15f
+        const val RAY_ALPHA = 0.22f
+        const val SIDE_DIM = 0.35f
+        /** Außerhalb der Schleich-Reichweite noch so viel Licht (Anteil). */
+        const val OUTER_LEVEL = 0.45f
+        const val WINDUP_ALPHA = 0.55f
+        const val HOLD_ALPHA = 1f
+        const val HOLD_RISE = 4f
+        const val FADE_OUT = 8f
+        const val ARC_POINTS = 17
+        const val EDGE_WIDTH = 0.08f
+        const val EDGE_ALPHA = 0.5f
+    }
+}
+
+// =====================================================================================================================
+// hekate.dawn – eine Feuerstelle flammt auf (dunkle Stunde ohne Entdeckung, P15)
+// =====================================================================================================================
+
+/**
+ * Die Feuer kehren zurück und blenden sie: Flammenkarte schießt mit `outBack` auf a Blöcke hoch, sinkt über [SETTLE]
+ * auf die Ruhehöhe und blendet aus; ein Stoßring auf der Schale und ein weicher, heller Schein (`bump`, ≤ [GLOW_ALPHA])
+ * in `over`. Einmal je Feuer, kein Nachflackern. Farbe aus dem Aufruf (Gold: Sie ist jetzt offen).
+ */
+private class HekateDawnFx(args: FxArgs) : FxEffect(args.life.coerceAtLeast(MIN_LIFE)) {
+    private val bowl = args.pos
+    private val burst = args.a.coerceIn(0.8f, 5f)
+    private val palette: Palette = args.palette
+    private val seed = args.seed.toInt()
+
+    override fun energy(f: FxFrame) {
+        val t = time(f)
+        val k = k(f)
+        val rise = Ease.outBack(t / RISE)
+        val settle = Ease.inOut((t - RISE) / SETTLE)
+        val h = burst * rise * (1f - settle) + REST * settle
+        val alpha = 1f - Ease.inQuad((k - 0.6f) / 0.4f)
+        hekFlameCard(f, bowl, HALF_WIDTH * (0.75f + 0.25f * rise), h, hekAlpha(hekMix(palette.main, palette.core, 0.35f), FLAME_ALPHA * alpha), seed)
+        val ring = Ease.outCubic(t / RING_TICKS)
+        if (ring < 1f) {
+            FxDraw.flat(
+                f, bowl.add(0.0, 0.05, 0.0), HEK_UP, RING_RADIUS * ring, hekAlpha(palette.main, RING_ALPHA * (1f - ring)), FxMode.SHOCK,
+                inner = RING_RADIUS * ring * 0.7f, seed = seed + 1,
+            )
+        }
+    }
+
+    override fun over(f: FxFrame) {
+        val glow = Ease.bump(time(f) / GLOW_TICKS)
+        if (glow > 0.01f) FxDraw.glow(f, bowl.add(0.0, 0.8, 0.0), GLOW_SIZE, hekAlpha(palette.core, GLOW_ALPHA * glow), seed)
+    }
+
+    companion object {
+        const val MIN_LIFE = 24
+        const val RISE = 5f
+        const val SETTLE = 18f
+        const val REST = 0.9f
+        const val HALF_WIDTH = 0.7f
+        const val FLAME_ALPHA = 0.9f
+        const val RING_TICKS = 10f
+        const val RING_RADIUS = 2.2f
+        const val RING_ALPHA = 0.55f
+        const val GLOW_TICKS = 20f
+        const val GLOW_SIZE = 3.4f
+        const val GLOW_ALPHA = 0.5f
+    }
+}
+
+// =====================================================================================================================
 // Dauer-Effekt je Hekate: Fackelflamme der Echten, kalter Mantel der Trugbilder
 // =====================================================================================================================
 
@@ -567,6 +712,7 @@ private class HekatePresenceFx(private val entity: Entity) : FxEffect(LIFE) {
             HekateAction.TRIFORM -> HekateTimings.TRIFORM_HIT
             HekateAction.ECLIPSE -> HekateTimings.ECLIPSE_HIT
             HekateAction.HOWL -> HekateTimings.HOWL_HIT
+            HekateAction.DARK_HOUR -> return DOUSED
             HekateAction.TORCH_THROW -> HekateTimings.THROW_HIT
             else -> -1
         }
@@ -605,6 +751,8 @@ private class HekatePresenceFx(private val entity: Entity) : FxEffect(LIFE) {
         const val REST = 0.6f
         const val CHARGE = 1f
         const val OPEN = 0.3f
+        /** Dunkle Stunde: Auch ihre Fackel brennt nur noch als Glut (Fackeln „erlöschen“, Überarbeitung 4). */
+        const val DOUSED = 0.12f
         const val LEVEL_TAU = 5f
         const val FLAME_HALF = 0.22f
         const val FLAME_HEIGHT = 0.75f

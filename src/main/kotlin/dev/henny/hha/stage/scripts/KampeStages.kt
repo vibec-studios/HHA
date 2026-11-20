@@ -35,6 +35,14 @@ object KampeStages {
     /** Ab hier zurück in die Augen. */
     const val INTRO_RETURN = 140
 
+    /**
+     * Überarbeitung 4 (P22): So weit vor ihrem Platz steht die Kamera bei Landung und Brüllen. Ihr Platz liegt bei
+     * o + (0, −23, 15,5), die Wendelrampe des Kerkers beginnt bei r 20,4 (`TartarusArenas.PRISON_CORE`): Mit 6,5 bzw. 7
+     * (vorher) stand die Kamera bei r 21,6 … 22,2 knapp unter dem untersten Rampenlauf (Decke 0,9 über der Linse).
+     * Mit 4,5 steht sie bei r ≈ 19,7 frei über dem Grubenboden (Prüfung gegen `plan_prison.txt`, Bericht P22).
+     */
+    const val LAND_CAM_FORWARD = 4.5
+
     /** Titelkarte. */
     const val INTRO_CARD = 112
 
@@ -60,7 +68,7 @@ object KampeStages {
      * | --- | --- | --- |
      * | 0–34 | halbnah seitlich vor ihr, oben am Titanen | Blende aus Schwarz (deckt das Umsetzen auf den Sitz) |
      * | 34–104 | folgt ihr am Titanen herab: von über ihr bis knapp über dem Boden | – |
-     * | 104–140 | tiefe Frontale beim Brüllen | Ruck 1,5° bei der Landung, Titelkarte |
+     * | 104–140 | tiefe Frontale beim Brüllen (4,5 vor ihr, vor der Rampe) | Ruck 1,5° bei der Landung, Titelkarte |
      * | 140–160 | zurück in die Augen | – |
      */
     private fun intro() = stage(INTRO, INTRO_LENGTH) {
@@ -71,12 +79,12 @@ object KampeStages {
         )
         shot(
             INTRO_DESCEND, INTRO_LAND,
-            cam = listOf(Key.Last, Key.ActorRel(0, 7.5, 5.0, 4.0), Key.ActorRel(0, 7.0, 3.0, 0.8)),
+            cam = listOf(Key.Last, Key.ActorRel(0, 7.5, 5.0, 4.0), Key.ActorRel(0, LAND_CAM_FORWARD, 3.0, 1.0)),
             look = listOf(Key.Actor(0, 2.8)), fov = 54f to 60f, ease = EaseKind.SMOOTH, follow = 0.2f, handheld = 0.8f,
         )
         shot(
             INTRO_LAND, INTRO_RETURN,
-            cam = listOf(Key.Last, Key.At(6.5, 1.5, 1.1)),
+            cam = listOf(Key.Last, Key.At(LAND_CAM_FORWARD, 1.5, 1.3)),
             look = listOf(Key.Last, Key.Actor(0, 3.0)), fov = 60f to 52f, ease = EaseKind.OUT, follow = 0.15f,
         )
         shot(

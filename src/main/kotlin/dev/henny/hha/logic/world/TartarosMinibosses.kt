@@ -8,7 +8,9 @@ import dev.henny.hha.entity.miniboss.IxionEntity
 import dev.henny.hha.entity.miniboss.KampeEntity
 import dev.henny.hha.entity.miniboss.SisyphusEntity
 import dev.henny.hha.entity.miniboss.TartarosGuardian
+import dev.henny.hha.logic.boss.GuardianArenas
 import dev.henny.hha.logic.boss.HadesFights
+import dev.henny.hha.world.TartarusArenas
 import dev.henny.hha.world.TartarusKind
 import dev.henny.hha.world.TartarusPiece
 import dev.henny.hha.world.TartarusPlans
@@ -166,9 +168,22 @@ object TartarosMinibosses {
         val guardian = mob as? TartarosGuardian
         guardian?.applyChain(chain.brokenCount())
         world.spawnEntity(mob)
+        // Arena des Wächters (Überarbeitung 4, PLAN 7.4): Blockschutz im Kasten und K. o. am Zuweg, solange er steht.
+        guardian?.let { openArena(it, piece) }
         mob.kit.announce(if (guardian != null) chainTitle(guardian, chain) else Text.translatable(mob.kit.nameKey + ".sub"))
         active[key] = mob
         Hha.LOGGER.info("Tartaros-Wächter {} erscheint bei {} (Kette {}/{})", piece.kind, piece.middle, chain.brokenCount(), TartarosChain.Link.entries.size)
+    }
+
+    /**
+     * Öffnet die Wächter-Arena aus dem Vertrag (`TartarusArenas.spec`); K. o. führt an den letzten Wegpunkt des Zuwegs
+     * vor dem Bauwerk (`siteApproach(...).points.last()`). Die Arena schließt von selbst, wenn der Wächter verschwindet.
+     */
+    private fun openArena(guardian: TartarosGuardian, piece: TartarusPiece) {
+        val o = piece.middle
+        val spec = TartarusArenas.spec(piece.kind, piece.siteVariant(), o)
+        val post = TartarusArenas.siteApproach(piece.kind, piece.siteVariant(), o).points.last().pos
+        GuardianArenas.open(guardian, spec, spec.id, o, post)
     }
 
     /** Unterzeile beim Erscheinen: das wievielte Glied der Kette er ist, dahinter sein Beiname. */

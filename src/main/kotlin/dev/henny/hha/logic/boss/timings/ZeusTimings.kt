@@ -258,6 +258,55 @@ object ZeusTimings {
     const val ROD_RUNE_CYCLE = 40
     const val ROD_RUNE_RADIUS = 1.4f
 
+    // --- Überarbeitung 4 (P18, PLAN 3.5/4.2/4.3): Erdungsgriff, Höhenband, brechende Schollen ---
+    /** Erdungsgriff: Zeus höchstens so weit (waagerecht, ab der Pfeilerachse) vom Pfeiler, Sichtlinie zum Pfeilerkopf. */
+    const val ROD_REACH = 14.0
+    /** Ansage der Griff-Linie vom Pfeilerkopf zu Zeus (folgt ihm nicht), Stil GOLD = Ziel. */
+    const val ROD_W = 16
+    /** Zwischen zwei Griffen (im ganzen Kampf) mindestens so viele Ticks. */
+    const val ROD_COOLDOWN = 200
+    /** Breite der Griff-Linie: Steht Zeus beim Treffer noch darin, entlädt sich der Pfeiler in ihn (wie heute). */
+    const val ROD_LINE_WIDTH = 3f
+    /** Der Hinweis zum Griff kommt so viele Ticks nach dem ersten geladenen Pfeiler (nicht über den Lade-Hinweis). */
+    const val ROD_GRIP_HINT_DELAY = 60
+    /** Nach dem Treffer der Griff-Linie leuchtet der Bogen so lange nach (Bild `zeus.rod_arc`). */
+    const val ROD_ARC_AFTER = 12
+
+    /**
+     * Höhenband der Angriffe, die Kern, Terrasse (+2) und Bühne (+3) treffen: von 1 unter bis 7 über dem Kernboden
+     * (Füße). Die Ringe des Donnerschlags bleiben beim Standard-Band (+3) und `LOW`: Die Terrasse ist vor ihnen sicher.
+     */
+    const val BAND_BELOW = 1.0
+    const val BAND_ABOVE = 7.0
+    const val BAND_LOW_ABOVE = 3.0
+    /** Zeus landet und steht so weit innerhalb des Kernrands (Donnerschritt, Schritt vor dem Bruch). */
+    const val CORE_MARGIN = 1.5
+    /** Der Keraunos fliegt so hoch über dem Kernboden (Sichtstrahl für `Cover.lineEnd`): über Terrasse und Bühne, durch die Pfeiler. */
+    const val KERAUNOS_RAY_HEIGHT = 3.5
+
+    /** Schollenbruch (PLAN 3.5): Ansage ROOM mindestens so lang; die Erreichbarkeitsrechnung kann sie verlängern. */
+    const val SCHOLLE_W = 60
+    /** Zweiter Bruch bei diesem Anteil der dritten Leiste (als Höhepunkt vor dem nächsten Angriff). */
+    const val SCHOLLE_SECOND_AT = 0.5f
+    /** Dieselbe Schwelle als Anteil am ganzen Leben. */
+    const val SCHOLLE_SECOND_HEALTH = PHASE_3 * SCHOLLE_SECOND_AT
+    /** Vor dem Bruch höchstens so lange warten, bis keine Ansage mehr läuft (Luftblitz, Ringe, Griff-Linie). */
+    const val SCHOLLE_WAIT_MAX = 80
+    /** Rote Kreise über der brechenden Scholle: Radius, Ring ihrer Mitten, Winkelabstand (Grad). Nur Bild, kein Treffer. */
+    const val SCHOLLE_MARK_RADIUS = 5.2f
+    const val SCHOLLE_MARK_RING = 25.0
+    const val SCHOLLE_MARK_STEP = 15.0
+    /** Goldener Kreis auf jeder bleibenden Scholle (sicher). */
+    const val SCHOLLE_SAFE_RADIUS = 4.5f
+    /** Zeus rammt den Keraunos genau zum Bruch in den Kern (`SLAM` holt [SLAM_HIT] Ticks vorher aus). */
+    const val SCHOLLE_SLAM_LEAD = SLAM_HIT
+    /** Nach dem Bruch steht er so lange, bevor der Kampf weitergeht (die Scholle fällt in dieser Zeit). */
+    const val SCHOLLE_AFTER = 30
+    /** Abbau je Tick (`ArenaCollapse.start`): eine Scholle samt Pfeiler fällt in rund 2 s. */
+    const val SCHOLLE_PER_TICK = 48
+    /** Rückfall unter die Bö: Wer so tief unter den Kern fällt, kommt ohne Schaden auf die nächste Fläche. */
+    const val FALL_RESCUE_DEPTH = 10.0
+
     // --- Szenen (Ticks ab Szenenbeginn) ---
     /** Auftritt: Blick vom Siegel zum Thron, Aufstehen, Donnerschritt in den Hof, Titelkarte. */
     const val INTRO_RISE = 40

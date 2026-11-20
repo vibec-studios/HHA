@@ -4,17 +4,23 @@ import dev.henny.hha.Hha
 import dev.henny.hha.config.HhaConfig
 import dev.henny.hha.logic.boss.Arenas
 import dev.henny.hha.logic.boss.BossRewards
+import dev.henny.hha.logic.boss.Cine
 import dev.henny.hha.logic.boss.HadesFights
 import dev.henny.hha.logic.boss.HermesFights
+import dev.henny.hha.logic.world.Approach
 import dev.henny.hha.logic.world.HadesGate
+import dev.henny.hha.logic.world.OlympusPath
 import dev.henny.hha.logic.world.OlympusProgress
 import dev.henny.hha.logic.world.TartarosChain
 import dev.henny.hha.logic.world.TartarosGuide
 import dev.henny.hha.logic.world.TartarosMinibosses
 import dev.henny.hha.net.RpgEventPayload
+import dev.henny.hha.world.TartarusArenas
 import dev.henny.hha.world.TartarusKind
 import dev.henny.hha.world.TartarusPiece
+import dev.henny.hha.world.TartarusPlans
 import dev.henny.hha.world.TartarusStructure
+import dev.henny.hha.world.olymp.OlympusArenas
 import dev.henny.hha.world.olymp.OlympusLayout
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents
@@ -83,11 +89,11 @@ object RpgStory {
     /** Wie oft Orte geprüft werden. */
     const val PLACE_TICKS = 10
 
-    /** Insel betreten: so weit unter … */
-    const val ISLE_BELOW = 16
+    /** Insel betreten: so weit unter … (das Fenster selbst steht in `OlympusPath`, Fernsäule und Pfeil teilen es) */
+    const val ISLE_BELOW = OlympusPath.ISLE_BELOW
 
     /** … bis so weit über ihrem Boden. */
-    const val ISLE_ABOVE = 48
+    const val ISLE_ABOVE = OlympusPath.ISLE_ABOVE
 
     /** Suche nach Bauwerken im Tartaros: höchstens alle so viele Ticks je Ziel. */
     const val SEARCH_COOLDOWN = 600
@@ -113,16 +119,37 @@ object RpgStory {
 
     private val prologue = Def(chapter(PROLOGUE), { s -> RpgWorld.of(s).arrived && !RpgArrival.isArriving(s) }) { _, _ -> null }
 
+    /**
+     * Kapitel einer Insel (Überarbeitung 4, P23): Im Kampf die Mitte; sonst führt der Pfeil **je Spieler** über die
+     * Wegpunkte der Brücken (`OlympusPath.wayTo`: Brückenkopf → Engstelle → Kopftor → Inseleingang, auf der Insel der
+     * Altar). Der Zieltext ist gemeinsam: Ist die Insel besucht, `goal.1`; sonst der Schritt des am weitesten
+     * fortgeschrittenen Spielers – auf der letzten Brücke `way.<n>`, davor `goal.0`.
+     */
     private fun isle(id: String, isle: OlympusLayout.Isle, fight: (MinecraftServer) -> Boolean) = Def(
         chapter(id), { s -> OlympusProgress.isDone(s, isle.key!!) },
-    ) { s, _ ->
+    ) { s, p ->
         val place = placeOf(isle)
-        val altar = isle.altar?.let { Vec3d.ofBottomCenter(it) } ?: isle.centerVec
+        val step = OlympusPath.wayTo(p, isle)
+        val target = Target(OlympusLayout.WORLD, step?.pos ?: OlympusPath.isleGoal(isle))
         when {
             fight(s) -> Goal(goalKey(id, 2), target = Target(OlympusLayout.WORLD, isle.centerVec))
-            place in RpgWorld.of(s).visited -> Goal(goalKey(id, 1), target = Target(OlympusLayout.WORLD, altar))
-            else -> Goal(goalKey(id, 0), target = Target(OlympusLayout.WORLD, isle.entrance))
+            place in RpgWorld.of(s).visited -> Goal(goalKey(id, 1), target = target)
+            else -> Goal(wayText(id, leadStep(s, isle) ?: step), target = target)
         }
+    }
+
+    private fun wayKey(id: String, n: Int) = "hha.rpg.story.$id.way.$n"
+
+    /** Zieltext eines Inselschritts: auf der letzten Brücke `way.<n>` (0 … 3), davor `goal.0`. */
+    private fun wayText(id: String, step: OlympusPath.WayStep?): String =
+        if (step != null && step.final && step.n <= OlympusPath.STEP_INTO) wayKey(id, step.n) else goalKey(id, 0)
+
+    /** Der am weitesten fortgeschrittene Spieler im Olymp auf dem Weg zu [isle] (Mehrspieler, gemeinsamer Zieltext). */
+    private fun leadStep(server: MinecraftServer, isle: OlympusLayout.Isle): OlympusPath.WayStep? {
+        val state = RpgWorld.of(server)
+        val world = server.getWorld(OlympusLayout.WORLD) ?: return null
+        return world.players.filter { !it.isSpectator && state.hasStarted(it.uuid) }
+            .mapNotNull { OlympusPath.wayTo(it, isle) }.maxByOrNull { it.rank }
     }
 
     private fun arena(boss: String): (MinecraftServer) -> Boolean = { s -> Arenas.byBoss(s, boss) != null }
@@ -139,23 +166,62 @@ object RpgStory {
         }
     }
 
+    /**
+     * Hades (U2): im Kampf die Saalmitte (`goal.1`); sonst der nächste nicht erreichte Punkt des Palast-Anmarschs
+     * (`TartarusArenas.palaceApproach`: Allee → Propylon → Gang der Schatten → Richter → Styx → Hundetor → Siegel) mit
+     * `way.<n>`. Der Text folgt dem am weitesten fortgeschrittenen Spieler, der Pfeil jedem selbst.
+     */
     private fun lord(suffix: String) = Def(chapter(U2, suffix), ::hadesDone) { s, p ->
         val world = p.entityWorld as? ServerWorld
         if (world != null && world.registryKey == HadesGate.TARTAROS) {
-            val step = if (HadesFights.of(world) != null) 1 else 0
-            Goal(goalKey(U2, step), target = palace(world, p.blockPos)?.let { Target(HadesGate.TARTAROS, Vec3d.ofBottomCenter(it)) })
+            val o = palace(world, p.blockPos)
+            if (HadesFights.of(world) != null) {
+                Goal(goalKey(U2, 1), target = o?.let { Target(HadesGate.TARTAROS, Vec3d.ofBottomCenter(it)) })
+            } else {
+                palaceGoal(s, world, p, U2, o) ?: Goal(goalKey(U2, 0))
+            }
         } else {
             Goal(goalKey(U2, 0), target = gateTarget())
         }
     }
 
-    private fun titan(suffix: String) = Def(chapter(U3, suffix), ::kronosDone) { _, p ->
+    /** Kronos (U3): im Kampf die Saalmitte; sonst (Kampf verloren, zurück zum Siegel) dieselbe Kette mit `u3…way.<n>`. */
+    private fun titan(suffix: String) = Def(chapter(U3, suffix), ::kronosDone) { s, p ->
         val world = p.entityWorld as? ServerWorld
         if (world != null && world.registryKey == HadesGate.TARTAROS) {
-            Goal(goalKey(U3, 0), target = palace(world, p.blockPos)?.let { Target(HadesGate.TARTAROS, Vec3d.ofBottomCenter(it)) })
+            val o = palace(world, p.blockPos)
+            if (HadesFights.of(world) != null) {
+                Goal(goalKey(U3, 0), target = o?.let { Target(HadesGate.TARTAROS, Vec3d.ofBottomCenter(it)) })
+            } else {
+                palaceGoal(s, world, p, U3, o) ?: Goal(goalKey(U3, 0))
+            }
         } else {
             Goal(goalKey(U3, 0), target = gateTarget())
         }
+    }
+
+    /** Anzahl der Stufen des Palast-Anmarschs (sechs Abschnitte und das Siegel, `TartarusArenas.palaceApproach`). */
+    private fun palaceSteps(o: BlockPos): Int = TartarusArenas.palaceApproach(o).points.size
+
+    /** Stufe von [player] auf dem Anmarsch zum Palast [o]: Index des nächsten nicht erreichten Punkts (alle erreicht = Siegel). */
+    private fun palaceStep(player: ServerPlayerEntity, o: BlockPos): Int {
+        val spec = TartarusArenas.palaceApproach(o)
+        val next = Approach.next(player, spec) ?: return spec.points.size - 1
+        return spec.points.indexOf(next).coerceAtLeast(0)
+    }
+
+    /**
+     * Ziel am Palast [o]: Pfeil auf den Punkt der eigenen Stufe (erreicht alles → `palaceEntrance`, vor dem Siegel), Text
+     * `hha.rpg.story.<id>.way.<n>` nach der höchsten Stufe aller Spieler im Tartaros.
+     */
+    private fun palaceGoal(server: MinecraftServer, world: ServerWorld, player: ServerPlayerEntity, id: String, o: BlockPos?): Goal? {
+        o ?: return null
+        val spec = TartarusArenas.palaceApproach(o)
+        val own = palaceStep(player, o)
+        val state = RpgWorld.of(server)
+        val lead = world.players.filter { !it.isSpectator && state.hasStarted(it.uuid) }.maxOfOrNull { palaceStep(it, o) } ?: own
+        val n = maxOf(own, lead).coerceIn(0, palaceSteps(o) - 1)
+        return Goal(wayKey(id, n), target = Target(HadesGate.TARTAROS, spec.points[own.coerceIn(0, spec.points.size - 1)].pos))
     }
 
     private val epilogue = Def(chapter(EPILOGUE), { s -> RpgWorld.of(s).ended }) { _, _ -> Goal(goalKey(EPILOGUE, 0)) }
@@ -432,25 +498,53 @@ object RpgStory {
 
     private fun placeOf(isle: OlympusLayout.Isle) = "isle.${isle.letter.lowercaseChar()}"
 
-    private fun onIsle(isle: OlympusLayout.Isle, pos: Vec3d): Boolean =
-        hypot(pos.x - isle.centerVec.x, pos.z - isle.centerVec.z) <= isle.radius &&
-            pos.y >= isle.floorY - ISLE_BELOW && pos.y <= isle.floorY + ISLE_ABOVE
+    /**
+     * Insel betreten (P23, Briefing 6 geprüft): Das Höhenfenster −[ISLE_BELOW] … +[ISLE_ABOVE] deckt Terrasse (+2),
+     * Bühne (+3), Absatz (+4) und die Kopftore (Krone +9) ab; die Kopftore liegen im Inselradius (Bericht P23).
+     */
+    private fun onIsle(isle: OlympusLayout.Isle, pos: Vec3d): Boolean = OlympusPath.onIsle(isle, pos)
+
+    /** Ort „Schlachtweg betreten“ (`way.bridge_ab` …): Erzählerzeile einmal je Welt (`RpgScenes`). */
+    const val WAY_PLACE = "way."
+
+    /** Ort „Alleeanfang des Palasts“, zählt erst, wenn die Kette gesprengt ist (erster Blick auf den Palast, `RpgScenes`). */
+    const val PALACE_GATE_PLACE = "palace.gate"
 
     /** Orte, an denen [player] gerade ist. */
-    private fun placesOf(player: ServerPlayerEntity): List<String> {
+    private fun placesOf(server: MinecraftServer, player: ServerPlayerEntity): List<String> {
         val world = player.entityWorld as? ServerWorld ?: return emptyList()
         return when (world.registryKey) {
-            OlympusLayout.WORLD -> OlympusLayout.ISLES.filter { onIsle(it, player.entityPos) }.map(::placeOf)
-            HadesGate.TARTAROS -> listOf("tartaros") + listOfNotNull(siteAt(world, player.blockPos))
+            OlympusLayout.WORLD -> OlympusLayout.ISLES.filter { onIsle(it, player.entityPos) }.map(::placeOf) + wayPlaces(player)
+            HadesGate.TARTAROS -> listOf("tartaros") + siteAt(server, world, player)
             else -> emptyList()
         }
     }
 
-    /** Bauwerk des Tartaros an [pos]: `site.<glied>` oder `palace`. */
-    private fun siteAt(world: ServerWorld, pos: BlockPos): String? {
+    /**
+     * Schlachtwege, auf denen [player] gerade steht (`Approach.progress` ≠ null). Nicht in Kampf oder Szene: Die Zeile soll
+     * gelesen werden, also zählt der Ort erst danach.
+     */
+    private fun wayPlaces(player: ServerPlayerEntity): List<String> {
+        if (Cine.isPlaying(player) || Arenas.of(player) != null) return emptyList()
+        return OlympusArenas.APPROACHES.filter { Approach.progress(player, it) != null }.map { WAY_PLACE + it.id }
+    }
+
+    /** Bauwerk des Tartaros an der Lage von [player]: `site.<glied>` oder `palace` (dazu ggf. [PALACE_GATE_PLACE]). */
+    private fun siteAt(server: MinecraftServer, world: ServerWorld, player: ServerPlayerEntity): List<String> {
+        val pos = player.blockPos
         val start = world.structureAccessor.getStructureContaining(pos) { it.value() is TartarusStructure }
-        if (!start.hasChildren()) return null
-        val piece = start.children.firstOrNull() as? TartarusPiece ?: return null
+        if (!start.hasChildren()) return emptyList()
+        val piece = start.children.firstOrNull() as? TartarusPiece ?: return emptyList()
+        if (piece.kind == TartarusKind.PALACE) {
+            val avenue = TartarusArenas.palaceApproach(piece.middle).points.first()
+            val atGate = chainDone(server) && !Cine.isPlaying(player) &&
+                hypot(player.x - avenue.pos.x, player.z - avenue.pos.z) <= avenue.reach && kotlin.math.abs(player.y - avenue.pos.y) <= Approach.HEIGHT_RANGE
+            return if (atGate) listOf("palace", PALACE_GATE_PLACE) else listOf("palace")
+        }
+        return listOfNotNull(siteName(piece))
+    }
+
+    private fun siteName(piece: TartarusPiece): String? {
         return when (piece.kind) {
             TartarusKind.PALACE -> "palace"
             TartarusKind.FORTRESS -> "site.${TartarosChain.Link.WARDEN.key}"
@@ -467,7 +561,7 @@ object RpgStory {
         val arrival = arrivalPlace(server)
         for (player in server.playerManager.playerList.toList()) {
             if (player.isSpectator || !player.isAlive || !state.hasStarted(player.uuid) || RpgArrival.isProtected(player)) continue
-            for (place in placesOf(player)) {
+            for (place in placesOf(server, player)) {
                 if (state.visit(place)) {
                     bossOf(place)?.let { journal(server, state, it) }
                     for (listener in placeListeners) {
@@ -493,26 +587,58 @@ object RpgStory {
 
     private val found = HashMap<String, Found>()
 
-    /** Das nächste ungesprengte Glied (nächstes passendes, nicht befreites Bauwerk) zu [player]. */
+    /**
+     * Pfeil zum nächsten ungesprengten Glied (Überarbeitung 4, P23, Briefing 3): erst die Punkte des Zuwegs
+     * (`TartarusArenas.siteApproach`: Beginn am Kastenrand → Wegzeichen → Eingang), danach der Platz des Wächters
+     * ([standOf]). Das Bauwerk liefert die gründlichere Suche des Wegweisers, sonst die einfache Suche hier.
+     */
     private fun nextLink(world: ServerWorld, player: ServerPlayerEntity): Vec3d? {
-        // Bevorzugt die gründlichere Suche des Wegweisers (sucht weiter, wenn der erste Treffer nicht passt).
-        TartarosGuide.target(world, player)?.let { (pos, key) -> if (key != "palace") return pos }
+        val site = TartarosGuide.nextSite(world, player) ?: fallbackSite(world, player) ?: return null
+        val (middle, link) = site
+        val kind = kindOf(link)
+        val variant = variantOf(link)
+        // Im Kerker: wer schon innerhalb der Grube (auf der Rampe) ist, braucht nur noch den Grubenboden.
+        if (kind == TartarusKind.PRISON && hypot(player.x - (middle.x + 0.5), player.z - (middle.z + 0.5)) < TartarusPlans.PRISON_PIT_RADIUS) {
+            return TartarusArenas.prison(middle).centerVec
+        }
+        val road = TartarusArenas.siteApproach(kind, variant, middle)
+        return Approach.next(player, road)?.pos ?: standOf(kind, variant, middle)
+    }
+
+    /**
+     * Kerker: Rampenkopf im Westen am Grubenrand (Hinweis P12: etwa o + (−22, 1, −3), nicht der Vertragspunkt
+     * `entrance` im Süden). Radial: Mitte der Rampe zwischen Grubenrand und Innenkante; z: Beginn des Rampenlaufs.
+     */
+    const val PRISON_RAMP_HEAD_IN = 2
+    const val PRISON_RAMP_HEAD_DZ = -3
+
+    /** Platz des Wächters nach dem Zuweg: Standplatz der Feste, Rampenkopf des Kerkers, Gipfel, sonst die Arena-Mitte. */
+    private fun standOf(kind: TartarusKind, variant: Int, o: BlockPos): Vec3d = when (kind) {
+        TartarusKind.FORTRESS -> Vec3d.ofBottomCenter(TartarusArenas.fortressSpot(o))
+        TartarusKind.PRISON -> Vec3d(o.x - (TartarusPlans.PRISON_PIT_RADIUS - PRISON_RAMP_HEAD_IN) + 0.5, o.y + 1.0, o.z + PRISON_RAMP_HEAD_DZ + 0.5)
+        TartarusKind.PUNISHMENT -> if (variant == 0) TartarusPlans.sisyphusSummit(o) else TartarusArenas.spec(kind, variant, o).centerVec
+        TartarusKind.PALACE -> TartarusArenas.palaceEntrance(o).let { Vec3d.ofBottomCenter(it) }
+    }
+
+    /** Einfache Suche (falls der Wegweiser nichts findet): nächstes passendes, nicht befreites Bauwerk je Glied. */
+    private fun fallbackSite(world: ServerWorld, player: ServerPlayerEntity): Pair<BlockPos, TartarosChain.Link>? {
         val server = world.server ?: return null
-        var best: Vec3d? = null
+        var best: Pair<BlockPos, TartarosChain.Link>? = null
         var bestDistance = Double.MAX_VALUE
         for (link in TartarosChain.of(server).missing()) {
             val pos = locate(world, link.key, kindOf(link), variantOf(link), player.blockPos) ?: continue
             val d = hypot(pos.x + 0.5 - player.x, pos.z + 0.5 - player.z)
             if (d < bestDistance) {
                 bestDistance = d
-                best = Vec3d.ofBottomCenter(pos)
+                best = pos to link
             }
         }
         return best
     }
 
+    /** Palastmitte: genau, wenn der Spieler im Kasten steht (`Approach.palace`), sonst gesucht. */
     private fun palace(world: ServerWorld, from: BlockPos): BlockPos? =
-        locate(world, "palace", TartarusKind.PALACE, TartarusPiece.NO_VARIANT, from)
+        Approach.palace(world, from) ?: locate(world, "palace", TartarusKind.PALACE, TartarusPiece.NO_VARIANT, from)
 
     private fun kindOf(link: TartarosChain.Link): TartarusKind = when (link) {
         TartarosChain.Link.WARDEN -> TartarusKind.FORTRESS

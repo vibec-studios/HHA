@@ -46,6 +46,8 @@ import kotlin.math.sqrt
  * | `zeus.rod` | geladener Pfeiler, je Runen-Zyklus | pos = Fuß, life | kleiner ruhiger Schein, ein Funke kriecht hoch (0,5 Hz) |
  * | `zeus.nike` | Bühne `zeus.defeat` | pos = Füße des Siegers, a = Ticks bis zum Kranz, life | Lichtgestalt mit Flügeln und goldenem Kranz |
  * | `zeus.sky` | Dauer-Effekt am Zeus (`FxAttach`) | – | Lichtrisse in der Himmelskuppel: Zahl aus der Phase, Breite aus dem Leben |
+ * | `zeus.rod_arc` | Erdungsgriff (Überarbeitung 4): Griff bzw. Treffer | pos = Pfeilerkopf, dir = Ziel (absolut), a = Ansage, extra = `charge`/`strike` | Licht sammelt sich am Kopf, ein Faden tastet zum Ziel; dann ein heller, glatter Bogen |
+ * | `zeus.scholle_break` | Scholle bricht (Überarbeitung 4) | pos = Mitte auf Belaghöhe, dir = (von, bis, 0) Grad, a/b = Ringe, life | echte Trümmer vom Belag, Staubkranz sinkt mit in die Tiefe |
  */
 object ZeusFx {
 
@@ -57,6 +59,8 @@ object ZeusFx {
     const val ROD = "zeus.rod"
     const val NIKE = "zeus.nike"
     const val SKY = "zeus.sky"
+    const val ROD_ARC = "zeus.rod_arc"
+    const val SCHOLLE_BREAK = "zeus.scholle_break"
 
     fun init() {
         FxRegistry.register(SLAM) { ZeusSlamFx(it) }
@@ -66,6 +70,8 @@ object ZeusFx {
         FxRegistry.register(STORM_WALL) { ZeusStormWallFx(it) }
         FxRegistry.register(ROD) { ZeusRodFx(it) }
         FxRegistry.register(NIKE) { ZeusNikeFx(it) }
+        FxRegistry.register(ROD_ARC) { ZeusRodArcFx(it) }
+        FxRegistry.register(SCHOLLE_BREAK) { ZeusScholleBreakFx(it) }
         // `zeus.sky` hat keine Netz-Fabrik: Er hängt am Wesen und leitet alles aus dessen Zustand ab.
         FxAttach.register(HhaEntities.ZEUS) { ZeusSkyFx(it) }
     }
@@ -539,7 +545,8 @@ private class ZeusRodFx(args: FxArgs) : FxEffect(args.life.coerceAtLeast(6)) {
     private var dying = -1f
 
     override fun tick(world: ClientWorld) {
-        if (dying < 0f && world.getBlockState(block).isOf(Blocks.WAXED_OXIDIZED_COPPER)) dying = age.toFloat()
+        // Entladen (oxidiert) oder mit der Scholle abgebrochen (Überarbeitung 4): kein frisches Kupfer mehr → weich aus.
+        if (dying < 0f && !world.getBlockState(block).isOf(Blocks.WAXED_COPPER_BLOCK)) dying = age.toFloat()
     }
 
     override fun finished(): Boolean = dying >= 0f && age - dying > DIE_TICKS
@@ -859,3 +866,148 @@ private class ZeusSkyFx(private val zeus: Entity) : FxEffect(LIFE) {
     }
 }
 
+// =====================================================================================================================
+// zeus.rod_arc – Erdungsgriff (Überarbeitung 4, P18)
+// =====================================================================================================================
+
+/**
+ * Erdungsgriff: ein glatter Bogen vom Pfeilerkopf ([FxArgs.pos]) zum Ziel ([FxArgs.dir], absoluter Punkt).
+ * `extra = charge` (Stil GOLD, a = Ansage-Ticks): Am Kopf sammelt sich weich Licht, ein feiner Faden tastet sich zum
+ * Ziel vor und erreicht es genau mit dem Treffer. `extra = strike` (Stil THUNDER): der Blitz springt als ein heller,
+ * weicher Bogen hinüber und vergeht (kubisch, ohne Blinken). Ein Bild je Phase, kein Flackern.
+ */
+private class ZeusRodArcFx(args: FxArgs) : FxEffect(args.life.coerceAtLeast(4)) {
+    private val head = args.pos
+    private val target = if (args.dir.lengthSquared() > 1e-6) args.dir else args.pos.add(0.0, -1.0, 0.0)
+    private val palette = args.palette
+    private val seed = args.seed.toInt()
+    private val strike = args.extra == ZeusRodArcFx.STRIKE
+    private val windup = args.a.coerceAtLeast(1f)
+    private val points: List<Vec3d> = FxDraw.smooth(arc(), SMOOTH)
+
+    /** Bogen: leicht nach oben gewölbt, damit er über die Terrassenkante springt. */
+    private fun arc(): List<Vec3d> {
+        val mid = head.lerp(target, 0.5).add(0.0, head.distanceTo(target) * BEND, 0.0)
+        return List(CONTROL) { i ->
+            val t = i / (CONTROL - 1.0)
+            val u = 1.0 - t
+            Vec3d(
+                u * u * head.x + 2 * u * t * mid.x + t * t * target.x,
+                u * u * head.y + 2 * u * t * mid.y + t * t * target.y,
+                u * u * head.z + 2 * u * t * mid.z + t * t * target.z,
+            )
+        }
+    }
+
+    override fun energy(f: FxFrame) {
+        val t = time(f)
+        if (strike) {
+            val a = ZeusFx.cubicFade(t, life.toFloat())
+            if (a <= 0.01f) return
+            FxDraw.ribbon(
+                f, points, width = { k -> STRIKE_WIDTH * (0.55f + 0.45f * ZeusFx.lens(k)) },
+                color = { _ -> FxLib.alpha(palette.main, STRIKE_ALPHA * a) }, mode = FxMode.BOLT, seed = seed,
+            )
+            FxDraw.ribbon(
+                f, points, width = { k -> STRIKE_CORE * ZeusFx.lens(k) }, color = { _ -> FxLib.alpha(palette.core, STRIKE_ALPHA * a) },
+                mode = FxMode.RIBBON, seed = seed + 1,
+            )
+            return
+        }
+        // Ladung: Licht am Kopf wächst; der Faden erreicht das Ziel genau mit dem Treffer.
+        val grow = Ease.inOut(t / windup)
+        val env = ZeusFx.envelope(t, life, FADE_IN, FADE_OUT)
+        val reach = (points.size * grow).toInt().coerceIn(2, points.size)
+        FxDraw.ribbon(
+            f, points.subList(0, reach), width = { k -> THREAD_WIDTH * (1f - 0.6f * k) },
+            color = { k -> FxLib.alpha(palette.main, THREAD_ALPHA * env * (1f - 0.5f * k)) }, mode = FxMode.RIBBON, seed = seed,
+        )
+    }
+
+    override fun over(f: FxFrame) {
+        val t = time(f)
+        val glow = if (strike) ZeusFx.cubicFade(t, GLOW_STRIKE) else Ease.inOut(t / windup) * ZeusFx.envelope(t, life, FADE_IN, FADE_OUT)
+        if (glow <= 0.01f) return
+        FxDraw.glow(f, head, GLOW_SIZE * (0.5f + 0.5f * glow), FxLib.alpha(palette.core, GLOW_ALPHA * glow), seed)
+        if (strike) FxDraw.glow(f, target, GLOW_SIZE * 1.2f * glow, FxLib.alpha(palette.core, GLOW_ALPHA * glow), seed + 2)
+    }
+
+    companion object {
+        const val STRIKE = "strike"
+        const val CONTROL = 7
+        const val SMOOTH = 4
+        const val BEND = 0.12
+        const val THREAD_WIDTH = 0.07f
+        const val THREAD_ALPHA = 0.5f
+        const val STRIKE_WIDTH = 0.42f
+        const val STRIKE_CORE = 0.12f
+        const val STRIKE_ALPHA = 0.85f
+        const val FADE_IN = 3f
+        const val FADE_OUT = 2f
+        const val GLOW_SIZE = 1.1f
+        const val GLOW_ALPHA = 0.45f
+        const val GLOW_STRIKE = 8f
+    }
+}
+
+// =====================================================================================================================
+// zeus.scholle_break – eine Scholle bricht (Überarbeitung 4, P18)
+// =====================================================================================================================
+
+/**
+ * Bruch einer Scholle: pos = Arenamitte auf Höhe des Schollenbelags, dir = (von, bis, 0) in Grad, a/b = innerer und
+ * äußerer Ring. Im ersten Tick fliegen echte Blöcke vom Belag ([BlockDebris], gedeckelt); dann ein Staubkranz, der
+ * sich entlang der Scholle weich ausbreitet und mit den Blöcken in die Tiefe sinkt. Ruhig, kein Blinken.
+ */
+private class ZeusScholleBreakFx(args: FxArgs) : FxEffect(args.life.coerceAtLeast(20)) {
+    private val center = args.pos
+    private val from = args.dir.x
+    private val to = args.dir.y
+    private val inner = args.a.toDouble().coerceAtLeast(1.0)
+    private val outer = args.b.toDouble().coerceAtLeast(inner + 1.0)
+    private val palette = args.palette
+    private val seed = args.seed.toInt()
+    private var started = false
+
+    /** Mitten der Staubwolken entlang der Scholle. */
+    private val spots: List<Vec3d> = List(PUFFS) { i ->
+        val a = Math.toRadians(from + (to - from) * (i + 0.5) / PUFFS)
+        center.add(cos(a) * (inner + outer) / 2.0, 0.0, sin(a) * (inner + outer) / 2.0)
+    }
+
+    override fun tick(world: ClientWorld) {
+        if (started) return
+        started = true
+        BlockDebris.burst(world, spots[PUFFS / 2], DEBRIS_INNER, DEBRIS_OUTER, DEBRIS, DEBRIS_UP, DEBRIS_OUT)
+    }
+
+    override fun energy(f: FxFrame) {
+        val t = time(f)
+        val env = ZeusFx.envelope(t, life, FADE_IN, life * FADE_OUT_SHARE)
+        if (env <= 0.01f) return
+        val spread = Ease.outCubic(t / SPREAD_TICKS)
+        val sink = SINK * Ease.inOut(t / life)
+        val radius = ((outer - inner) * (0.35 + 0.65 * spread)).toFloat()
+        for ((i, spot) in spots.withIndex()) {
+            FxDraw.flat(
+                f, spot.add(0.0, LIFT - sink, 0.0), ZeusFx.UP, radius, FxLib.alpha(palette.edge, DUST_ALPHA * env),
+                FxMode.DUST, progress = spread, seed = seed + i,
+            )
+        }
+    }
+
+    companion object {
+        const val PUFFS = 4
+        const val DEBRIS = 6
+        const val DEBRIS_INNER = 1.5f
+        const val DEBRIS_OUTER = 5f
+        const val DEBRIS_UP = 0.35f
+        const val DEBRIS_OUT = 0.3f
+        const val SPREAD_TICKS = 24f
+        const val SINK = 9.0
+        const val LIFT = 0.3
+        const val DUST_ALPHA = 0.35f
+        const val FADE_IN = 4f
+        const val FADE_OUT_SHARE = 0.5f
+    }
+}

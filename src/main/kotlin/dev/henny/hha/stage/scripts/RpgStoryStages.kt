@@ -11,7 +11,11 @@ import dev.henny.hha.stage.StageScript
 import dev.henny.hha.stage.StageScripts
 import dev.henny.hha.stage.stage
 import dev.henny.hha.stage.scripts.RpgStages.SceneAnchor
+import dev.henny.hha.world.TartarusArenas
+import dev.henny.hha.world.TartarusPlans
+import dev.henny.hha.world.olymp.OlympusArenas
 import dev.henny.hha.world.olymp.OlympusLayout
+import dev.henny.hha.world.palace.PalaceApproach
 
 /**
  * Szenen der Geschichte nach der Ankunft (P17, PLAN 3.4): Inselszenen B–F, Tartaros, Palast, Akt-Ende, Ende. Gestartet
@@ -40,6 +44,30 @@ object RpgStoryStages {
     /** Schmiede: Die Fahrt endet so weit vor dem Amboss, auf der Linie von der Esse durch den Amboss. */
     const val FORGE_VIEW = 10.0
 
+    /**
+     * Tempel des Boten: Der erste Kamerapunkt liegt so weit hinter dem Anker (Inseleingang), also noch vor dem Flügeltor
+     * (P06, 2 Zellen tief, 3,5 bis 4,5 hinter dem Eingang). Vorher −4: mitten im Torpfeiler (Bericht P23).
+     */
+    const val B_GATE_CLEAR = -1.5
+
+    /**
+     * Thron des Zeus (Überarbeitung 4, P23, neuer Blick): Die Fahrt steigt über den Gewitterkranz (IsleF: Ring r 36 … 50
+     * bei +30 … +33, `storm_cloud`), bleibt über ihm bis innerhalb des Innenrands und fällt dann über Scholle 1 auf den
+     * Kern. Höhen über dem Kernboden, Radien um die Inselmitte.
+     */
+    const val F_CROWN_OUTER = 50.0
+    const val F_CROWN_CLEAR = 38.0
+    /** Erst nach außen (außerhalb des Kranzes) steigen, sonst führe der Aufstieg vom Eingang (r ≈ 40) durch die Wolken. */
+    const val F_OVER_CROWN_R = F_CROWN_OUTER + 4.0
+    const val F_INSIDE_CROWN_R = 32.0
+    const val F_FLOE_VIEW_R = 25.0
+    const val F_FLOE_VIEW_UP = 9.0
+    const val F_CORE_VIEW_R = 12.0
+    const val F_CORE_VIEW_UP = 5.0
+
+    /** Winkel (Vertragsmaß, 0° Osten, 90° Süden) der Abfahrt: über Scholle 1 zwischen den Pfeilern 0 und 1. */
+    const val F_DESCENT_DEG = 45.0
+
     const val TARTAROS = "rpg.tartaros"
     const val TARTAROS_LENGTH = 200
 
@@ -52,8 +80,29 @@ object RpgStoryStages {
     /** Tick, an dem `RpgScenes` die Kapitelkarte des laufenden Kapitels (VI bzw. II) schickt. */
     const val PALACE_CARD_AT = 96
 
-    /** Blickziel zum Palast: so weit voraus (Anker blickt zum Palast; Fernblicke über 12 Chunks zeigen Leere). */
+    /** Früheres Blickziel zum Palast (Anker beim Spieler); seit P23 ungenutzt, bleibt als öffentliche Konstante. */
     const val PALACE_GLOW_DISTANCE = 48.0
+
+    /**
+     * Palast (Überarbeitung 4, P23, neuer Blick): Anker = Alleeanfang (`palaceApproach(o)`, Punkt `avenue`), Blick nach
+     * Norden zur Mitte. Abstände voraus („vor“) aus den Abschnittsgrenzen des Anmarschs: Propylon-Front, Siegel, Mitte.
+     */
+    private val AVENUE_DZ: Int get() = TartarusArenas.PALACE_SECTIONS.first().second.last
+    private val PROPYLON_F: Double get() = (AVENUE_DZ - PalaceApproach.THRESHOLD_TO).toDouble()
+    private val SEAL_F: Double get() = (AVENUE_DZ - TartarusPlans.SEAL_Z).toDouble()
+    private val PALACE_CENTER_F: Double get() = AVENUE_DZ.toDouble()
+
+    /** Mitte des Rundbogens im Propylon (5 × 8, P10) über dem Boden. */
+    const val PROPYLON_ARCH_UP = 4.0
+
+    /**
+     * Kran über der Allee: so hoch, dass die Kuppel über Propylon-Giebel (Goldspitze +20) und Bident des Torhauses
+     * (+32 bei dz 88) erscheint. Gemessen im Bauplan: frei ab +20 (Sichtstrahl zur Kuppelspitze), Bericht P23.
+     */
+    const val PALACE_CRANE_UP = 24.0
+
+    /** Siegelglühen: Höhe über dem Boden, im Blick durch die Gänge (Gang der Schatten 5 hoch). */
+    const val PALACE_SEAL_GLOW_UP = 3.0
 
     const val ACT_END = "rpg.act_end"
     const val ACT_END_LENGTH = 300
@@ -98,13 +147,15 @@ object RpgStoryStages {
         return when (letter) {
             // Tempel des Boten: über den Platz, seitlich vor die Front; die Säule steht am Olymp-Altar im Tempel.
             'B' -> Flight(
-                listOf(Key.At(-4.0, 3.0, 5.0), Key.At(3.0, -9.0, 10.0), Key.At(7.0, -12.0, 12.0)),
+                listOf(Key.At(B_GATE_CLEAR, 2.0, 5.0), Key.At(3.0, -9.0, 10.0), Key.At(7.0, -12.0, 12.0)),
                 listOf(Key.At(12.0, 0.0, 5.0), Key.At(16.0, 0.0, 8.0)),
                 OlympusLayout.B.altar!!.let { a.at(it.x + 0.5, it.y.toDouble(), it.z + 0.5) }, null,
             )
-            // Dreiweg: hoch über die Kreuzung, Blick hinab; die Säule steht am Nordost-Weg (nach D, das Ziel von Kapitel II).
+            // Dreiweg: hoch über die Kreuzung, Blick hinab; die Säule steht am Brückenkopf des Nordost-Wegs nach D (Ziel von
+            // Kapitel II; P23: der erste Wegpunkt `start` von `bridge_cd`, dort zeigt auch der Pfeil hin).
             'C' -> {
-                val ne = OlympusLayout.C.centerVec.add(OlympusLayout.dir(OlympusLayout.C_PATH_ANGLES[OlympusLayout.C_PATH_NORTHEAST]).multiply(OlympusLayout.C.arenaRadius.toDouble()))
+                val ne = OlympusArenas.APPROACHES.firstOrNull { it.id == "bridge_cd" }?.points?.first()?.pos
+                    ?: OlympusLayout.C.centerVec.add(OlympusLayout.dir(OlympusLayout.C_PATH_ANGLES[OlympusLayout.C_PATH_NORTHEAST]).multiply(OlympusLayout.C.arenaRadius.toDouble()))
                 val beacon = a.at(ne.x, OlympusLayout.C.floorY.toDouble(), ne.z)
                 val center = a.at(OlympusLayout.C.centerVec.x, OlympusLayout.C.floorY.toDouble(), OlympusLayout.C.centerVec.z)
                 Flight(
@@ -131,7 +182,7 @@ object RpgStoryStages {
             }
             // Stufen der Macht: flach über den Platz zwischen den Sockeln, dann die Freitreppe hinauf.
             'E' -> {
-                val seal = a.at(OlympusLayout.E.altar!!.x + 0.5, OlympusLayout.E.floorY.toDouble(), OlympusLayout.E.altar.z + 0.5)
+                val seal = a.at(OlympusLayout.E.altar!!.x + 0.5, OlympusLayout.E.altar.y.toDouble(), OlympusLayout.E.altar.z + 0.5)
                 val top = a.at(OlympusLayout.E.centerVec.x, OlympusLayout.E.floorY + 12.0, OlympusLayout.E_STAIRS_TOP_Z + 0.5)
                 Flight(
                     listOf(Key.At(-4.0, 2.0, 5.0), Key.At(seal.f - 35.0, -3.0, 6.0), Key.At(seal.f - 15.0, 2.0, 10.0), Key.At(seal.f - 5.0, 0.0, 15.0)),
@@ -139,14 +190,34 @@ object RpgStoryStages {
                     seal, "h3_force",
                 )
             }
-            // Thron des Zeus: zwischen den Blitzpfeilern über den Hof auf den Thron zu.
+            // Thron des Zeus (P23, neuer Blick): hinauf über den Gewitterkranz, über ihm nach innen, dann hinab über die
+            // Schollen auf den Kern; Blick von den Schollen über den Kern auf den Thron. Säule am Altar (y 235, Bühne).
             else -> {
-                val center = a.at(OlympusLayout.F.centerVec.x, OlympusLayout.F.floorY + 3.0, OlympusLayout.F.centerVec.z)
-                val seal = a.at(OlympusLayout.F.altar!!.x + 0.5, OlympusLayout.F.floorY.toDouble(), OlympusLayout.F.altar.z + 0.5)
+                val f = OlympusLayout.F
+                val floor = f.floorY.toDouble()
+                val c = f.centerVec
+                // Winkel des Eingangs um die Inselmitte: Die Fahrt steigt über dem Eingang auf.
+                val entryDeg = Math.toDegrees(kotlin.math.atan2(f.entrance.z - c.z, f.entrance.x - c.x))
+                fun ring(r: Double, deg: Double, up: Double): Key.At {
+                    val rad = Math.toRadians(deg)
+                    return a.at(c.x + kotlin.math.cos(rad) * r, floor + up, c.z + kotlin.math.sin(rad) * r)
+                }
+                val seal = a.at(f.altar!!.x + 0.5, f.altar.y.toDouble(), f.altar.z + 0.5)
                 val throne = a.at(OlympusLayout.THRONE.x + 0.5, OlympusLayout.THRONE.y + 2.0, OlympusLayout.THRONE.z + 0.5)
+                val floeY = OlympusArenas.F_TERRACE_HEIGHT.toDouble()
                 Flight(
-                    listOf(Key.At(-4.0, 2.5, 7.0), Key.At(center.f - 12.0, -5.0, 12.0), Key.At(center.f + 10.0, 3.0, 11.0), Key.At(seal.f - 12.0, 0.0, 9.0)),
-                    listOf(center, Key.At(seal.f, seal.r, 2.0), throne),
+                    listOf(
+                        ring(F_OVER_CROWN_R, entryDeg, F_CROWN_CLEAR),
+                        ring(F_INSIDE_CROWN_R, (entryDeg + F_DESCENT_DEG) / 2.0, F_CROWN_CLEAR - 2.0),
+                        ring(F_FLOE_VIEW_R, F_DESCENT_DEG, floeY + F_FLOE_VIEW_UP),
+                        ring(F_CORE_VIEW_R, F_DESCENT_DEG + 15.0, F_CORE_VIEW_UP),
+                    ),
+                    listOf(
+                        ring(OlympusArenas.F_TERRACE_OUTER, F_DESCENT_DEG - 30.0, floeY),
+                        a.at(c.x, floor + 1.0, c.z),
+                        Key.At(seal.f, seal.r, seal.u + 2.0),
+                        throne,
+                    ),
                     seal, "h4_fear",
                 )
             }
@@ -208,31 +279,39 @@ object RpgStoryStages {
     // ---------------------------------------------------------------------------------------------
 
     /**
-     * **Palast** (160 Ticks), nach dem fünften Glied. Anker = Spieler, Blick zum Palast (`RpgScenes` fragt
-     * `TartarosGuide.target`; ohne Treffer der Blick des Spielers).
+     * **Palast** (160 Ticks), erster Blick auf den Palast. Überarbeitung 4 (P23): `RpgScenes` startet die Szene, wenn nach
+     * dem fünften Glied jemand den Alleeanfang erreicht; Anker = Alleeanfang, Blick nach Norden durch das Propylon.
      * | Ticks | Kamera | Spuren |
      * | --- | --- | --- |
-     * | 0–60 | Blick hinauf, folgt der fallenden Kette | Kette (`rpg.chain_fall`), Kettenklang, Schlag und Ruck beim Aufprall |
-     * | 60–120 | Teleblick zum Palast | Siegel glüht auf (`rpg.rune_glow`, Hades-Grün), Erzähler; Kapitelkarte vom Server (96) |
+     * | 0–60 | knapp hinter der Gruppe, Blick hinauf, folgt der fallenden Kette auf die Allee | Kette (`rpg.chain_fall`), Kettenklang, Schlag und Ruck beim Aufprall |
+     * | 60–120 | Kran über der Allee: erst durch den Rundbogen des Propylons den Gang entlang zum Siegel, dann hinauf, bis die Kuppel über dem Propylon steht | Siegel glüht auf (`rpg.rune_glow`, Hades-Grün), Erzähler; Kapitelkarte (96, falls noch nicht gezeigt) |
      * | 120–160 | zurück in die Augen | – |
      */
     private fun palace(): StageScript = stage(PALACE, PALACE_LENGTH) {
         val key = "${RpgStages.KEY}.palace"
         shot(
-            0, 60, cam = listOf(Key.Last, Key.At(-4.5, 1.5, 1.8), Key.At(-5.0, 1.8, 2.4)),
-            look = listOf(Key.Last, Key.At(6.0, 0.0, 16.0), Key.At(6.0, 0.0, 3.0)), fov = 64f to 60f, follow = 0.12f,
+            0, 60, cam = listOf(Key.Last, Key.At(-1.5, 1.4, 2.4), Key.At(-2.0, 1.8, 3.0)),
+            look = listOf(Key.Last, Key.At(8.0, 0.0, 18.0), Key.At(8.0, 0.0, 3.0)), fov = 64f to 60f, follow = 0.12f,
         )
         shot(
-            60, 120, cam = listOf(Key.Last, Key.At(-2.0, 0.8, 3.2)), look = listOf(Key.Last, Key.At(PALACE_GLOW_DISTANCE, 0.0, 9.0)),
-            fov = 60f to 46f, follow = 0.15f,
+            60, 120,
+            cam = listOf(Key.Last, Key.At(2.0, 0.0, 2.2), Key.At(5.0, 0.0, PALACE_CRANE_UP * 0.6), Key.At(6.0, 0.0, PALACE_CRANE_UP)),
+            look = listOf(
+                Key.Last, Key.At(PROPYLON_F, 0.0, PROPYLON_ARCH_UP), Key.At(SEAL_F, 0.0, PALACE_SEAL_GLOW_UP),
+                Key.At(PALACE_CENTER_F, 0.0, TartarusPlans.OCULUS_Y.toDouble()),
+            ),
+            fov = 58f to 50f, follow = 0.15f,
         )
         shot(120, PALACE_LENGTH, cam = listOf(Key.Last, Key.Eye), look = listOf(Key.Last, Key.EyeLook), ease = EaseKind.SMOOTH, handheld = 0f)
         mark(0, "start")
-        fx(0, "rpg.chain_fall", Vfx.Style.FIRE, Key.At(6.0, 0.0, 22.0), a = 10f, b = 16f, c = 22f, life = 110)
+        fx(0, "rpg.chain_fall", Vfx.Style.FIRE, Key.At(8.0, 0.0, 22.0), a = 10f, b = 16f, c = 22f, life = 110)
         sound(4, "minecraft:block.chain.break", volume = 1f, pitch = 0.6f)
         sound(50, "hha:boss.thud", volume = 0.8f)
         kick(50, pitch = 1.2f, ticks = 6)
-        fx(62, "rpg.rune_glow", Vfx.Style.HADES, Key.At(PALACE_GLOW_DISTANCE, 0.0, 9.0), dir = Key.At(0.0, 0.0, 9.0), a = 7f, life = 98)
+        fx(
+            62, "rpg.rune_glow", Vfx.Style.HADES, Key.At(SEAL_F, 0.0, PALACE_SEAL_GLOW_UP),
+            dir = Key.At(SEAL_F - 10.0, 0.0, PALACE_SEAL_GLOW_UP), a = 7f, life = 98,
+        )
         sound(62, "minecraft:block.respawn_anchor.charge", volume = 0.7f, pitch = 0.8f)
         caption(70, Cine.SPEAKER_NARRATOR, "$key.line")
         mark(PALACE_CARD_AT, "card")
@@ -259,10 +338,12 @@ object RpgStoryStages {
     private fun actEnd(): StageScript = stage(ACT_END, ACT_END_LENGTH) {
         val key = "${RpgStages.KEY}.act_end"
         val a = RpgStages.ACT_END_ANCHOR
-        val zeus = a.at(OlympusLayout.THRONE.x + 0.5, OlympusLayout.F.floorY.toDouble(), OlympusLayout.THRONE.z + 4.5)
+        // P23: Zeus steht auf der Thronbühne (+3, `F_STAGE_HEIGHT`), nicht auf dem Kernboden (dort stand er in der Bühne).
+        val stage = OlympusArenas.F_STAGE_HEIGHT.toDouble()
+        val zeus = a.at(OlympusLayout.THRONE.x + 0.5, OlympusLayout.F.floorY + stage, OlympusLayout.THRONE.z + 4.5)
         val edge = OlympusLayout.F.radius.toDouble()
         shot(
-            0, 80, cam = listOf(Key.At(zeus.f + 13.5, 3.5, 4.0), Key.At(zeus.f + 11.0, -3.0, 4.8)), look = listOf(Key.Puppet("zeus", 4.4)),
+            0, 80, cam = listOf(Key.At(zeus.f + 13.5, 3.5, 4.0 + stage), Key.At(zeus.f + 11.0, -3.0, 4.8 + stage)), look = listOf(Key.Puppet("zeus", 4.4)),
             fov = 52f to 48f, follow = 0.2f,
         )
         shot(

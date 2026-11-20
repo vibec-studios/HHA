@@ -19,6 +19,42 @@ die Reliquien, die Befehle und der Aufbau im Code. Die Kämpfe selbst stehen in 
 - **Ruhigere Effekte:** höchstens 64 Effekte gleichzeitig, Kameraschütteln bei Treffern höchstens 3, saalweit 5,
   außerhalb von Kämpfen 2; einen Bildschirmblitz gibt es nur in Cutscenes und bei Zeus' Phasenwechsel (höchstens 25 %).
 
+## Arena
+
+Seit Überarbeitung 4 spielt die Arena mit. Die Regeln gelten für alle Bosse und, wo genannt, für die Wächter.
+
+- **Kernfläche und Ebenen.** Jede Arena hat eine ebene Kernfläche, auf der der Boss läuft; er steigt nie Treppen und
+  betritt keine Ebene. Am Rand liegen Ebenen (Terrassen, Bühnen, Empore, Umgang, Sims, Randstufe). **Erhöht ist man nur
+  vor Bodenangriffen sicher:** Bodenangriffe treffen nur im **Höhenband** der Kernfläche. Jeder Boss hat mindestens einen
+  Angriff, der die Ebenen erreicht; dann liegt die Ansage zusätzlich auf der Ebene. Treffer auf den Boss zählen weiter
+  nur aus der Arena.
+- **Deckung ist Sichtlinie.** Säulen, Tore, Pfeiler, Standarten, Kokillen, der Titan, Altar, Prellsteine und Baumstamm
+  decken gegen **benannte** Angriffe (welche, steht beim jeweiligen Kampf). Geprüft wird ein Strahl von der Quelle zum
+  Spieler. Wer gedeckt ist, sieht es: goldene Rune an der schützenden Deckung und „gedeckt“ (gold) bzw. „gesehen“ (rot)
+  in der Statuszeile, mit leisem Ton beim Wechsel. Manche Deckung ist **verbrauchbar** (bricht, bröckelt, altert); sie
+  kehrt sichtbar zum Phasenbeginn oder nach dem Kampf zurück, nie mitten in einer Ansage.
+- **Teilziele und Unterleisten.** Unter der Bossleiste stehen bis zu vier kleine Leisten (Amboss, Bia, Fessel, Sanduhr,
+  Schloss, Fels, Fessel I–III). Golden heißt: nimmt jetzt Treffer; gedämpft heißt: ruht; grau mit Zickzack: gebrochen. Ein
+  Teilziel handelt nie selbst. Zerstören bringt ein Fenster oder streicht einen Angriff; wer es ignoriert, kämpft wie
+  bisher. Leben wächst mit der Spielerzahl, je Treffer gibt es einen Deckel.
+- **Geräte.** Botenglocke (Hermes), Erdungsgriff (Zeus), Kettenpfahl (Kerkermeister), Schleusenrad (Tantalos). Ein
+  Rechtsklick (die Glocke auch per Schlag), Wirkung nach höchstens 1 s. **Golden nur, wenn es jetzt etwas bewirkt;**
+  sonst sagt die Statuszeile, warum nichts geschieht. Nur Kampfteilnehmer können sie bedienen. Außerhalb eines Kampfs sind
+  Geräte still. Sie sind unzerstörbar.
+- **Greifen** (Hades' Fessel): angesagt (mindestens 16 Ticks), höchstens ein Spieler, eine Leine (Radius 3) statt einer
+  Fixierung, höchstens 2 s, drei Auswege, zwei davon allein nutzbar. Solange sie hält, greift der Boss nichts anderes an.
+- **Schleichphase** (Hekates dunkle Stunde): zählt als Saal-Gefahr, höchstens 10 s, keine Blindheit, Ansagen und Gold
+  bleiben sichtbar, Entdecken ist eine Ansage und kein Sofortschaden; der Boss greift währenddessen nicht an.
+- **Die Arena verändert sich** (Schollen, Emporenbögen, Umgang, Ketten) nur an Lebensschwellen, zum Phasenbeginn oder als
+  angesagter Höhepunkt, mit einer Ansage von mindestens 2 s, die so lang ist, dass jeder die bleibende Fläche erreicht.
+  Wer mitfällt, setzt die Bö auf die nächste Fläche.
+- **Blockschutz und K. o. auch bei Wächtern.** Solange ein Wächter steht, ist sein Hof geschützt, und wer fällt, geht
+  k. o. (6 Leben am Zuweg, Inventar bleibt) statt zu sterben.
+- **Wiederherstellung.** Jede Arena hat einen **Bauplan**. Beim Kampfbeginn wird sie dagegen repariert (auch in alten
+  Welten und im Tartaros), jede Änderung im Kampf wird gespeichert, und nach Sieg, Abbruch, leerer Arena, Serverstopp oder
+  Absturz steht sie wieder genau nach Plan. Truhen und andere Blöcke mit Inventar, die der Plan nicht kennt, bleiben stehen.
+- **Schritthöhe.** Bosse und Wächter steigen Stufen bis 1,1 hoch.
+
 ## Stärke und Skalierung
 
 `n` = Mitkämpfer (lebend, nicht Kreativ, nicht Zuschauer), höchstens 8. Alles läuft über `logic/boss/BossScaling.kt`.
@@ -113,6 +149,17 @@ die Erfahrung bekommt jeder Mitkämpfer bei jedem Sieg.
 | `/hha hermes start\|stop\|skip` | alter Hermes-Start am eigenen Standort |
 | `/hha kit heaven\|hell` | Kit, wenn `kit_mode` an ist oder im Kreativmodus |
 | `/hha vfx <effekt> [stil]` | jeden 3D-Effekt einzeln zeigen, z. B. `/hha vfx telegraph_styles` |
+| `/hha arena list` | alle Arenen mit Bauplan |
+| `/hha arena show <id> cover\|levels\|parts\|devices` | Deckung, Ebenen, bewegliche Teile bzw. Geräte 10 s als Partikel zeigen |
+| `/hha arena repair <id>`, `/hha arena restore`, `/hha arena part <teil>` | Arena nach Bauplan reparieren; alle Änderungen des laufenden Kampfs zurücksetzen; ein Teil abwerfen (nur im Kampf) |
+| `/hha sub test <0–4>` | Unterleisten zur Probe zeigen (0 blendet aus) |
+| `/hha device <0\|1\|2>` | Gerät im Blick auf ruhend, golden bzw. verbraucht stellen |
+| `/hha world retrofit status\|run <teil>\|all` | Nachrüstung des Olymp in alten Welten (Teile `isle_A` … `isle_F`, `bridge_ab` … `bridge_ef`) |
+| `/hha approach` | Weg, Fortschritt in % und nächster Wegpunkt |
+| `/hha deco give` | je 64 aller 35 Deko- und Geräte-Blöcke |
+
+Arena-IDs: `forum`, `olymp_c`, `olymp_d`, `olymp_e`, `olymp_f`, `palace_hall`, `fortress_court`, `prison_pit`,
+`sisyphus_hill`, `ixion_wheel`, `tantalus_basin`. Im Tartaros im Bauwerk stehen, damit der Befehl die Bauwerksmitte findet.
 
 ## Einstellungen
 
@@ -159,7 +206,7 @@ hat sich nichts geändert.
 | Kamera-Ruck | im Kampf höchstens 2,5° und 8 Ticks, keiner während einer laufenden Ansage; in Szenen höchstens 4° |
 | Rütteln | wie bisher (≤ 3 bei Treffern, ≤ 5 saalweit), am Client als Drehung |
 | Bildschirmblitz | höchstens 0,25 |
-| Bildschirm-Pass | höchstens einer gleichzeitig, nur an festen Stellen: Brontes' Blasebalg (Hitzeflimmern) und Keil (Stoßring), Zeus' Blitz für den Getroffenen (Stoßring), Hekates Mondfinsternis, Tantalos ausgedörrt (Hitze), Kronos' Stillstand (Zeitstopp) und Verschlingen (Gravitationslinse), dazu einzelne Szenen |
+| Bildschirm-Pass | höchstens einer gleichzeitig, nur an festen Stellen: Brontes' Blasebalg (Hitzeflimmern) und Keil (Stoßring), Zeus' Blitz für den Getroffenen (Stoßring), Hekates dunkle Stunde, Tantalos ausgedörrt (Hitze), Kronos' Stillstand (Zeitstopp) und Verschlingen (Gravitationslinse), dazu einzelne Szenen |
 | Trümmer gleichzeitig | 24 Blöcke am Client |
 | Effekte gleichzeitig | 64 |
 | Flackern | nichts schneller als 2 Hz, kein Blinken als Warnung |
@@ -231,6 +278,30 @@ Headless-Chrome). Neue Pipelines werden nie global registriert, sondern mit `pre
 ohne `--only` alle. Ansehen ohne Spiel: `python tools/hha_assets/preview.py <name> bild.png [--poses a,b] [--silhouette|--glow]`
 (für Bia liest es `POSES_BIA`). `gradlew runVerifyWorldgen` prüft Weltdaten, Baupläne, Kampfflächen, die Rahmenerkennung des
 Wolkentors und die Ankunft, ohne eine Welt zu laden.
+
+### Für Entwickler: Arena (Überarbeitung 4)
+
+| Pfad | Inhalt |
+| --- | --- |
+| `world/arena/ArenaSpec.kt` | Geometrie-Vertrag je Arena: Kern, `CoverSpot` (Kasten + `protects` = Angriffs-IDs), `Level` (Höhe, Felder, Zugänge), `Part` (Zone × y-Bereich, `fills`), `DeviceSpot`; Zonen `Disc`, `Ring`, `Strip`, `Union`, `Cut` |
+| `world/olymp/OlympusArenas.kt`, `world/TartarusArenas.kt` | die Verträge selbst (alle Maße, Angriffs-IDs wie `zeus.gaze`, Wegpunkte `APPROACHES`, `palaceApproach(o)`); Bau und Kampf lesen nur hier |
+| `logic/boss/arena/ArenaBlueprint.kt` (`ArenaBlueprints`) | Bauplan je Arena: `design` zeichnet den Plan einmal in eine Tabelle; `repair` (Kampfbeginn), `matches`, `selfTest` |
+| `logic/boss/arena/ArenaEdits.kt` | persistentes Edit-Register je Arena (`set`, `clear`, `restore`, `restoreAll`); `recover` beim Serverstart stellt nach einem Absturz her |
+| `logic/world/WorldRetrofit.kt` | Olymp-Nachrüstung (Schalter `world_retrofit`, Stand `hha_build_rev`) |
+| `logic/boss/Arenas.kt`, `GuardianArenas.kt`, `ArenaNav.kt`, `ArenaCollapse.kt` | Arena mit Ebenen (`floorAt`, `levelAt`), verlorenen Teilen (`lose`, `isLost`), Regeln für Bosse und Wächter, Wegführung um Deckung, Einsturz von Teilen |
+| `logic/boss/Telegraph.kt` | Formen mit Höhenband (`band(floorY, below, above)`, `reaches`); ohne Band wie früher |
+| `logic/boss/Cover.kt` | `sheltered` (Raycast), `shelter(world, source, player, spec, attack)`, `mark` (goldene Rune), `status` (Statuszeile), `lineEnd` |
+| `logic/boss/SubTargets.kt`, `entity/boss/SubTargetEntity.kt`, `client/model/SubTargetRenderer.kt` | `SubTargetGroup` mit `SubTarget` (Leben, Deckel, Kerben), sichtbare Teilziele (`hades.fetter`, `kampe.shackle`, `sisyphus.boulder`), `Cine.subBars` (Opcode 19) und `PhaseBar` am Client |
+| `logic/boss/Tether.kt` | Leine (Radius, Dauer, einmal Zurücksetzen an den Rand) |
+| `block/ArenaDeviceBlock.kt`, `logic/boss/arena/ArenaDevices.kt` | Geräte-Blöcke (`MODE` 0–2, `FACING`) und `ArenaDevices.on(kind) { world, pos, player -> … }` |
+| `logic/world/Approach.kt` | Wege: Zone je Weg, `progress`, `next`, `reached`, Puls-Klang je Spieler; `palace(world, pos)` |
+| `logic/boss/sig/*.kt`, `logic/boss/timings/*SigTimings.kt` | die Signatur-Mechanik je Boss und ihre Zahlen |
+| `config/Overhaul4Commands.kt` | die Befehle oben |
+
+Ohne Spiel prüfen: `python tools/hha_assets/gradle_locked.py runVerifyWorldgen` prüft streng Vertrag gegen Bau (Kern frei,
+Deckung, Sichtstrahl, Ebenen mit Zugang, Geräte, Teile im Arena-Kasten), den Bauplan-Selbsttest (aufnehmen, 500 Zellen
+ändern, zurücksetzen), das Regelwerk (18 Fälle) und den Schwebe-Zähler. Die Dumps liegen unter
+`build/run/verifyWorldgen/` (`plan_arena_<id>.txt`, `_lost`-Fassungen, `contract.txt`); `preview_plan.py` zeichnet sie.
 
 ### Sprachaufnahmen
 

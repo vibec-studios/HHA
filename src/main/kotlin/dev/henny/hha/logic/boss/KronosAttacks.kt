@@ -10,6 +10,8 @@ import dev.henny.hha.entity.boss.KronosPose
 import dev.henny.hha.logic.Fx
 import dev.henny.hha.logic.Vfx
 import dev.henny.hha.logic.boss.BossFx.Screen
+import dev.henny.hha.logic.boss.sig.KronosStasis
+import dev.henny.hha.world.TartarusPlans
 import net.minecraft.block.Blocks
 import net.minecraft.entity.SpawnReason
 import net.minecraft.entity.attribute.EntityAttributes
@@ -94,6 +96,36 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
     /** Die letzten Orte, an denen er stand (neuester zuerst), für die Nachbilder der Rückspulung. */
     private val trail = ArrayList<Pair<Vec3d, Float>>()
 
+    // --- Überarbeitung 4 (P20): Stillstand mit Deckung, Sanduhr-Leisten, Kern und Ebenen ---------------------------
+
+    /** Geschosse, die der laufende Zeitstopp angehalten hat. */
+    private var frozenBolts: List<Frozen> = emptyList()
+
+    /** Was [KronosStasis.Run] vom Kampf braucht: Schaden, Zeitstopp-Pass, Geschosse. */
+    private val stasisHost = object : KronosStasis.Host {
+        override fun strike(player: ServerPlayerEntity, base: Float, magic: Boolean, reach: BossDefense.Reach): Boolean =
+            this@KronosAttacks.strike(player, base, magic, reach)
+
+        override fun freezeTime(entity: dev.henny.hha.entity.boss.KronosEntity, ticks: Int) {
+            startTimeStop(entity, ticks)
+            frozenBolts = freezeBolts()
+        }
+
+        override fun whileFrozen() = dropLeavers(Screen.TIME_STOP)
+
+        override fun resumeTime() {
+            endTimeStop(abort = false)
+            thaw(frozenBolts)
+            frozenBolts = emptyList()
+        }
+    }
+
+    /** Stillstand, Kernpunkte und zweite Formen auf den Ebenen (PLAN 4.2, `sig/KronosStasis.kt`). */
+    private val stasis = KronosStasis.Run(fight, stasisHost)
+
+    /** Je Sanduhr der Rückspulung eine Unterleiste. */
+    private val glassBars = KronosStasis.HourglassBars(fight)
+
     fun reset() {
         // Jeder Ausgang (Phase, Sieg, Tod, Abbruch, Neustart) läuft hier durch: laufende Pässe beenden.
         endLens(collapse = false)
@@ -107,6 +139,9 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
         allyBusy = false
         for (glass in glasses) glass.discard()
         glasses.clear()
+        glassBars.hide()
+        frozenBolts = emptyList()
+        stasis.reset()
     }
 
     fun breakPoise() {
@@ -126,6 +161,10 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
         rewindsDue = 0
         rewindsDone = 0
         sinceDevour = 0
+        stasis.reset()
+        // PLAN 3.6: Gealterte Säulen stehen zu Beginn der zweiten Kronos-Phase wieder. Seit P24 erledigt das
+        // `HadesFight.startStage(5)` über `restorePillars`; `restoreAged` ist nur noch der Rückfall (sonst ohne Wirkung).
+        if (number == 5) stasis.restoreAged()
         if (number == 5) fight.addTask(allyFollow())
     }
 
@@ -138,6 +177,7 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
     /** Jeden Tick der Phase (außerhalb von Szenen): der Platz für Saal-Gefahren. */
     fun tick() {
         trackTrail()
+        stasis.track()
         if (fight.stage == 5) hazardSlot()
     }
 
@@ -328,9 +368,14 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
         repeat(ticks) { yield(Unit) }
     }
 
-    /** Jeder Schlag eines Titanen ist deutlich härter als die seines Sohnes. */
-    private fun strike(player: ServerPlayerEntity, base: Float, magic: Boolean = false, reach: BossDefense.Reach = BossDefense.Reach.BODY) =
-        fight.hurt(player, base * POWER, magic, reach)
+    /**
+     * Jeder Schlag eines Titanen ist deutlich härter als die seines Sohnes. [floorY] (Überarbeitung 4): Boden der Ebene,
+     * über dem [reach] gilt (Umgang, Podest); Standard der Saalboden.
+     */
+    private fun strike(
+        player: ServerPlayerEntity, base: Float, magic: Boolean = false, reach: BossDefense.Reach = BossDefense.Reach.BODY,
+        floorY: Double = center.y,
+    ) = fight.hurt(player, base * POWER, magic, reach, floorY)
 
     private fun sound(event: SoundEvent, at: Vec3d, volume: Float = 2.5f, pitch: Float = 1f) {
         calls.sound(event, at, volume, pitch)
@@ -399,7 +444,8 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
             val target = world.getPlayerByUuid(id) ?: fight.nearestTarget(entity.entityPos) ?: return@sequence
             val to = Vec3d(target.x - entity.x, 0.0, target.z - entity.z)
             if (to.length() < STOP_AT) break
-            entity.setPosition(fight.clampToHall(entity.entityPos.add(to.normalize().multiply(speed)), 3.0))
+            // Überarbeitung 4: Er bleibt auf dem Kern (r ≤ 38, nicht in Säulen, nicht auf dem Podest).
+            entity.setPosition(stasis.coreSpot(fight.clampToHall(entity.entityPos.add(to.normalize().multiply(speed)), 3.0)))
             fight.faceTitan(target.entityPos)
             if (step % K.STRIDE_STEP == 0) sound(HhaSounds.IMPACT, entity.entityPos, 0.8f, 0.4f)
             yield(Unit)
@@ -441,6 +487,7 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
         val from = floorAt(entity.entityPos)
         val to = fight.clampToHall(from.add(forward().multiply(K.CLEAVE_LENGTH.toDouble())), 1.0)
         val line = group.line(from, to, K.CLEAVE_WIDTH, K.CLEAVE_WINDUP, Telegraph.Pace.HEAVY)
+        stasis.echo(group, from, to, K.CLEAVE_WIDTH, K.CLEAVE_WINDUP, Telegraph.Pace.HEAVY)
         sound(HhaSounds.CHARGE, from, 3f, 0.4f)
         wait(line.ticks)
         for (player in line.hits(fight.targets())) {
@@ -484,7 +531,8 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
         entity.pose = KronosPose.SLAM
         val spot = floorAt(entity.entityPos)
         val group = calls.boss()
-        val slam = group.ring(spot, K.SLAM_RADIUS, K.SLAM_WINDUP)
+        // Überarbeitung 4: Bodenschlag (LOW) nur im Höhenband des Kerns; der Umgang schützt (PLAN 3.6).
+        val slam = group.ring(spot, K.SLAM_RADIUS, K.SLAM_WINDUP).also { it.band(center.y) }
         sound(HhaSounds.CHARGE, spot, 3f, 0.45f)
         wait(slam.ticks)
         for (player in slam.hits(fight.targets())) {
@@ -520,7 +568,7 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
             for (player in fight.targets()) {
                 val r = hypot(player.x - from.x, player.z - from.z)
                 if (abs(r - radius) < K.SLAM_RING_DEPTH && fight.grounded(player) && struck.add(player.uuid)) {
-                    // Äonen-Ringe zum Überspringen (LOW).
+                    // Äonen-Ringe zum Überspringen (LOW), Band = Kern (`grounded`): Sie treffen den Umgang nicht.
                     if (strike(player, 16f, magic = true, reach = BossDefense.Reach.LOW)) Fx.launchPlayer(player, Vec3d(0.0, 0.6, 0.0))
                 }
             }
@@ -543,6 +591,7 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
         val far = fight.clampToHall(target.entityPos.add(away.multiply(6.0)), 2.0).add(0.0, 1.4, 0.0)
         val group = calls.boss(pace = Telegraph.Pace.PROJECTILE)
         val out = group.line(floorAt(origin), floorAt(far), K.THROW_WIDTH, K.THROW_WINDUP)
+        stasis.echo(group, floorAt(origin), floorAt(far), K.THROW_WIDTH, K.THROW_WINDUP)
         sound(HhaSounds.CHARGE, origin, 3f, 0.6f)
         wait(out.ticks)
         entity.harpeOut = true
@@ -570,11 +619,11 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
             val at = origin.lerp(far, i.toDouble() / K.HARPE_OUT)
             if (bolt != null) fight.steer(bolt, at, path)
             cut(at, 1)
-            if (i == returnAt) back = group.line(floorAt(far), floorAt(origin), K.THROW_WIDTH, K.HARPE_RETURN_WINDUP)
+            if (i == returnAt) back = returnLine(group, far, origin)
             yield(Unit)
         }
         repeat(K.HARPE_HOVER) {
-            if (back == null && K.HARPE_OUT + it + 1 == returnAt) back = group.line(floorAt(far), floorAt(origin), K.THROW_WIDTH, K.HARPE_RETURN_WINDUP)
+            if (back == null && K.HARPE_OUT + it + 1 == returnAt) back = returnLine(group, far, origin)
             yield(Unit)
         }
         line = back ?: out
@@ -591,6 +640,12 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
         entity.pose = KronosPose.IDLE
     }
 
+    /** Rückweg der Harpe: Linie zurück zur Hand, dazu die zweite Form auf den Ebenen. */
+    private fun returnLine(group: Telegraph.Fight.Group, far: Vec3d, origin: Vec3d): Telegraph.Line {
+        stasis.echo(group, floorAt(far), floorAt(origin), K.THROW_WIDTH, K.HARPE_RETURN_WINDUP)
+        return group.line(floorAt(far), floorAt(origin), K.THROW_WIDTH, K.HARPE_RETURN_WINDUP)
+    }
+
     /**
      * Kette D „Zeitschritt“: Eine Rune am Ziel (W 20, STEP), er erscheint dort, dann Rückhand-Sichelhieb (W 16) und
      * Spalthieb (W 24); dann steckt die Harpe (offen, F 36).
@@ -600,7 +655,8 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
         val target = fight.nearestTarget(entity.entityPos) ?: return@sequence
         fight.faceTitan(target.entityPos)
         entity.pose = KronosPose.STEP
-        val spot = fight.clampToHall(target.entityPos, 3.0)
+        // Überarbeitung 4: Sein Zielpunkt liegt im Kern (nie auf dem Umgang, nie in einem Säulenstumpf).
+        val spot = stasis.coreSpot(fight.clampToHall(target.entityPos, 3.0))
         Vfx.rune(world, Vfx.Style.AEON, spot.add(0.0, 0.06, 0.0), K.STEP_RUNE_RADIUS, K.STEP_WINDUP)
         sound(HhaSounds.BLINK, entity.entityPos, 3f, 0.5f)
         wait(K.STEP_WINDUP)
@@ -634,9 +690,14 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
         val reach = fight.safeRadius - 1.0
         val minuteStart = world.random.nextDouble() * Math.PI * 2.0
         val hourStart = minuteStart + Math.PI * (0.6 + world.random.nextDouble() * 0.8)
-        val group = calls.boss(pace = Telegraph.Pace.AREA)
-        group.line(center, center.add(cos(minuteStart) * reach, 0.0, sin(minuteStart) * reach), K.HANDS_WIDTH, K.HANDS_WINDUP)
-        group.line(center, center.add(cos(hourStart) * reach * 0.7, 0.0, sin(hourStart) * reach * 0.7), K.HANDS_WIDTH, K.HANDS_WINDUP)
+        // Überarbeitung 4: Die Zeiger erreichen die Ebenen (Band bis zur höchsten Ebene, dem Podest, + 3) und werden dort
+        // ein zweites Mal gezeigt.
+        val group = calls.boss(pace = Telegraph.Pace.AREA).band(center.y, above = HANDS_BAND_ABOVE)
+        for ((angle, length) in listOf(minuteStart to reach, hourStart to reach * 0.7)) {
+            val end = center.add(cos(angle) * length, 0.0, sin(angle) * length)
+            group.line(center, end, K.HANDS_WIDTH, K.HANDS_WINDUP)
+            stasis.echo(group, center, end, K.HANDS_WIDTH, K.HANDS_WINDUP)
+        }
         fight.hint("hha.kronos.hint.hands", Formatting.BLUE)
         sound(HhaSounds.CHIME, center, 3f, 0.5f)
         wait(group.ticks)
@@ -650,7 +711,9 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
             val hour = hourStart - tick * turn * K.HANDS_HOUR_SPEED
             for ((angle, length) in listOf(minute to reach, hour to reach * 0.7)) {
                 for (player in fight.targets()) {
-                    if (!fight.grounded(player)) continue
+                    // Überarbeitung 4: am Boden der eigenen Ebene (Kern, Umgang, Podest); springen hilft weiter.
+                    val floorY = stasis.floorOf(player)
+                    if (player.y > floorY + HANDS_GROUNDED) continue
                     val off = Vec3d(player.x - center.x, 0.0, player.z - center.z)
                     val dist = off.length()
                     if (dist > length || dist < 2.0) continue
@@ -658,7 +721,7 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
                     if (miss < K.HANDS_WIDTH / 2.0 && tick - (lastHit[player.uuid] ?: -99) > K.HANDS_REHIT) {
                         lastHit[player.uuid] = tick
                         // Uhrzeiger zum Überspringen (LOW).
-                        if (strike(player, 14f, magic = true, reach = BossDefense.Reach.LOW)) {
+                        if (strike(player, 14f, magic = true, reach = BossDefense.Reach.LOW, floorY = floorY)) {
                             Fx.launchPlayer(player, Vec3d(-sin(angle) * 0.8, 0.5, cos(angle) * 0.8))
                         }
                     }
@@ -673,68 +736,14 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
     }
 
     /**
-     * Stillstand (alle 60 s): Er hebt die Hand (HALT, 14 Ticks), dann steht die Zeit 40 Ticks: Slowness I
-     * für 30 Ticks (kein Bildschirmblitz mehr, PLAN 9.1: nur Cutscenes und Zeus' Phasenwechsel), alle Geschosse halten an, eine Rune folgt jedem Spieler. Wenn die Zeit weiterläuft, erscheinen unter
-     * jedem Spieler und an zwei Stellen daneben Kreise (Radius 2,8), die 16 Ticks später einschlagen (S 22). F 14.
+     * Stillstand (alle 60 s), Überarbeitung 4 (PLAN 4.2): Er hebt die Hand (14), sagt den Sanduhr-Strahl an (ROOM 40,
+     * verlängert nach Erreichbarkeit), dann steht die Zeit 40 Ticks (Pass, Langsamkeit I für 30) und der Strahl schwenkt
+     * 60 Ticks über 180°. Wer ohne Säule zwischen sich und seiner Hand im Strahl steht, wird zurückgespult (S 22, SKY).
+     * Die drei Einschläge je Spieler entfallen. Säulen, die gedeckt haben, altern. F 14. Ablauf in [KronosStasis.Run].
      */
     private fun standstill(): Sequence<Unit> = sequence {
-        val entity = fight.kronos ?: return@sequence
         haltAt = fight.stageAge + K.HALT_INTERVAL
-        faceNearest()
-        entity.pose = KronosPose.HALT
-        sound(HhaSounds.CHARGE, entity.entityPos, 3.5f, 0.35f)
-        wait(K.HALT_RAISE)
-        // Die Zeit steht.
-        for (player in fight.targets()) {
-            // Überarbeitung 2 (PLAN 12.3): höchstens Slowness I, kein Kontrollverlust.
-            player.addStatusEffect(StatusEffectInstance(StatusEffects.SLOWNESS, K.HALT_SLOWNESS, 0, false, false, true))
-            Vfx.rune(world, Vfx.Style.AEON, player.entityPos.add(0.0, 0.06, 0.0), K.HALT_RADIUS, K.HALT_FROZEN, player)
-        }
-        fight.hint("hha.kronos.hint.halt", Formatting.BLUE)
-        sound(HhaSounds.THUNDER, center, 4f, 1.6f)
-        sound(HhaSounds.TIME_STOP, center, 4f, 1f)
-        // Überarbeitung 3: Die Welt verliert ihre Farbe, laufende Effekte frieren ein (Dauer = die stehende Zeit).
-        startTimeStop(entity, K.HALT_RESUME - K.HALT_RAISE)
-        val frozen = freezeBolts()
-        repeat(K.HALT_RESUME - K.HALT_RAISE) {
-            dropLeavers(Screen.TIME_STOP)
-            yield(Unit)
-        }
-        endTimeStop(abort = false)
-        // Sie läuft weiter, und alles holt sich auf einmal nach.
-        thaw(frozen)
-        sound(HhaSounds.BLINK, center, 3.5f, 1.4f)
-        val group = calls.boss()
-        val marks = ArrayList<Telegraph.Ring>()
-        for (player in fight.targets()) {
-            val under = fight.clampToHall(player.entityPos, 2.0)
-            marks.add(group.ring(under, K.HALT_RADIUS, K.HALT_IMPACT_DELAY))
-            val start = world.random.nextDouble() * Math.PI * 2.0
-            repeat(K.HALT_EXTRA_CIRCLES) { k ->
-                val a = start + k * Math.PI * 2.0 / 3.0
-                marks.add(group.ring(fight.clampToHall(under.add(cos(a) * K.HALT_SPREAD, 0.0, sin(a) * K.HALT_SPREAD), 2.0), K.HALT_RADIUS, K.HALT_IMPACT_DELAY))
-            }
-        }
-        // Überarbeitung 3 (`kronos.hand`): Über jedem Kreis reißt die Luft auf, seine Hand schlägt zum Treffer herab
-        // (der Flächeneffekt jedes Kreises; ersetzt die Säule).
-        for (mark in marks) {
-            BossFx.play(world, "kronos.hand", Vfx.Style.AEON, mark.center, a = K.HALT_RADIUS, b = K.HALT_IMPACT_DELAY.toFloat(),
-                life = K.HALT_IMPACT_DELAY + HAND_AFTER, entity = entity, impact = true)
-        }
-        wait(group.ticks)
-        val struck = HashSet<UUID>()
-        for (mark in marks) {
-            for (player in mark.hits(fight.targets())) {
-                if (!struck.add(player.uuid)) continue
-                // Stillstand-Kreise schlagen von oben ein (SKY).
-                if (strike(player, 22f, magic = true, reach = BossDefense.Reach.SKY)) Fx.launchPlayer(player, Vec3d(0.0, 0.9, 0.0))
-            }
-        }
-        BossFx.kick(world, center, HAND_PITCH, ticks = KICK_TICKS, radius = HALL_KICK_RADIUS)
-        sound(HhaSounds.IMPACT, center, 4f, 0.8f)
-        sound(HhaSounds.THUD, center, 4f, 0.7f)
-        wait(K.HALT_WINDOW)
-        entity.pose = KronosPose.IDLE
+        yieldAll(stasis.standstill())
     }
 
     private class Frozen(val bolt: HermesBoltEntity, val velocity: Vec3d, val fall: Double)
@@ -801,14 +810,18 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
             // Überarbeitung 3: Splitter fliegen aus dem Stundenglas auf seiner Brust in die Sanduhr.
             BossFx.play(world, "kronos.shards", Vfx.Style.AEON, spot.add(0.0, 1.3, 0.0), entity = entity, life = SHARDS_LIFE)
         }
+        // Überarbeitung 4: je Sanduhr eine Unterleiste.
+        glassBars.start(glasses)
         for (tick in 0 until K.REWIND_TIME) {
             if (glasses.isEmpty()) break
+            if (tick % KronosStasis.HourglassBars.UPDATE_EVERY == 0) glassBars.show()
             if (tick % 20 == 0) {
                 sound(HhaSounds.CHIME, center, 2.4f, 0.5f + tick.toFloat() / K.REWIND_TIME)
                 for (glass in glasses) Vfx.chain(world, Vfx.Style.AEON, glass, entity.entityPos.add(0.0, 4.0, 0.0), entity, 22)
             }
             yield(Unit)
         }
+        glassBars.hide()
         if (glasses.isEmpty()) {
             fight.hint("hha.kronos.hint.rewind.broken", Formatting.GOLD)
             yieldAll(staggered(K.REWIND_STAGGER))
@@ -842,6 +855,7 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
         core.discard()
         Vfx.nova(world, Vfx.Style.GOLD, at, 6f, 14)
         fight.sound(HhaSounds.THUNDER, 2.6f, 1.6f, at)
+        glassBars.show()
     }
 
     // -------------------------------------------------------------------------------------------------
@@ -930,7 +944,8 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
             val titan = fight.kronos
             if (hades != null && titan != null && !fight.inCutscene && !allyBusy) {
                 val away = flatDir(titan.entityPos, hades.entityPos) ?: Vec3d(1.0, 0.0, 0.0)
-                val goal = fight.clampToHall(titan.entityPos.add(away.multiply(ALLY_DISTANCE)), 3.0)
+                // P24 (Freigabe A3): Hades geht selbst dorthin, also in den Kern (nie in den Umgang oder ins Podest).
+                val goal = fight.clampToCore(titan.entityPos.add(away.multiply(ALLY_DISTANCE)), 3.0)
                 val step = Vec3d(goal.x - hades.x, 0.0, goal.z - hades.z)
                 if (step.length() > 0.3) hades.setPosition(hades.entityPos.add(step.normalize().multiply(0.25)))
                 fight.face(titan.entityPos)
@@ -1087,10 +1102,8 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
         const val CLEAVE_PITCH = 2f
         const val SLAM_PITCH = 2.5f
         const val DEVOUR_PITCH = 2.5f
-        const val HAND_PITCH = 2.5f
         const val KICK_TICKS = 6
         const val KICK_RADIUS = 32f
-        const val HALL_KICK_RADIUS = 60f
 
         /** Sichelband (`kronos.harpe`). */
         const val HARPE_LIFE = 16
@@ -1108,8 +1121,9 @@ class KronosAttacks(private val fight: HadesFight) : CoreHandler {
         const val SWIRL_LIFE = 16
         val FACE_UP = Vec3d(0.0, 1.0, 0.0)
 
-        /** Hand aus dem Riss: so lange nach dem Treffer (Rückzug, Risse). */
-        const val HAND_AFTER = 26
+        /** Uhrzeiger (Überarbeitung 4): Band bis Podest (+3) + 3; am Boden der Ebene heißt bis so hoch darüber. */
+        const val HANDS_BAND_ABOVE = TartarusPlans.DAIS_HEIGHT + 3.0
+        const val HANDS_GROUNDED = 0.7
 
         /** Nachbilder und Splitter der Rückspulung. */
         const val TRAIL_EVERY = 10

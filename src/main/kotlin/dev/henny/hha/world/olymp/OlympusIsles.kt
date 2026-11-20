@@ -363,10 +363,18 @@ object OlympusIsles {
             val length = 2 + (rnd(seed, i, 52) * 2).toInt()
             var bx = x
             var bz = z
+            // P24: Jede Astzelle teilt eine Fläche mit der vorigen (bzw. dem Stamm); über Eck hinge sie nur in den Blättern.
+            var py = floor + height - 2
             for (k in 1..length) {
+                val px = bx
+                val pz = bz
                 bx = x + (dx * k).roundToInt()
                 bz = z + (dz * k).roundToInt()
-                c.put(bx, floor + height - 2 + k / 2, bz, log(Blocks.CHERRY_LOG, axis))
+                val by = floor + height - 2 + k / 2
+                if (bx != px && bz != pz) c.put(bx, py, pz, log(Blocks.CHERRY_LOG, Direction.Axis.X))
+                if (by != py) c.put(bx, py, bz, log(Blocks.CHERRY_LOG, axis))
+                c.put(bx, by, bz, log(Blocks.CHERRY_LOG, axis))
+                py = by
             }
             crown(c, bx, floor + height - 1 + length / 2, bz, 2.4 + rnd(seed, i, 53), 1.5, seed + i, pink)
         }

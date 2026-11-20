@@ -37,11 +37,15 @@ Der **Olymp** ist eine eigene Dimension: schwebende Inseln über einem Wolkenmee
 Ein fester Pfad aus sechs Inseln führt nach oben, jede mit ihrem Kampf:
 - **Hermes**, der Bote: das Rätsel im Tempel lösen, dann ihn in vier Stages fangen
 - **Hekate**, Göttin der Schwellen: ein Dreiweg, ein Schlüssel, der den sicheren Weg bestimmt, und drei Gestalten, von denen nur eine das Feuer trägt. Sie bewacht das Tor zum Tartaros
-- **Brontes** der Kyklop: Lass seinen Hammer auf einen glühenden Rohling schlagen, dann blenden ihn die Funken; Deckung hinter dem Amboss, Schutz auf den kühlen Rosten
-- **Kratos und Bia**, die Thronwache: Befolge seine Befehle (weichen, herankommen, knien) und lenke Bias Sturm in ihn hinein
-- **Zeus**: Locke seine Blitze in die Kupferpfeiler, schau weg, wenn die Gorgo auf seinem Schild blickt, und stell dich in die goldene Schale seiner Waage
+- **Brontes** der Kyklop: Lass seinen Hammer auf einen glühenden Rohling schlagen, dann blenden ihn die Funken; weich sauber aus, dann steckt sein Hammer; Deckung hinter dem Amboss, bis er reißt und bricht
+- **Kratos und Bia**, die Thronwache: Befolge seine Befehle (weichen, herankommen, knien), lenke Bias Sturm in ihn hinein und zerschlag sie, solange sie taumelt
+- **Zeus**: Locke seine Blitze in die Blitzpfeiler und zieh den Erdungsgriff, schau weg, wenn die Gorgo auf seinem Schild blickt, stell dich in die goldene Schale seiner Waage und halte dich, wenn seine Insel zerbricht
 
 **Tartaros**: Fünf Wächter halten die Kette am Palast des Hades. Jeder besiegte sprengt ein Glied und macht die übrigen stärker; bei fünf von fünf öffnet das Siegel für Hades und Kronos. Ein Geist des Hermes zeigt den Weg.
+
+Die Brücken zwischen den Inseln sind **Schlachtwege**: jede mit eigenem Thema, Toren, einer Engstelle und einem Puls, der zum Boss hin lauter wird. Zum Palast des Hades führt ein geschlossener Anmarsch an den Totenrichtern vorbei bis zum Hundetor.
+
+Jede Arena **spielt mit** (nach dem Vorbild von HHA Blood und Void): Säulen, Tore und Standarten decken gegen benannte Angriffe, Terrassen schützen nur vor Bodenangriffen, Schollen und Emporen brechen an festen Stellen weg, und Geräte wie die Botenglocken oder die Kettenpfähle des Kerkermeisters wenden den Kampf. Nach dem Kampf steht jede Arena wieder nach ihrem Bauplan. Hekates *dunkle Stunde* ist eine kurze, faire Schleichphase; die Fesseln des Hades lassen immer drei Auswege. 35 neue Deko-Blöcke (Olymp-Marmor, Sturmmarmor, Bronze; Tartaros-Basalt, Seelenader- und Glutbasalt) schmücken die Bauten und lassen sich in der Steinsäge zuschneiden.
 
 Jeder Angriff wird am Boden angesagt, Gold heißt immer sicher oder offen, kein Boss ruft Helfer herbei, und nichts nimmt dir die Kontrolle. Die Bosse wachsen mit der Zahl der Spieler und kontern wiederholte Mace-Sprünge von oben. Jedes Teil der Heaven- und Hell-Sets fällt **einmal je Welt** bei seinem Boss; ein zweiter Sieg gibt Barren. Kureten, Greife und goldene Wächterinnen bewachen die Inseln.
 

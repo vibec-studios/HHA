@@ -218,7 +218,8 @@ object HermesStages {
         return stage(STAGE3, end) {
             cam(0, 0, d1, listOf(b(0.0, 2.2, 5.0), b(0.0, 2.5, 3.0)), listOf(Key.Actor(0, 2.9)), 46f to 38f)
             cam(1, d1, d2, orbitBoss(100.0, 70.0, 3.4, 3.4, 1.0, 1.0), listOf(Key.Actor(0, 2.6)), 44f to 40f)
-            cam(2, d2, d3, orbitAt(40.0, 70.0, 18.0, 18.0, 6.0, 6.0), listOf(Key.Actor(0, 1.0)), 64f to 74f)
+            // P24: Radius 15 statt 18 – bei 18 fuhr das Ende der Fahrt (70°) durch das Kapitell der Säule bei 67,5° (Ring 20, P14).
+            cam(2, d2, d3, orbitAt(40.0, 70.0, 15.0, 15.0, 6.0, 6.0), listOf(Key.Actor(0, 1.0)), 64f to 74f)
             cam(3, d3, d4, orbitBoss(200.0, 230.0, 4.4, 4.4, 0.6, 0.6), listOf(Key.Actor(0, 2.4)), 52f to 48f)
             cam(4, d4, end - EYE, orbitBoss(230.0, 280.0, 11.0, 11.0, 2.0, 2.0, cy = 5.0), listOf(Key.Actor(0, 2.5), Key.Actor(0, rise)), 56f to 52f, follow = 0.2f)
             eyes(end - EYE, end)

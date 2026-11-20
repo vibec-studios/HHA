@@ -9,8 +9,13 @@ import dev.henny.hha.entity.boss.HermesEntity
 import dev.henny.hha.entity.boss.HermesPose
 import dev.henny.hha.logic.Fx
 import dev.henny.hha.logic.Vfx
+import dev.henny.hha.logic.boss.sig.HadesFetters
+import dev.henny.hha.world.TartarusArenas
 import dev.henny.hha.world.TartarusPlans
+import dev.henny.hha.world.arena.Level
+import dev.henny.hha.world.arena.Part
 import net.minecraft.block.Blocks
+import net.minecraft.block.ChainBlock
 import net.minecraft.entity.SpawnReason
 import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.sound.SoundEvent
@@ -18,6 +23,7 @@ import net.minecraft.text.Text
 import net.minecraft.util.Formatting
 import net.minecraft.util.hit.HitResult
 import net.minecraft.util.math.BlockPos
+import net.minecraft.util.math.Direction
 import net.minecraft.util.math.MathHelper
 import net.minecraft.util.math.Vec3d
 import net.minecraft.world.RaycastContext
@@ -38,8 +44,9 @@ import kotlin.math.sin
  *
  * - Phase I „Der Gastgeber“: Hiebfolge, Ausfallschritt, Bodenschlag, Bident-Wurf; dazu als fester Höhepunkt sein Blick,
  *   vor dem nur die Säulen schützen.
- * - Phase II „Die Pforten der Hölle“: dazu Seelenketten und Schattenschritt, und der Saal greift mit an: Zug der Toten,
- *   Höllenfeuer und Spalten im Wechsel. Die zwei Pforten am Rand sind reine Kulisse.
+ * - Phase II „Die Pforten der Hölle“: dazu die Fesseln ([HadesFetters], Überarbeitung 4: ersetzen den Zug der
+ *   Seelenketten) und Schattenschritt, und der Saal greift mit an: Zug der Toten, Höllenfeuer und Spalten im Wechsel.
+ *   Die zwei Pforten am Rand sind reine Kulisse.
  * - Phase III „Das Bündnis“: dazu der Zangenangriff mit Hermes, das Urteil und der Einsturz an den Lebensschwellen;
  *   als Saal-Gefahr nur noch Seelenkette und Zug der Toten.
  *
@@ -49,6 +56,11 @@ import kotlin.math.sin
  * Können lohnt sich: Wer vor einer Säule ausweicht, lässt ihn beim Ausfallschritt hineinrennen; wer hinter einer Säule
  * steht, reißt seine Ketten; nach Bodenschlag, Wurf, Schattenschritt und Urteil steht er offen (goldene Rune,
  * [HadesFight.openingFor]), und zu viel Schaden außerhalb davon bricht seine Haltung.
+ *
+ * Überarbeitung 4 (P19): Der Saal hat einen Umgang (+2) und das Podest (+3). Körperangriffe treffen beide Höhen
+ * ([bodyBand]) und zeigen sich dort, wo jemand oben steht ([echoCone], [echoRing], [echoLine]); Bodenschlag und
+ * Spalten bleiben am Hallenboden ([groundBand]). Punkte, die Hades oder Hermes selbst betreten, liegen im Kern
+ * ([HadesFight.clampToCore]); Ansagen unter einem Spieler liegen auf seiner Ebene ([HadesFight.onLevel]).
  */
 class HadesAttacks(private val fight: HadesFight) {
 
@@ -86,13 +98,23 @@ class HadesAttacks(private val fight: HadesFight) {
     private val gates = ArrayList<Vec3d>()
     private var gatesShown = Long.MIN_VALUE
 
+    /** Die Fesseln (Überarbeitung 4, P19): ein Gefesselter höchstens, lebt den ganzen Kampf. */
+    private val fetter = HadesFetters.Fetter(fight, FetterMoves())
+
     fun reset() {
         last = ""
         poiseBroken = false
         hazard = null
         alone = false
         hermesBusy = false
+        fetter.abort()
     }
+
+    /** Hält die Fessel [player]? Dann trifft ihn sonst nichts (`HadesFight.hurt`). */
+    fun fettered(player: ServerPlayerEntity): Boolean = fetter.shields(player)
+
+    /** Ablauf ersetzt (`HadesFight.interrupt`): Fessel lösen, ohne Folgen. */
+    fun abortFetter() = fetter.abort()
 
     fun breakPoise() {
         poiseBroken = true
@@ -207,8 +229,8 @@ class HadesAttacks(private val fight: HadesFight) {
 
     /**
      * Wahl nach Entfernung aus dem Repertoire der Phase. Nah: Hiebfolge, Bodenschlag. Mittel: Ausfallschritt.
-     * Fern: Bident-Wurf, Ausfallschritt. Ab Phase II auf Abstand die Seelenketten und überall der Schattenschritt
-     * (nur, wenn keine Saal-Gefahr läuft).
+     * Fern: Bident-Wurf, Ausfallschritt. Ab Phase II auf Abstand die Fesseln (an der Stelle der Seelenketten, gleiche
+     * Auswahl) und überall der Schattenschritt (nur, wenn keine Saal-Gefahr läuft).
      */
     private fun pick(distance: Double): Sequence<Unit> {
         val options = ArrayList<Pair<String, Int>>()
@@ -248,7 +270,8 @@ class HadesAttacks(private val fight: HadesFight) {
             "slam" -> slam()
             "thrust" -> lunge()
             "throw" -> bidentThrow()
-            "chains" -> reapingChains()
+            // Überarbeitung 4: die Fesseln. Als Höhepunkt (`solo`): Solange sie läuft, beginnt keine Saal-Gefahr.
+            "chains" -> solo(fetter.cast())
             else -> solo(ambush())
         }
     }
@@ -267,6 +290,85 @@ class HadesAttacks(private val fight: HadesFight) {
     }
 
     private fun floorAt(pos: Vec3d) = Vec3d(pos.x, center.y, pos.z)
+
+    // --- Ebenen und Höhenband (Überarbeitung 4, P19 Schritt 4, PLAN 7.5) -------------------------------------------
+
+    /** Körperangriffe reichen vom Kern bis zur höchsten Ebene des Saals (Podest +3) plus [BAND_ABOVE_LEVEL]. */
+    private val bodyAbove: Double get() = fight.spec.levels.maxOf { it.floorY } - center.y + BAND_ABOVE_LEVEL
+
+    /** Höhenband „Kern und Ebenen“ für alle danach angelegten Formen der Gruppe. */
+    private fun bodyBand(group: Telegraph.Fight.Group): Telegraph.Fight.Group = group.band(center.y, above = bodyAbove)
+
+    /** Höhenband „nur Hallenboden“ (Bodenschlag, Spalten): Standardgrenzen um den Kern. */
+    private fun groundBand(group: Telegraph.Fight.Group): Telegraph.Fight.Group = group.band(center.y)
+
+    /** Feldmitten je Ebene (Umgang Ost/West, Podest), einmal je Kampf aus dem Vertrag. */
+    private val levelCells: List<Pair<Level, List<Vec3d>>> by lazy {
+        fight.spec.levels.map { level -> level to level.zone.cells().map { (x, z) -> Vec3d(x + 0.5, 0.0, z + 0.5) }.toList() }
+    }
+
+    /**
+     * Ebenen, auf denen ein Echo Sinn hat: Jemand steht gerade darauf, und sie ist noch nicht eingestürzt. (Ohne
+     * Zuschauer oben bliebe das Echo nur ein schwebendes Doppelbild über dem Kern.)
+     */
+    private fun echoLevels(): List<Pair<Level, List<Vec3d>>> {
+        val up = fight.targets().filter { fight.levelFloor(it.entityPos) > center.y + 0.5 }
+        if (up.isEmpty()) return emptyList()
+        return levelCells.filter { (level, _) -> up.any { level.zone.contains(it.x, it.z) } }
+            .map { (level, cells) -> level to cells.filter { hypot(it.x - center.x, it.z - center.z) <= fight.safeRadius } }
+            .filter { it.second.isNotEmpty() }
+    }
+
+    /** Ein Kegel, der über einer besetzten Ebene liegt, zeigt sich dort noch einmal (gleiche Gruppe, gleiche Zeit). */
+    private fun echoCone(group: Telegraph.Fight.Group, cone: Telegraph.Cone) {
+        for ((level, cells) in echoLevels()) {
+            if (abs(level.floorY - cone.apex.y) < 0.5) continue
+            if (cells.none { Telegraph.inCone(it, cone.apex, cone.direction, cone.radius, cone.halfAngle) }) continue
+            group.cone(Vec3d(cone.apex.x, level.floorY.toDouble(), cone.apex.z), cone.direction, cone.radius.toFloat(), cone.halfAngle.toFloat(), cone.remaining.coerceAtLeast(1))
+        }
+    }
+
+    /** Wie [echoCone] für Kreise (Schattenschritt, Zange). */
+    private fun echoRing(group: Telegraph.Fight.Group, ring: Telegraph.Ring) {
+        for ((level, cells) in echoLevels()) {
+            if (abs(level.floorY - ring.center.y) < 0.5) continue
+            if (cells.none { Telegraph.inRing(it, ring.center, ring.radius, ring.inner) }) continue
+            group.ring(Vec3d(ring.center.x, level.floorY.toDouble(), ring.center.z), ring.radius.toFloat(), ring.remaining.coerceAtLeast(1), ring.inner.toFloat())
+        }
+    }
+
+    /**
+     * Linien zeigen sich auf einer besetzten Ebene nur dort, wo sie über ihr verlaufen (Stücke der Mittellinie in der
+     * Ebene, gleiche Breite). [safe]: goldene Linie (Lücke im Zug der Toten).
+     */
+    private fun echoLine(group: Telegraph.Fight.Group, from: Vec3d, to: Vec3d, width: Float, ticks: Int, safe: Boolean = false) {
+        val levels = echoLevels()
+        if (levels.isEmpty()) return
+        val length = hypot(to.x - from.x, to.z - from.z)
+        val steps = (length / ECHO_STEP).toInt().coerceAtLeast(1)
+        for ((level, _) in levels) {
+            if (abs(level.floorY - from.y) < 0.5) continue
+            val y = level.floorY.toDouble()
+            var runStart = -1
+            for (i in 0..steps + 1) {
+                val inside = i <= steps && from.lerp(to, i.toDouble() / steps).let { level.zone.contains(it.x, it.z) && hypot(it.x - center.x, it.z - center.z) <= fight.safeRadius }
+                if (inside && runStart < 0) runStart = i
+                if (!inside && runStart >= 0) {
+                    val a = from.lerp(to, runStart.toDouble() / steps)
+                    val b = from.lerp(to, (i - 1).toDouble() / steps)
+                    if (hypot(b.x - a.x, b.z - a.z) >= ECHO_MIN_LENGTH) {
+                        val pa = Vec3d(a.x, y, a.z)
+                        val pb = Vec3d(b.x, y, b.z)
+                        if (safe) group.safeLine(pa, pb, width, ticks.coerceAtLeast(1)) else group.line(pa, pb, width, ticks.coerceAtLeast(1))
+                    }
+                    runStart = -1
+                }
+            }
+        }
+    }
+
+    private fun echoLine(group: Telegraph.Fight.Group, line: Telegraph.Line) =
+        echoLine(group, line.from, line.to, line.width.toFloat(), line.remaining)
 
     private fun flatDir(from: Vec3d, to: Vec3d): Vec3d? {
         val d = Vec3d(to.x - from.x, 0.0, to.z - from.z)
@@ -330,7 +432,7 @@ class HadesAttacks(private val fight: HadesFight) {
             val target = world.getPlayerByUuid(id) ?: fight.nearestTarget(entity.entityPos) ?: return@sequence
             val to = Vec3d(target.x - entity.x, 0.0, target.z - entity.z)
             if (to.length() < STOP_AT) break
-            entity.setPosition(fight.clampToHall(entity.entityPos.add(to.normalize().multiply(WALK))))
+            entity.setPosition(fight.clampToCore(entity.entityPos.add(to.normalize().multiply(WALK))))
             fight.face(target.entityPos)
             if (entity.cloaked && step % 9 == 0) footprint(entity.entityPos, step)
             yield(Unit)
@@ -358,7 +460,7 @@ class HadesAttacks(private val fight: HadesFight) {
     private fun sweepCombo(): Sequence<Unit> = sequence {
         val entity = fight.boss ?: return@sequence
         entity.cloaked = false
-        val group = calls.boss()
+        val group = bodyBand(calls.boss())
         for ((i, hit) in SWEEPS.withIndex()) {
             val target = fight.nearestTarget(entity.entityPos) ?: break
             fight.face(target.entityPos)
@@ -367,6 +469,7 @@ class HadesAttacks(private val fight: HadesFight) {
                 floorAt(entity.entityPos), forward(), H.SWEEP_RADIUS, H.SWEEP_HALF_ANGLE, hit.windup,
                 if (i == 0) null else Telegraph.Pace.FOLLOW_UP,
             )
+            echoCone(group, cone)
             sound(HhaSounds.WHOOSH, entity.entityPos, 1.6f, 0.55f + i * 0.12f)
             wait(cone.ticks)
             strike(cone, hit.damage, i == SWEEPS.size - 1, hit.side)
@@ -419,7 +522,11 @@ class HadesAttacks(private val fight: HadesFight) {
         fight.face(target.entityPos)
         entity.pose = HadesPose.THRUST
         val (from, to) = thrustPath(entity.entityPos, target.entityPos)
-        val line = calls.line(from, to, H.THRUST_WIDTH, H.THRUST_WINDUP, Telegraph.Pace.HEAVY)
+        val group = bodyBand(calls.boss())
+        val line = group.line(from, to, H.THRUST_WIDTH, H.THRUST_WINDUP, Telegraph.Pace.HEAVY)
+        echoLine(group, line)
+        // Säulen, hinter denen jemand steht, tragen die goldene Rune (sie halten den Stoß auf, Pflicht 4).
+        Cover.mark(calls, fight.spec, TartarusArenas.HADES_LUNGE, entity.entityPos.add(0.0, entity.height * 0.5, 0.0), line.ticks)
         sound(HhaSounds.CHARGE, from, 3f, 0.8f)
         wait(line.ticks)
         yieldAll(thrust(line))
@@ -428,7 +535,8 @@ class HadesAttacks(private val fight: HadesFight) {
     private fun thrustPath(from: Vec3d, toward: Vec3d): Pair<Vec3d, Vec3d> {
         val dir = flatDir(from, toward) ?: forward()
         val reach = (hypot(toward.x - from.x, toward.z - from.z) + 7.0).coerceIn(12.0, 34.0)
-        return floorAt(from) to fight.clampToHall(from.add(dir.multiply(reach)))
+        // Das Ende betritt er selbst: im Kern (Überarbeitung 4), nicht im Umgang.
+        return floorAt(from) to fight.clampToCore(from.add(dir.multiply(reach)))
     }
 
     /** Der Stoß: Er gleitet die angesagte Linie entlang. Steht eine Säule im Weg, rennt er hinein und taumelt (offen). */
@@ -474,7 +582,8 @@ class HadesAttacks(private val fight: HadesFight) {
         entity.cloaked = false
         fight.nearestTarget(entity.entityPos)?.let { fight.face(it.entityPos) }
         entity.pose = HadesPose.SLAM
-        val ring = calls.ring(floorAt(entity.entityPos), H.SLAM_RADIUS, H.SLAM_WINDUP)
+        // Bodenangriff: nur am Hallenboden (Überarbeitung 4), der Umgang (+2) ist davor sicher.
+        val ring = groundBand(calls.boss()).ring(floorAt(entity.entityPos), H.SLAM_RADIUS, H.SLAM_WINDUP)
         sound(HhaSounds.CHARGE, ring.center, 2.5f, 0.7f)
         wait(ring.ticks)
         yieldAll(slamImpact(ring))
@@ -510,7 +619,8 @@ class HadesAttacks(private val fight: HadesFight) {
         entity.cloaked = false
         fight.face(target.entityPos)
         entity.pose = HadesPose.THROW
-        val landing = fight.clampToHall(target.entityPos, 2.0)
+        // Der Kreis liegt auf der Ebene des Ziels (Umgang, Podest); Einschlag von oben trifft jede Höhe (SKY, kein Band).
+        val landing = fight.onLevel(fight.clampToHall(target.entityPos, 2.0))
         val ring = calls.ring(landing, H.THROW_RADIUS, H.THROW_WINDUP, pace = Telegraph.Pace.PROJECTILE)
         sound(HhaSounds.CHARGE, entity.entityPos, 3f, 0.9f)
         wait(H.THROW_RELEASE)
@@ -541,7 +651,9 @@ class HadesAttacks(private val fight: HadesFight) {
         markOpen(H.EMPTY_WINDOW)
         wait(H.EMPTY_WINDOW - H.RETURN_WINDUP)
         // Er ruft ihn zurück: Die Linie zeigt den Rückweg.
-        val back = calls.line(landing, floorAt(entity.entityPos), H.RETURN_WIDTH, H.RETURN_WINDUP, Telegraph.Pace.PROJECTILE)
+        val backGroup = bodyBand(calls.boss())
+        val back = backGroup.line(floorAt(landing), floorAt(entity.entityPos), H.RETURN_WIDTH, H.RETURN_WINDUP, Telegraph.Pace.PROJECTILE)
+        echoLine(backGroup, back)
         sound(HhaSounds.CHARGE, landing, 2.4f, 1.2f)
         wait(back.ticks)
         sound(HhaSounds.SPEAR, landing, 3.5f, 0.95f)
@@ -573,75 +685,10 @@ class HadesAttacks(private val fight: HadesFight) {
     }
 
     // -------------------------------------------------------------------------------------------------
-    // Phase II und III: Ketten, Schattenschritt
+    // Phase II und III: Fesseln (HadesFetters), Schattenschritt
     // -------------------------------------------------------------------------------------------------
 
-    /**
-     * Seelenketten: grüne Ketten zu allen Spielern in Sicht (W 14), dann 20 Ticks Zug, dann der Schlusshieb von oben
-     * (S 20). Wer sich hinter eine Säule zieht, reißt die Kette: Er strauchelt (offen, F 30) und der Hieb fällt aus.
-     */
-    private fun reapingChains(): Sequence<Unit> = sequence {
-        val entity = fight.boss ?: return@sequence
-        val bound = fight.targets().filter { exposed(headOf(), it) }
-        if (bound.isEmpty()) {
-            yieldAll(lunge())
-            return@sequence
-        }
-        entity.cloaked = false
-        bound.minByOrNull { it.squaredDistanceTo(entity) }?.let { fight.face(it.entityPos) }
-        entity.pose = HadesPose.CHAINS
-        val group = calls.boss(players = bound, reserve = H.CHAINS_PULL_END)
-        sound(HhaSounds.CHAIN, entity.entityPos, 3f, 1f)
-        // Die Ketten fliegen sofort (das ist die Ansage) und greifen nach [CHAINS_CAST] Ticks: Wer bis dahin oder
-        // während des Zugs hinter einer Säule steht, reißt sie.
-        for (player in bound) {
-            player.sendMessage(Text.translatable("hha.hades.hint.chains").formatted(Formatting.GREEN), true)
-            Vfx.chain(world, Vfx.Style.HADES, entity, player.entityPos, player, H.CHAINS_PULL_END + 4)
-        }
-        wait(H.CHAINS_CAST)
-        val held = bound.toMutableList()
-        var broken = false
-        repeat(H.CHAINS_PULL) { tick ->
-            val eye = headOf()
-            val iterator = held.iterator()
-            while (iterator.hasNext()) {
-                val player = iterator.next()
-                // Ausgeschieden oder in eine andere Welt gewechselt: Die Kette lässt los, ohne dass es als Riss zählt.
-                if (!fight.isParticipant(player) || player.entityWorld !== world || player.isRemoved) {
-                    iterator.remove()
-                    continue
-                }
-                if (!player.isAlive || !exposed(eye, player)) {
-                    // Die Säule hält die Kette auf: Sie reißt, und das bringt ihn aus dem Tritt.
-                    iterator.remove()
-                    broken = true
-                    Vfx.flare(world, Vfx.Style.GOLD, player.entityPos.add(0.0, 1.2, 0.0), 2f, 8)
-                    // Die Kette schnellt zurück und federt nach, Funken an der Rissstelle.
-                    val snap = player.entityPos.add(0.0, 1.2, 0.0)
-                    BossFx.play(world, "hades.chain_snap", Vfx.Style.HADES, snap, life = CHAIN_SNAP_LIFE, entity = fight.boss)
-                    BossFx.sparks(world, Vfx.Style.HADES, snap, count = CHAIN_SPARKS, speed = CHAIN_SPARK_SPEED)
-                    sound(HhaSounds.DEFLECT, player.entityPos, 2f, 0.6f)
-                } else if (tick % 4 == 0) {
-                    val pull = flatDir(player.entityPos, entity.entityPos) ?: Vec3d.ZERO
-                    Fx.launchPlayer(player, pull.multiply(0.65).add(0.0, player.velocity.y.coerceAtLeast(-0.1), 0.0))
-                }
-            }
-            yield(Unit)
-        }
-        if (broken) {
-            group.end()
-            yieldAll(staggered(H.CHAINS_BREAK_STAGGER))
-            return@sequence
-        }
-        fight.nearestTarget(entity.entityPos)?.let { fight.face(it.entityPos) }
-        entity.pose = HadesPose.SWEEP_C
-        val cone = group.cone(floorAt(entity.entityPos), forward(), H.SWEEP_RADIUS, H.SWEEP_HALF_ANGLE, H.SWEEP_C_WINDUP, Telegraph.Pace.HEAVY)
-        sound(HhaSounds.WHOOSH, entity.entityPos, 1.8f, 0.5f)
-        wait(cone.ticks)
-        strike(cone, 20f, true, SIDE_OVERHEAD)
-        wait(H.SWEEP_WINDOW)
-        entity.pose = HadesPose.IDLE
-    }
+    // Die Seelenketten (Zug 0,65) sind in Überarbeitung 4 durch die Fesseln ersetzt: `sig/HadesFetters.kt`.
 
     /**
      * Schattenschritt: Er setzt den Helm auf (VANISH), unter dem Ziel steht eine Rune (Radius 5, W 24); kurz vor dem
@@ -655,8 +702,10 @@ class HadesAttacks(private val fight: HadesFight) {
         // Dunkler Wirbel, der sich um ihn schließt (PLAN 2.9), dann ist er fort.
         BossFx.swirl(world, Vfx.Style.SHADOW, entity.entityPos.add(0.0, entity.height * 0.5, 0.0), UP, VANISH_SWIRL_RADIUS, VANISH_SWIRL_LIFE, closing = true)
         entity.cloaked = true
-        val spot = fight.clampToHall(target.entityPos, 3.0)
-        val ring = calls.ring(spot, H.AMBUSH_RADIUS, H.AMBUSH_WINDUP, pace = Telegraph.Pace.HEAVY)
+        val spot = fight.onLevel(fight.clampToHall(target.entityPos, 3.0))
+        val group = bodyBand(calls.boss())
+        val ring = group.ring(spot, H.AMBUSH_RADIUS, H.AMBUSH_WINDUP, pace = Telegraph.Pace.HEAVY)
+        echoRing(group, ring)
         sound(HhaSounds.SOUL, entity.entityPos, 2.5f, 0.45f)
         // Solange er verhüllt ist: schwacher roter Herzschlag am Bildrand (sagt nie, wo er ist), alle 40 Ticks erneuert,
         // jede Sendung endet spätestens mit dem Auftauchen. Gleich viele Ticks wie das frühere wait().
@@ -667,7 +716,8 @@ class HadesAttacks(private val fight: HadesFight) {
         }
         // Er taucht hinter dem Ziel auf, innerhalb der Rune.
         val look = target.getRotationVec(1f).let { flatDir(Vec3d.ZERO, it) } ?: forward()
-        val appear = fight.clampToHall(spot.subtract(look.multiply(2.4)), 3.0)
+        // Dort steht er selbst: im Kern (Überarbeitung 4); die Rune liegt weiter am Ziel.
+        val appear = fight.clampToCore(spot.subtract(look.multiply(2.4)), 3.0)
         entity.setPosition(appear)
         fight.face(target.entityPos)
         entity.cloaked = false
@@ -769,12 +819,17 @@ class HadesAttacks(private val fight: HadesFight) {
         entity.pose = HadesPose.GAZE
         fight.hint("hha.hades.hint.cover", Formatting.GREEN)
         calls.boss(pace = Telegraph.Pace.ROOM, reserve = H.GAZE_WINDUP)
+        // Überarbeitung 4 (P19 Schritt 6): Säulen, die gerade jemanden decken, tragen die goldene Rune; jeder sieht
+        // „gedeckt“/„gesehen“. Die Treffer-Logik bleibt [exposed] (Kopf → Augen), siehe Bericht.
+        Cover.mark(calls, fight.spec, TartarusArenas.HADES_GAZE, headOf(), H.GAZE_WINDUP)
         sound(HhaSounds.CHARGE, entity.entityPos, 4f, 0.45f)
         repeat(H.GAZE_WINDUP) { tick ->
             if (tick % 6 == 0) {
                 val eye = headOf()
                 for (player in fight.targets()) {
-                    if (exposed(eye, player)) Vfx.beam(world, Vfx.Style.HADES, eye, player.eyePos.subtract(0.0, 0.3, 0.0), 0.3f, 7)
+                    val seen = exposed(eye, player)
+                    Cover.status(player, !seen)
+                    if (seen) Vfx.beam(world, Vfx.Style.HADES, eye, player.eyePos.subtract(0.0, 0.3, 0.0), 0.3f, 7)
                 }
             }
             yield(Unit)
@@ -899,8 +954,11 @@ class HadesAttacks(private val fight: HadesFight) {
                 options.add(worstWalk(spots, H.JUDGE_SAFE_RADIUS.toDouble(), players) to spots)
             }
         }
-        val best = options.minOf { it.first }
-        val near = options.filter { it.first <= best + 2.0 }
+        // Überarbeitung 4: Die goldenen Kreise liegen im Kern (nicht auf Umgang oder Podest, nicht halb in der Wand).
+        val inCore = options.filter { (_, spots) -> spots.all { insideCore(it, H.JUDGE_SAFE_RADIUS.toDouble()) } }
+        val pool = inCore.ifEmpty { options.map { (walk, spots) -> walk to spots.map { fight.clampToCore(it, H.JUDGE_SAFE_RADIUS.toDouble()) } } }
+        val best = pool.minOf { it.first }
+        val near = pool.filter { it.first <= best + 2.0 }
         val spots = ArrayList(near[world.random.nextInt(near.size)].second)
         // Zusatzkreise für Spieler, die in der Grundzeit (JUDGE_HIT) keinen Kreis erreichen: ein Kreis in der Richtung
         // zur Saalmitte, so weit weg, dass man trotzdem laufen muss (80 % der erreichbaren Strecke).
@@ -913,9 +971,15 @@ class HadesAttacks(private val fight: HadesFight) {
             val length = toCenter.length()
             val step = min(length, reach * 0.8 + radius - 0.6)
             val at = if (length < 1e-3) center else Vec3d(p.x, center.y, p.z).add(toCenter.multiply(step / length))
-            spots.add(at)
+            spots.add(fight.clampToCore(at, radius))
         }
         return spots
+    }
+
+    /** Liegt ein Kreis mit [radius] um [spot] ganz im Kern (Kreis r 38 ohne Podest)? */
+    private fun insideCore(spot: Vec3d, radius: Double): Boolean {
+        val clamped = fight.clampToCore(spot, radius)
+        return hypot(clamped.x - spot.x, clamped.z - spot.z) < 1e-3
     }
 
     /** Fußweg (Blöcke) eines Spielers bis in den nächsten sicheren Kreis. */
@@ -938,6 +1002,13 @@ class HadesAttacks(private val fight: HadesFight) {
     /**
      * Einsturz an den Lebensschwellen von Phase III (66 % und 33 %): Der äußere Ring glüht, ein goldener Ring zeigt, was
      * stehen bleibt (W 80), dann stürzt der Rest in die Tiefe (44 → 36 → 28). Wer draußen steht, fällt.
+     *
+     * Überarbeitung 4 (P19 Schritt 5): Was fällt, ist das Vertragsteil (`ring_outer`, dann `ring_middle`), nicht mehr ein
+     * Radius um die Mitte; so bleibt am Rand des Umgangs kein Saum stehen. Je Spalte fällt alles, was vom Fundament
+     * an zusammenhängend steht (Boden, Umgang samt Brüstung, Treppen, Podest); Spalten neben einer hohen Spalte
+     * (Treppentürme, Säulen, Thronlehne) fallen bis zu deren Spitze ([collapsePlan]). Was an der Wand hängt (Empore,
+     * Laternen darunter, Ketten zum Kronleuchter), bleibt. Die Ansage reicht nach der Erreichbarkeitsrechnung
+     * ([collapseWindup]).
      */
     private fun collapse(): Sequence<Unit> = sequence {
         val entity = fight.boss ?: return@sequence
@@ -946,22 +1017,16 @@ class HadesAttacks(private val fight: HadesFight) {
         val next = H.COLLAPSE_RADII[index].toDouble()
         val outer = fight.safeRadius
         if (next >= outer) return@sequence
+        // Einsturzring Nummer index aus dem Vertrag (index 1 → ring_outer, 2 → ring_middle).
+        val part = fight.spec.parts.getOrNull(index - 1) ?: return@sequence
         entity.cloaked = false
         entity.pose = HadesPose.ROAR
-        val band = ArrayList<Pair<Int, Int>>()
-        val limit = outer.toInt() + 1
-        for (dx in -limit..limit) {
-            for (dz in -limit..limit) {
-                val r = hypot(dx.toDouble(), dz.toDouble())
-                if (r > next && r <= outer) band.add(dx to dz)
-            }
-        }
-        for ((dx, dz) in band) {
-            // Glimmt, schadet aber nicht: Der Einsturz selbst ist die Gefahr.
-            fight.edit(fight.floor.add(dx, 0, dz), if ((dx + dz) and 1 == 0) Blocks.CRYING_OBSIDIAN.defaultState else Blocks.VERDANT_FROGLIGHT.defaultState)
-        }
+        val cells = part.zone.cells().toList()
+        // Glimmt, schadet aber nicht: Der Einsturz selbst ist die Gefahr (auf dem Umgang dessen Belag).
+        for ((x, z) in cells) glowCell(x, z)
+        val windup = collapseWindup(next)
         val group = calls.boss(pace = Telegraph.Pace.ROOM)
-        group.safe(center, next.toFloat(), H.COLLAPSE_WINDUP)
+        group.safe(center, next.toFloat(), windup)
         fight.hint("hha.hades.hint.collapse", Formatting.GOLD)
         sound(HhaSounds.RIFT, center, 4f, 0.5f)
         // Glühende Risse laufen vom Fuß jeder Säule, die gleich stürzt, nach außen (über die Ansage, nicht in Gold).
@@ -972,11 +1037,13 @@ class HadesAttacks(private val fight: HadesFight) {
             val length = (outer - hypot(pillar.first.toDouble(), pillar.second.toDouble())).toFloat().coerceIn(COLLAPSE_CRACK_MIN, COLLAPSE_CRACK_MAX)
             BossFx.crack(
                 world, Vfx.Style.HADES, base.add(out.multiply(TartarusPlans.PILLAR_RADIUS + 0.6)), out, length,
-                life = H.COLLAPSE_WINDUP + COLLAPSE_CRACK_AFTER, grow = (H.COLLAPSE_WINDUP * COLLAPSE_CRACK_GROW).toInt(),
+                life = windup + COLLAPSE_CRACK_AFTER, grow = (windup * COLLAPSE_CRACK_GROW).toInt(),
             )
         }
         wait(group.ticks)
         if (fight.isEnded || fight.stage != 3) return@sequence
+        // Was fällt, wird jetzt bestimmt (vor dem Bröckeln der Säulen, das die Spalten verändert).
+        val order = collapsePlan(part, cells)
         fight.safeRadius = next
         // Jede Säule im fallenden Ring zerspringt (je ein Flächeneffekt an ihrem Fuß, siehe [crumble]); statt des
         // saalweiten Rings und des Rüttelns ein einzelner Ruck.
@@ -985,30 +1052,166 @@ class HadesAttacks(private val fight: HadesFight) {
         }
         BossFx.kick(world, center, pitch = IMPACT_KICK, ticks = KICK_TICKS, radius = ROOM_KICK_RADIUS)
         sound(HhaSounds.IMPACT, center, 4f, 0.4f)
+        sound(HhaSounds.ARENA_COLLAPSE, center, 3.5f, 0.7f)
         // Von außen nach innen, ein paar Spalten je Tick, damit es wie ein echter Einsturz aussieht.
-        val order = band.sortedByDescending { hypot(it.first.toDouble(), it.second.toDouble()) }
         val perTick = (order.size / H.COLLAPSE_FALL).coerceAtLeast(8)
         var i = 0
         while (i < order.size) {
             repeat(perTick) {
-                if (i < order.size) {
-                    val (dx, dz) = order[i++]
-                    dropColumn(dx, dz)
-                }
+                if (i < order.size) dropColumn(order[i++], part)
             }
             yield(Unit)
         }
         entity.pose = HadesPose.IDLE
     }
 
-    private fun dropColumn(dx: Int, dz: Int) {
-        for (y in 0 downTo -6) fight.edit(fight.floor.add(dx, y, dz), Blocks.AIR.defaultState)
-        fight.edit(fight.floor.add(dx, -7, dz), if ((dx * 3 + dz) and 7 == 0) Blocks.MAGMA_BLOCK.defaultState else Blocks.BLACKSTONE.defaultState)
-        // Was darauf stand, fällt mit.
-        for (y in 1..TartarusPlans.DAIS_CLEAR_HEIGHT) {
-            val pos = fight.floor.add(dx, y, dz)
-            if (!world.getBlockState(pos).isAir) fight.edit(pos, Blocks.AIR.defaultState)
+    /**
+     * Ansage des Einsturzes (Pflicht 5, Erreichbarkeitsrechnung): [H.COLLAPSE_WINDUP], länger nur, wenn der am weitesten
+     * draußen Stehende den sicheren Ring sonst nicht erreicht ([BossTimings.Min.REACTION] + Weg × [DETOUR] /
+     * [BossTimings.Min.ESCAPE_SPEED]), höchstens [BossTimings.Min.ESCAPE_MAX]. Mit dem Saal von heute reichen die 80.
+     */
+    private fun collapseWindup(next: Double): Int {
+        val walk = fight.targets().maxOfOrNull { (hypot(it.x - center.x, it.z - center.z) - (next - 0.6)).coerceAtLeast(0.0) } ?: 0.0
+        val needed = BossTimings.Min.REACTION + ceil(walk * DETOUR / BossTimings.Min.ESCAPE_SPEED).toInt()
+        return max(H.COLLAPSE_WINDUP, needed).coerceAtMost(max(H.COLLAPSE_WINDUP, BossTimings.Min.ESCAPE_MAX))
+    }
+
+    /** Eine Spalte des Einsturzes: wo, bis zu welcher Höhe (Welt-y) alles fällt, und lose Blöcke darüber ([loose]). */
+    private class ColumnDrop(val x: Int, val z: Int, val top: Int, var loose: List<Int> = emptyList())
+
+    /**
+     * Was je Spalte von [part] fällt:
+     * 1. alles vom Fundament (`part.minY`) an, was zusammenhängend steht ([stackTop]); ist die Spalte selbst oder eine
+     *    Nachbarspalte im Teil höher als [TALL_ABOVE_LEVEL] über der höchsten Ebene (Turm, Säule), fällt sie bis zu
+     *    deren Spitze;
+     * 2. was danach im Teil noch steht, aber weder nach außen (Wand, Empore) noch nach oben (über `part.maxY`) an
+     *    festem Bau hängt, fällt mit ([looseAbove]; z. B. der hintere Teil der Thronlehne). Ketten bleiben hängen.
+     * Reihenfolge: von außen nach innen.
+     */
+    private fun collapsePlan(part: Part, cells: List<Pair<Int, Int>>): List<ColumnDrop> {
+        val inPart = cells.mapTo(HashSet()) { (x, z) -> BlockPos.asLong(x, 0, z) }
+        val tops = HashMap<Long, Int>(cells.size * 2)
+        for ((x, z) in cells) tops[BlockPos.asLong(x, 0, z)] = stackTop(x, z, part)
+        val tall = fight.spec.levels.maxOf { it.floorY } + TALL_ABOVE_LEVEL
+        val drops = ArrayList<ColumnDrop>(cells.size)
+        for ((x, z) in cells) {
+            var top = tops.getValue(BlockPos.asLong(x, 0, z))
+            for (dx in -1..1) for (dz in -1..1) {
+                val key = BlockPos.asLong(x + dx, 0, z + dz)
+                if (key !in inPart) continue
+                val t = tops.getValue(key)
+                if (t >= tall) top = max(top, t)
+            }
+            drops.add(ColumnDrop(x, z, top))
         }
+        val loose = looseAbove(part, drops)
+        for (drop in drops) drop.loose = loose[BlockPos.asLong(drop.x, 0, drop.z)] ?: emptyList()
+        return drops.sortedByDescending { hypot(it.x + 0.5 - center.x, it.z + 0.5 - center.z) }
+    }
+
+    /**
+     * Schritt 2 von [collapsePlan]: alle Blöcke im Teil über den fallenden Stapeln, die über ihre Nachbarn (6 Richtungen,
+     * im Teil) nicht mit festem Bau außerhalb verbunden sind, der weiter außen liegt oder über `part.maxY`. Der Kern
+     * innen trägt nicht (er bleibt, aber was nur an ihm hängt, ragte über die Grube). Liefert je Spalte die y-Werte.
+     */
+    private fun looseAbove(part: Part, drops: List<ColumnDrop>): Map<Long, List<Int>> {
+        val topOf = HashMap<Long, Int>(drops.size * 2)
+        for (d in drops) topOf[BlockPos.asLong(d.x, 0, d.z)] = d.top
+        val rest = HashSet<Long>()
+        val pos = BlockPos.Mutable()
+        for (d in drops) {
+            for (y in d.top + 1..part.maxY) {
+                val state = world.getBlockState(pos.set(d.x, y, d.z))
+                if (!state.isAir) rest.add(BlockPos.asLong(d.x, y, d.z))
+            }
+        }
+        if (rest.isEmpty()) return emptyMap()
+        val reached = HashSet<Long>()
+        val queue = ArrayDeque<Long>()
+        fun radius(x: Int, z: Int) = hypot(x + 0.5 - center.x, z + 0.5 - center.z)
+        for (key in rest) {
+            val x = BlockPos.unpackLongX(key)
+            val y = BlockPos.unpackLongY(key)
+            val z = BlockPos.unpackLongZ(key)
+            val r = radius(x, z)
+            for (dir in Direction.entries) {
+                val nx = x + dir.offsetX
+                val ny = y + dir.offsetY
+                val nz = z + dir.offsetZ
+                val n = BlockPos.asLong(nx, ny, nz)
+                if (n in rest) continue
+                val inPart = topOf.containsKey(BlockPos.asLong(nx, 0, nz))
+                // Fester Halt: oberhalb des Teils oder außerhalb des Teils weiter außen (Wand); nicht der Kern innen.
+                val holds = ny > part.maxY || (!inPart && radius(nx, nz) > r)
+                if (holds && !world.getBlockState(pos.set(nx, ny, nz)).isAir) {
+                    reached.add(key)
+                    queue.add(key)
+                    break
+                }
+            }
+        }
+        while (queue.isNotEmpty()) {
+            val key = queue.removeFirst()
+            val x = BlockPos.unpackLongX(key)
+            val y = BlockPos.unpackLongY(key)
+            val z = BlockPos.unpackLongZ(key)
+            for (dir in Direction.entries) {
+                val n = BlockPos.asLong(x + dir.offsetX, y + dir.offsetY, z + dir.offsetZ)
+                if (n in rest && reached.add(n)) queue.add(n)
+            }
+        }
+        val out = HashMap<Long, MutableList<Int>>()
+        for (key in rest) {
+            if (key in reached) continue
+            val state = world.getBlockState(pos.set(key))
+            // Ketten hängen auch nur über Eck (schräg zum Kronleuchter): Sie bleiben.
+            if (state.block is ChainBlock || state.hasBlockEntity()) continue
+            out.getOrPut(BlockPos.asLong(BlockPos.unpackLongX(key), 0, BlockPos.unpackLongZ(key))) { ArrayList() }.add(BlockPos.unpackLongY(key))
+        }
+        return out
+    }
+
+    /** Oberster Block, der vom Fundament der Spalte an ohne Lücke steht (höchstens `part.maxY`). */
+    private fun stackTop(x: Int, z: Int, part: Part): Int {
+        val pos = BlockPos.Mutable(x, part.minY, z)
+        var top = part.minY - 1
+        for (y in part.minY..part.maxY) {
+            pos.setY(y)
+            if (world.getBlockState(pos).isAir) break
+            top = y
+        }
+        return top
+    }
+
+    /** Die Oberfläche einer fallenden Spalte glimmt: Belag des Umgangs, sonst der Hallenboden (nur, wenn frei liegend). */
+    private fun glowCell(x: Int, z: Int) {
+        val walk = fight.spec.levels.firstOrNull { it.zone.containsCell(x, z) && it.id.startsWith(WALK_PREFIX) }
+        val y = if (walk != null && !world.getBlockState(BlockPos(x, walk.floorY - 1, z)).isAir) walk.floorY - 1 else fight.floor.y
+        val pos = BlockPos(x, y, z)
+        if (world.getBlockState(pos).isAir || !world.getBlockState(pos.up()).isAir) return
+        fight.edit(pos, if ((x + z) and 1 == 0) Blocks.CRYING_OBSIDIAN.defaultState else Blocks.VERDANT_FROGLIGHT.defaultState)
+    }
+
+    /**
+     * Eine Spalte fällt: ihre losen Blöcke ([ColumnDrop.loose]), dann von [ColumnDrop.top] bis zum Fundament des Teils
+     * alles außer Luft und Blöcken mit Inventar, darunter
+     * die Grube bis 6 tief, unten Schwarzstein und Magma (wie bisher). Alles über [HadesFight.edit] (Register, Bauplan).
+     */
+    private fun dropColumn(drop: ColumnDrop, part: Part) {
+        val pos = BlockPos.Mutable(drop.x, drop.top, drop.z)
+        for (y in drop.loose.sortedDescending()) fight.edit(BlockPos(drop.x, y, drop.z), Blocks.AIR.defaultState)
+        for (y in drop.top downTo part.minY) {
+            pos.setY(y)
+            val state = world.getBlockState(pos)
+            if (!state.isAir && !state.hasBlockEntity()) fight.edit(pos.toImmutable(), Blocks.AIR.defaultState)
+        }
+        val floorY = fight.floor.y
+        for (y in part.minY - 1 downTo floorY - PIT_DEPTH + 1) {
+            pos.setY(y)
+            if (!world.getBlockState(pos).isAir) fight.edit(pos.toImmutable(), Blocks.AIR.defaultState)
+        }
+        val bottom = if ((drop.x * 3 + drop.z) and 7 == 0) Blocks.MAGMA_BLOCK.defaultState else Blocks.BLACKSTONE.defaultState
+        fight.edit(BlockPos(drop.x, floorY - PIT_DEPTH, drop.z), bottom)
     }
 
     // -------------------------------------------------------------------------------------------------
@@ -1037,13 +1240,15 @@ class HadesAttacks(private val fight: HadesFight) {
         val aim = floorAt(target.entityPos)
         val toTarget = flatDir(entity.entityPos, aim) ?: forward()
         val side = Vec3d(-toTarget.z, 0.0, toTarget.x)
-        val from = fight.clampToHall(aim.add(side.multiply(H.PINCER_HERMES_RANGE)), 2.0)
-        val to = fight.clampToHall(aim.subtract(side.multiply(H.PINCER_HERMES_RANGE - 2.0)), 2.0)
+        // Hermes läuft die Linie selbst: Anfang und Ende im Kern (Überarbeitung 4).
+        val from = fight.clampToCore(aim.add(side.multiply(H.PINCER_HERMES_RANGE)))
+        val to = fight.clampToCore(aim.subtract(side.multiply(H.PINCER_HERMES_RANGE - 2.0)))
         blink(ghost, from)
         ghost.pose = HermesPose.DASH_WINDUP
         fight.faceGhost(ghost, to)
-        val group = calls.boss()
+        val group = bodyBand(calls.boss())
         val dash = group.line(from, to, BossTimings.Hermes.DASH_WIDTH, H.PINCER_LINE_WINDUP, Telegraph.Pace.HEAVY)
+        echoLine(group, dash)
         sound(HhaSounds.CHARGE, from, 2f, 1.3f)
         wait(H.PINCER_DELAY)
         // Hades setzt quer dazu an.
@@ -1051,6 +1256,7 @@ class HadesAttacks(private val fight: HadesFight) {
         entity.pose = HadesPose.THRUST
         val (lungeFrom, lungeTo) = thrustPath(entity.entityPos, aim)
         val lunge = group.line(lungeFrom, lungeTo, H.THRUST_WIDTH, H.THRUST_WINDUP, Telegraph.Pace.HEAVY)
+        echoLine(group, lunge)
         sound(HhaSounds.CHARGE, lungeFrom, 3f, 0.8f)
         wait(dash.remaining)
         if (!ghost.isRemoved) {
@@ -1078,18 +1284,20 @@ class HadesAttacks(private val fight: HadesFight) {
         val aim = floorAt(target.entityPos)
         val toTarget = flatDir(entity.entityPos, aim) ?: forward()
         // Hermes steht hinter dem Ziel und wirft Richtung Hades: Wer zurückweicht, läuft in den Bodenschlag.
-        val spot = fight.clampToHall(aim.add(toTarget.multiply(9.0)), 2.0)
+        val spot = fight.clampToCore(aim.add(toTarget.multiply(9.0)))
         blink(ghost, spot)
         ghost.pose = HermesPose.FAN
         fight.faceGhost(ghost, entity.entityPos)
         val fanDir = flatDir(spot, entity.entityPos) ?: toTarget.multiply(-1.0)
-        val group = calls.boss()
+        val group = bodyBand(calls.boss())
         val fan = group.cone(spot, fanDir, BossTimings.Hermes.FAN_RANGE, BossTimings.Hermes.FAN_HALF_ANGLE, H.PINCER_FAN_WINDUP, Telegraph.Pace.PROJECTILE)
+        echoCone(group, fan)
         sound(HhaSounds.CHARGE, spot, 2f, 1.4f)
         wait(H.PINCER_SLAM_DELAY)
         fight.face(aim)
         entity.pose = HadesPose.SLAM
-        val ring = group.ring(floorAt(entity.entityPos), H.SLAM_RADIUS, H.SLAM_WINDUP)
+        // Bodenschlag: nur am Hallenboden (Band ab hier für die Gruppe).
+        val ring = groundBand(group).ring(floorAt(entity.entityPos), H.SLAM_RADIUS, H.SLAM_WINDUP)
         sound(HhaSounds.CHARGE, ring.center, 2.5f, 0.7f)
         wait(fan.remaining)
         if (!ghost.isRemoved) featherFan(ghost, spot, fanDir)
@@ -1150,7 +1358,7 @@ class HadesAttacks(private val fight: HadesFight) {
             if (ghost == null || ghost.isRemoved) {
                 if (--fight.hermesAway <= 0) {
                     val a = world.random.nextDouble() * Math.PI * 2.0
-                    fight.spawnGhostHermes(fight.clampToHall(hades.entityPos.add(cos(a) * 9.0, 0.0, sin(a) * 9.0), 3.0).add(0.0, 0.4, 0.0))
+                    fight.spawnGhostHermes(fight.clampToCore(hades.entityPos.add(cos(a) * 9.0, 0.0, sin(a) * 9.0), 3.0).add(0.0, 0.4, 0.0))
                 }
                 yield(Unit)
                 continue
@@ -1159,7 +1367,7 @@ class HadesAttacks(private val fight: HadesFight) {
                 val target = fight.nearestTarget(hades.entityPos)
                 if (target != null) {
                     val toTarget = flatDir(hades.entityPos, target.entityPos) ?: Vec3d(0.0, 0.0, 1.0)
-                    val goal = fight.clampToHall(hades.entityPos.add(Vec3d(-toTarget.z, 0.0, toTarget.x).multiply(7.0)), 3.0).add(0.0, 0.4, 0.0)
+                    val goal = fight.clampToCore(hades.entityPos.add(Vec3d(-toTarget.z, 0.0, toTarget.x).multiply(7.0)), 3.0).add(0.0, 0.4, 0.0)
                     val step = goal.subtract(ghost.entityPos)
                     if (step.length() > 0.4) ghost.setPosition(ghost.entityPos.add(step.normalize().multiply(min(0.35, step.length()))))
                     fight.faceGhost(ghost, target.entityPos)
@@ -1245,6 +1453,8 @@ class HadesAttacks(private val fight: HadesFight) {
         group.line(point(-reach, (gap - half - reach) / 2.0), point(reach, (gap - half - reach) / 2.0), low.toFloat(), windup)
         group.line(point(-reach, (gap + half + reach) / 2.0), point(reach, (gap + half + reach) / 2.0), high.toFloat(), windup)
         group.safeLine(point(-reach, gap), point(reach, gap), (half * 2.0).toFloat(), windup)
+        // Auf dem Umgang zeigt sich die goldene Lücke noch einmal (die Wand selbst sieht man dort als Seelenstrahl).
+        echoLine(group, point(-reach, gap), point(reach, gap), (half * 2.0).toFloat(), windup, safe = true)
         group.hold(windup + H.DEAD_MARCH_TRAVEL + 1)
         fight.hint("hha.hades.hint.march")
         if (gates.isNotEmpty()) gateFx(gate, surge = true, life = windup + H.DEAD_MARCH_TRAVEL + GATE_SURGE_AFTER)
@@ -1283,7 +1493,7 @@ class HadesAttacks(private val fight: HadesFight) {
             if (waves < H.HELLFIRE_WAVES && tick == waves * H.HELLFIRE_GAP) {
                 waves++
                 for (player in fight.targets()) {
-                    val spot = fight.clampToHall(player.entityPos, 2.0)
+                    val spot = fight.onLevel(fight.clampToHall(player.entityPos, 2.0))
                     val ring = group.ring(spot, H.HELLFIRE_RADIUS, H.HELLFIRE_WINDUP)
                     val top = spot.add(0.0, 16.0, 0.0)
                     val ball = fight.puppet(HermesBoltEntity.FIRE, top, 1.4f)
@@ -1324,6 +1534,8 @@ class HadesAttacks(private val fight: HadesFight) {
             return@sequence
         }
         fight.floorBusy = true
+        // Bodenangriff: nur am Hallenboden (Überarbeitung 4).
+        groundBand(group)
         val start = world.random.nextDouble() * Math.PI * 2.0
         val limit = fight.safeRadius - 1.0
         val length = min(H.RIFT_LENGTH.toDouble(), limit)
@@ -1384,7 +1596,7 @@ class HadesAttacks(private val fight: HadesFight) {
         val spots = LinkedHashMap<UUID, Telegraph.Ring>()
         for (player in fight.targets()) {
             val a = world.random.nextDouble() * Math.PI * 2.0
-            val spot = fight.clampToHall(player.entityPos.add(cos(a) * H.SOUL_CHAIN_DISTANCE, 0.0, sin(a) * H.SOUL_CHAIN_DISTANCE), 3.0)
+            val spot = fight.onLevel(fight.clampToHall(player.entityPos.add(cos(a) * H.SOUL_CHAIN_DISTANCE, 0.0, sin(a) * H.SOUL_CHAIN_DISTANCE), 3.0))
             spots[player.uuid] = group.safe(spot, H.SOUL_CHAIN_RADIUS, H.SOUL_CHAIN_TIME)
             player.sendMessage(Text.translatable("hha.hades.hint.soul").formatted(Formatting.GREEN), true)
         }
@@ -1452,6 +1664,17 @@ class HadesAttacks(private val fight: HadesFight) {
         showGates()
         fight.sound(HhaSounds.RIFT, 4f, 0.6f)
         fight.sound(HhaSounds.THUNDER, 3f, 0.7f)
+    }
+
+    /** Was die Fessel aus diesem Teil braucht ([HadesFetters.Moves]). */
+    private inner class FetterMoves : HadesFetters.Moves {
+        override fun hand(): Vec3d = handOf()
+        override fun staggered(ticks: Int): Sequence<Unit> = this@HadesAttacks.staggered(ticks)
+        override fun fallback(): Sequence<Unit> = lunge()
+        override fun hazardRunning(): Boolean = hazard != null
+        override fun strike(cone: Telegraph.Cone, damage: Float) = this@HadesAttacks.strike(cone, damage, false, SIDE_RIGHT_TO_LEFT)
+        override fun echo(group: Telegraph.Fight.Group, cone: Telegraph.Cone) = echoCone(group, cone)
+        override fun bodyBand(group: Telegraph.Fight.Group): Telegraph.Fight.Group = this@HadesAttacks.bodyBand(group)
     }
 
     private companion object {
@@ -1552,13 +1775,26 @@ class HadesAttacks(private val fight: HadesFight) {
         const val HUNTED_RENEW = 40
         const val HUNTED_OVERLAP = 4
 
-        /** Kette reißt: Rückschnellen und Funken. */
-        const val CHAIN_SNAP_LIFE = 18
-        const val CHAIN_SPARKS = 8
-        const val CHAIN_SPARK_SPEED = 0.35f
-
         /** Pforte: Breite des Risses; Aufglühen hält über den Zug der Toten hinaus. */
         const val GATE_WIDTH = 3.6f
         const val GATE_SURGE_AFTER = 20
+
+        // --- Überarbeitung 4 (P19): Ebenen und Einsturz; keine Kampfzahl ---
+
+        /** Höhenband der Körperangriffe: über die höchste Ebene hinaus so viel (Pflicht 3: „plus 3“). */
+        const val BAND_ABOVE_LEVEL = 3.0
+
+        /** Echo einer Linie: Schrittweite der Abtastung und kürzestes Stück, das gezeigt wird. */
+        const val ECHO_STEP = 0.5
+        const val ECHO_MIN_LENGTH = 1.0
+
+        /** Einsturz: Eine Spalte gilt als hoch (Turm, Säule, Lehne), wenn sie so weit über die höchste Ebene reicht. */
+        const val TALL_ABOVE_LEVEL = 2
+
+        /** Einsturz: Grube so tief unter dem Hallenboden (unten Schwarzstein und Magma, wie bisher). */
+        const val PIT_DEPTH = 7
+
+        /** Ebenen-IDs des Umgangs im Vertrag (`walk_east`, `walk_west`). */
+        const val WALK_PREFIX = "walk"
     }
 }

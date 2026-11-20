@@ -37,11 +37,15 @@ Full sets also give +10 hearts and fall damage immunity, and there's an Ultra Mo
 A fixed path of six islands leads upward, each with its own fight:
 - **Hermes**, the messenger: solve the riddle in his temple, then catch him in four stages
 - **Hekate**, goddess of thresholds: a crossroads with three roads, a turning key, three forms of which only one carries the fire. She guards the gate to Tartarus
-- **Brontes** the Cyclops: let his hammer hit a glowing ingot and the sparks blind him; hide behind the anvil, stand on the cool grates
-- **Kratos and Bia**, the throne guard: obey his commands (back off, come close, kneel) and steer Bia's charge into him
-- **Zeus**: lure his lightning into the copper pillars, look away from the Gorgon on his shield, and step into the golden pan of his scales
+- **Brontes** the Cyclops: let his hammer hit a glowing ingot and the sparks blind him; dodge cleanly and his hammer gets stuck; hide behind the anvil until it cracks and breaks
+- **Kratos and Bia**, the throne guard: obey his commands (back off, come close, kneel), steer Bia's charge into him and shatter her while she staggers
+- **Zeus**: lure his lightning into the storm pillars and pull the grounding grip, look away from the Gorgon on his shield, step into the golden pan of his scales, and keep your footing while his island breaks apart
 
 **Tartarus**: five guardians hold the chain on the palace of Hades. Each one you beat breaks a link and makes the others stronger; at five of five the seal opens for Hades and Kronos. A ghostly Hermes points the way.
+
+The bridges between the islands are **battle ways**: each has its own theme, gates, a narrow pass and a pulse that grows louder towards the boss. Hades' palace is reached through a closed approach past the judges of the dead to the hound gate.
+
+Every arena **takes part in the fight** (inspired by HHA Blood and Void): pillars, gates and standards give cover against named attacks, terraces protect only from ground attacks, floes and galleries break away at set moments, and devices like the messenger bells or the Jailer's chain posts turn the fight. Every arena is restored from its blueprint after the fight. Hekate's *Dark Hour* is a short, fair stealth phase; Hades' fetters always leave three ways out. 35 new decorative blocks (Olympus marble, storm marble, bronze; Tartarus basalt, soul vein and ember basalt) decorate the buildings and can be cut in the stonecutter.
 
 Every attack is announced on the floor, gold always means safe or open, no boss summons adds, and nothing takes away your control. Bosses grow with the number of players and counter repeated mace smashes from above. Every piece of the Heaven and Hell sets drops **once per world** from its boss; a second win gives ingots. Curetes, griffins and golden automatons guard the islands.
 

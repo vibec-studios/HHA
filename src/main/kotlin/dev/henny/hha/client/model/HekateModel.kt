@@ -310,6 +310,13 @@ class HekateModel(root: ModelPart) : GuardianModel(root) {
                     Key(0f, null), Key(12f, ECLIPSE), Key(T.ECLIPSE_HIT.f, ECLIPSE),
                     Key(T.ECLIPSE_HIT_END.f, null, true))
             }
+            HekateAction.DARK_HOUR -> {
+                // Überarbeitung 4 (P15): die dunkle Stunde. Haltung der alten Finsternis (sie steigt, Arme weit), die ganze
+                // Stunde gehalten; der Blick folgt über den Körper-Yaw des Servers.
+                play(a,
+                    Key(0f, null), Key(DARK_HOUR_RISE, ECLIPSE), Key(T.DARK_HOUR_TICKS - DARK_HOUR_RISE, ECLIPSE),
+                    Key(T.DARK_HOUR_TICKS.f, null))
+            }
             HekateAction.STAGGER -> {
                 play(a, Key(0f, null), Key(8f, STAGGER), Key(T.STAGGER_END - 8f, STAGGER), Key(T.STAGGER_END.f, null))
             }
@@ -474,6 +481,8 @@ class HekateModel(root: ModelPart) : GuardianModel(root) {
         val T = HekateTimings
         val Int.f get() = toFloat()
         const val SOFT = 7f
+        /** Dunkle Stunde: so lange steigt sie in die Haltung (wie die alte Finsternis) und sinkt am Ende zurück. */
+        const val DARK_HOUR_RISE = 12f
         /** Überblendung aus der zuletzt gezeigten Pose (Ticks). */
         const val FADE = 6f
 

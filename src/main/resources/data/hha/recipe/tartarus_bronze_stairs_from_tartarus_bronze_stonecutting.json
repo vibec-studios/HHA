@@ -1,0 +1,8 @@
+{
+  "type": "minecraft:stonecutting",
+  "ingredient": "hha:tartarus_bronze",
+  "result": {
+    "count": 1,
+    "id": "hha:tartarus_bronze_stairs"
+  }
+}

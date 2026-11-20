@@ -1,0 +1,8 @@
+{
+  "parent": "minecraft:block/stairs",
+  "textures": {
+    "bottom": "hha:block/polished_tartarus_basalt",
+    "side": "hha:block/polished_tartarus_basalt",
+    "top": "hha:block/polished_tartarus_basalt"
+  }
+}

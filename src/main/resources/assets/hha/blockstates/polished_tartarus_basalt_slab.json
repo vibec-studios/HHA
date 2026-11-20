@@ -1,0 +1,13 @@
+{
+  "variants": {
+    "type=bottom": {
+      "model": "hha:block/polished_tartarus_basalt_slab"
+    },
+    "type=double": {
+      "model": "hha:block/polished_tartarus_basalt"
+    },
+    "type=top": {
+      "model": "hha:block/polished_tartarus_basalt_slab_top"
+    }
+  }
+}

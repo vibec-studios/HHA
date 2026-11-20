@@ -1,0 +1,11 @@
+{
+  "replace": false,
+  "values": [
+    "hha:olympus_marble_brick_stairs",
+    "hha:polished_olympus_marble_stairs",
+    "hha:olympus_bronze_stairs",
+    "hha:tartarus_basalt_brick_stairs",
+    "hha:polished_tartarus_basalt_stairs",
+    "hha:tartarus_bronze_stairs"
+  ]
+}

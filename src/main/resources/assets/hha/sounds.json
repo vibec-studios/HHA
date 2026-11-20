@@ -994,5 +994,131 @@
     "sounds": [
       "hha:rpg/dissolve"
     ]
+  },
+  "ambient.approach_wind": {
+    "subtitle": "subtitles.hha.ambient.approach_wind",
+    "sounds": [
+      "hha:ambient/approach_wind"
+    ]
+  },
+  "ambient.approach_howl": {
+    "subtitle": "subtitles.hha.ambient.approach_howl",
+    "sounds": [
+      "hha:ambient/approach_howl"
+    ]
+  },
+  "ambient.approach_anvil": {
+    "subtitle": "subtitles.hha.ambient.approach_anvil",
+    "sounds": [
+      "hha:ambient/approach_anvil"
+    ]
+  },
+  "ambient.approach_drums": {
+    "subtitle": "subtitles.hha.ambient.approach_drums",
+    "sounds": [
+      "hha:ambient/approach_drums"
+    ]
+  },
+  "ambient.approach_thunder": {
+    "subtitle": "subtitles.hha.ambient.approach_thunder",
+    "sounds": [
+      "hha:ambient/approach_thunder"
+    ]
+  },
+  "ambient.approach_heart": {
+    "subtitle": "subtitles.hha.ambient.approach_heart",
+    "sounds": [
+      "hha:ambient/approach_heart"
+    ]
+  },
+  "ambient.approach_ticking": {
+    "subtitle": "subtitles.hha.ambient.approach_ticking",
+    "sounds": [
+      "hha:ambient/approach_ticking"
+    ]
+  },
+  "ambient.approach_chains": {
+    "subtitle": "subtitles.hha.ambient.approach_chains",
+    "sounds": [
+      "hha:ambient/approach_chains"
+    ]
+  },
+  "ambient.approach_dread": {
+    "subtitle": "subtitles.hha.ambient.approach_dread",
+    "sounds": [
+      "hha:ambient/approach_dread"
+    ]
+  },
+  "arena.bell": {
+    "subtitle": "subtitles.hha.arena.bell",
+    "sounds": [
+      "hha:arena/bell"
+    ]
+  },
+  "arena.rod": {
+    "subtitle": "subtitles.hha.arena.rod",
+    "sounds": [
+      "hha:arena/rod"
+    ]
+  },
+  "arena.post": {
+    "subtitle": "subtitles.hha.arena.post",
+    "sounds": [
+      "hha:arena/post"
+    ]
+  },
+  "arena.sluice": {
+    "subtitle": "subtitles.hha.arena.sluice",
+    "sounds": [
+      "hha:arena/sluice"
+    ]
+  },
+  "arena.collapse": {
+    "subtitle": "subtitles.hha.arena.collapse",
+    "sounds": [
+      "hha:arena/collapse"
+    ]
+  },
+  "arena.crumble": {
+    "subtitle": "subtitles.hha.arena.crumble",
+    "sounds": [
+      "hha:arena/crumble"
+    ]
+  },
+  "arena.gate": {
+    "subtitle": "subtitles.hha.arena.gate",
+    "sounds": [
+      "hha:arena/gate"
+    ]
+  },
+  "arena.sub_break": {
+    "subtitle": "subtitles.hha.arena.sub_break",
+    "sounds": [
+      "hha:arena/sub_break"
+    ]
+  },
+  "arena.sub_hit": {
+    "subtitle": "subtitles.hha.arena.sub_hit",
+    "sounds": [
+      "hha:arena/sub_hit"
+    ]
+  },
+  "arena.stuck": {
+    "subtitle": "subtitles.hha.arena.stuck",
+    "sounds": [
+      "hha:arena/stuck"
+    ]
+  },
+  "arena.fetter": {
+    "subtitle": "subtitles.hha.arena.fetter",
+    "sounds": [
+      "hha:arena/fetter"
+    ]
+  },
+  "arena.cover": {
+    "subtitle": "subtitles.hha.arena.cover",
+    "sounds": [
+      "hha:arena/cover"
+    ]
   }
 }

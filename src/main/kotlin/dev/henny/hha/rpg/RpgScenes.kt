@@ -6,11 +6,14 @@ import dev.henny.hha.api.rpg.HhaRpg
 import dev.henny.hha.logic.boss.Cine
 import dev.henny.hha.logic.boss.CineSkip
 import dev.henny.hha.logic.boss.SceneRun
+import dev.henny.hha.logic.world.Approach
 import dev.henny.hha.logic.world.HadesGate
 import dev.henny.hha.logic.world.TartarosGuide
 import dev.henny.hha.stage.StageScripts
 import dev.henny.hha.stage.scripts.RpgStages
 import dev.henny.hha.stage.scripts.RpgStoryStages
+import dev.henny.hha.world.TartarusArenas
+import dev.henny.hha.world.olymp.OlympusArenas
 import dev.henny.hha.world.olymp.OlympusLayout
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
@@ -35,9 +38,14 @@ import java.util.UUID
  *   Auslöser, die nicht kämpfen und in keiner Szene stecken; alle übrigen bekommen nur die Kapitelkarte (D, E, F).
  *   Einmal je Welt und Ort, das sichert `RpgStory` (der Ort steht schon in `RpgWorld.visited`).
  * - `onPlace("tartaros")` → `rpg.tartaros` (beide Wege).
- * - `onChapterDone("h4_fear")` → `rpg.act_end`; `onChapterDone("u1_chain")` → `rpg.palace`; `onChapterDone("u3_titan")`
- *   → `rpg.end`, danach `RpgStory.credits` als `CREDITS`-Ereignis und `RpgStory.finishStory`. Diese drei warten, bis
- *   niemand mehr in einer Szene steckt (Sieg-Szene des Bosses vorbei), dann noch [AFTER_QUIET] Ticks ([Pending]).
+ * - `onPlace("palace.gate")` (Alleeanfang, erst nach dem fünften Glied; Überarbeitung 4, P23) → `rpg.palace` am festen
+ *   Anker [palaceAnchor]: der erste Blick durch das Propylon auf den Palast. Die Kapitelkarte VI (bzw. II) kommt schon
+ *   beim Kapitelbeginn über [queueCard], sobald es ruhig ist.
+ * - `onPlace("way.<brücke>")` (erstes Betreten eines Schlachtwegs, einmal je Welt) → eine Zeile des Erzählers
+ *   `hha.rpg.way.<brücke>` in der Statuszeile (`Cine.hudLine`) an alle, die gerade auf diesem Weg stehen ([wayLine]).
+ * - `onChapterDone("h4_fear")` → `rpg.act_end`; `onChapterDone("u3_titan")` → `rpg.end`, danach `RpgStory.credits`
+ *   als `CREDITS`-Ereignis und `RpgStory.finishStory`. Diese beiden warten, bis niemand mehr in einer Szene steckt
+ *   (Sieg-Szene des Bosses vorbei), dann noch [AFTER_QUIET] Ticks ([Pending]).
  * - Kapitelkarten ohne eigene Szene ([queueCard]): sobald es ruhig ist (keine Szene, kein Kampf) [CARD_QUIET] Ticks lang,
  *   und nur, solange das Kapitel noch läuft.
  *
@@ -91,8 +99,14 @@ object RpgScenes {
     /** Kapitel, deren Karte eine Inselszene trägt. */
     private val ISLE_CHAPTERS = mapOf(Kind.ISLE_D to "h2_work", Kind.ISLE_E to "h3_force", Kind.ISLE_F to "h4_fear")
 
-    /** Kapitel, deren Karte eine Szene zeigt (dann reicht [queueCard] sie nicht nach). */
-    private val COVERED = setOf("prologue", "h1_word", "h2_work", "h3_force", "h4_fear", "u0_threshold", "u2_lord", "epilogue", "free")
+    /**
+     * Kapitel, deren Karte eine Szene zeigt (dann reicht [queueCard] sie nicht nach). `u2_lord` nicht mehr (P23): Die
+     * Palastszene spielt erst am Alleeanfang, die Karte kommt beim Kapitelbeginn.
+     */
+    private val COVERED = setOf("prologue", "h1_word", "h2_work", "h3_force", "h4_fear", "u0_threshold", "epilogue", "free")
+
+    /** Erzählerzeile beim ersten Betreten eines Schlachtwegs: Anzeigedauer in der Statuszeile. */
+    const val WAY_LINE_TICKS = 120
 
     /** Eine laufende Szene. */
     private class Run(
@@ -132,7 +146,6 @@ object RpgScenes {
         RpgStory.onChapterDone { server, chapter ->
             when (chapter.id) {
                 "h4_fear" -> defer(server, Kind.ACT_END)
-                "u1_chain" -> defer(server, Kind.PALACE)
                 "u3_titan" -> defer(server, Kind.END)
             }
         }
@@ -209,6 +222,10 @@ object RpgScenes {
     private fun onPlace(server: MinecraftServer, place: String, player: ServerPlayerEntity) {
         val path = builtIn(server) ?: return
         bind(server)
+        if (place.startsWith(RpgStory.WAY_PLACE)) {
+            wayLine(server, place.removePrefix(RpgStory.WAY_PLACE), player)
+            return
+        }
         val kind = when (place) {
             "isle.b" -> Kind.ISLE_B
             "isle.c" -> Kind.ISLE_C
@@ -216,11 +233,26 @@ object RpgScenes {
             "isle.e" -> Kind.ISLE_E
             "isle.f" -> Kind.ISLE_F
             "tartaros" -> Kind.TARTAROS
+            RpgStory.PALACE_GATE_PLACE -> Kind.PALACE
             else -> return
         }
         // Inselszenen erzählen den Himmelsweg; der Unterweltweg kommt an keine Insel außer dem Dreiweg (Ankunft).
-        if (kind != Kind.TARTAROS && path != "heaven") return
+        if (kind != Kind.TARTAROS && kind != Kind.PALACE && path != "heaven") return
         start(server, kind, player)
+    }
+
+    /**
+     * Erzählerzeile zum Schlachtweg [wayId] (`bridge_ab` …): an alle Gestarteten, die gerade auf diesem Weg stehen und in
+     * keiner Szene stecken, in der Farbe des Wegs. Einmal je Welt (der Ort steht in `RpgWorld.visited`).
+     */
+    private fun wayLine(server: MinecraftServer, wayId: String, trigger: ServerPlayerEntity) {
+        val spec = OlympusArenas.APPROACHES.firstOrNull { it.id == wayId } ?: return
+        val state = RpgWorld.of(server)
+        val world = trigger.entityWorld as? ServerWorld ?: return
+        val viewers = world.players.filter {
+            it === trigger || (state.hasStarted(it.uuid) && !Cine.isPlaying(it) && Approach.progress(it, spec) != null)
+        }
+        Cine.hudLine(viewers, "hha.rpg.way.$wayId", ticks = WAY_LINE_TICKS, color = color(server))
     }
 
     private fun defer(server: MinecraftServer, kind: Kind) {
@@ -262,7 +294,7 @@ object RpgScenes {
         val worldKey = worldOf(kind, trigger)
         val world = server.getWorld(worldKey)
         val viewers = if (world == null) emptyList() else when (kind) {
-            Kind.ISLE_B, Kind.ISLE_C, Kind.ISLE_D, Kind.ISLE_E, Kind.ISLE_F, Kind.TARTAROS -> {
+            Kind.ISLE_B, Kind.ISLE_C, Kind.ISLE_D, Kind.ISLE_E, Kind.ISLE_F, Kind.TARTAROS, Kind.PALACE -> {
                 val origin = trigger?.entityPos ?: Vec3d.ZERO
                 world.players.filter { eligible(server, it, world) && it.entityPos.squaredDistanceTo(origin) <= NEAR * NEAR }
             }
@@ -305,12 +337,25 @@ object RpgScenes {
         }
         if (fixed != null && world.registryKey == OlympusLayout.WORLD) return Vec3d(fixed.x, fixed.y, fixed.z) to fixed.yaw
         val at = RpgRests.ground(world, lead.entityPos, GROUND_UP, GROUND_DOWN)
-        if (kind == Kind.PALACE) {
-            // Blick zum Palast (das Ziel nach dem fünften Glied), sonst der Blick des Spielers.
-            val target = TartarosGuide.target(world, lead)
-            if (target != null && target.second == "palace") return at to RpgStages.yawOf(target.first.x - at.x, target.first.z - at.z)
-        }
+        if (kind == Kind.PALACE) palaceAnchor(world, lead)?.let { return it }
         return at to lead.yaw
+    }
+
+    /**
+     * Anker der Palastszene (P23): Alleeanfang (`palaceApproach(o)`, Punkt `avenue`), Blick zur Palastmitte, also durch
+     * das Propylon nach Norden. Ohne Palast unter dem Spieler (Prüfbefehl fern vom Palast): Blick zum gewiesenen Ziel.
+     */
+    private fun palaceAnchor(world: ServerWorld, lead: ServerPlayerEntity): Pair<Vec3d, Float>? {
+        val o = Approach.palace(world, lead.blockPos)
+        if (o != null) {
+            val avenue = TartarusArenas.palaceApproach(o).points.first().pos
+            val ground = RpgRests.ground(world, avenue, GROUND_UP, GROUND_DOWN)
+            return ground to RpgStages.yawOf(o.x + 0.5 - avenue.x, o.z + 0.5 - avenue.z)
+        }
+        val at = RpgRests.ground(world, lead.entityPos, GROUND_UP, GROUND_DOWN)
+        val target = TartarosGuide.target(world, lead) ?: return null
+        if (target.second != "palace") return null
+        return at to RpgStages.yawOf(target.first.x - at.x, target.first.z - at.z)
     }
 
     /** Die Zeitleiste auf dem Server: Szene starten, je Tick halten, nach [Run.length] Ticks Ende. */

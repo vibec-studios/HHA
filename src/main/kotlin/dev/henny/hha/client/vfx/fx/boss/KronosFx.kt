@@ -17,8 +17,10 @@ import dev.henny.hha.client.vfx.fx.FxSolidMode
 import dev.henny.hha.client.vfx.fx.Tear
 import dev.henny.hha.client.vfx.fx.lib.FxLib
 import dev.henny.hha.entity.boss.KronosEntity
+import dev.henny.hha.entity.boss.KronosPose
 import dev.henny.hha.logic.Vfx
 import dev.henny.hha.logic.boss.BossTimings
+import dev.henny.hha.logic.boss.timings.KronosSigTimings
 import dev.henny.hha.world.TartarusPlans
 import net.minecraft.client.MinecraftClient
 import net.minecraft.client.render.LightmapTextureManager
@@ -34,6 +36,8 @@ import java.util.Random
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
+import kotlin.math.ceil
+import kotlin.math.max
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.pow
@@ -53,6 +57,9 @@ import kotlin.math.sqrt
  * | `kronos.ghosts` | [KronosGhostsFx] | b = Gestalt, extra = `x,y,z,yaw;…` (neuester zuerst), life |
  * | `kronos.sky` | [KronosSkyFx] | Dauer-Effekt an jedem Kronos (`FxAttach`); per Befehl: pos = Saalmitte, a = Gestalt |
  * | `kronos.death` | [KronosDeathFx] | pos = Füße, entity = Kronos, a = Höhe, life = 200 (feste Absprache mit P12) |
+ * | `kronos.ray` | [KronosRayFx] | pos = Boden unter der Hand, dir = Startkante, a = Ansage-Ticks, b = Schwenk-Ticks, c = Drehsinn, d = Reichweite, entity = Kronos, life (Ü4, P20) |
+ * | `kronos.age` | [KronosAgeFx] | pos = Säulenfuß, a = halbe Breite, b = Höhe, c = 1 rückwärts (Wiederaufbau), life (Ü4, P20) |
+ * | `kronos.rewind_hit` | [KronosRewindHitFx] | pos = Trefferort, dir = Ziel − Treffer, a = Spielerhöhe, life (Ü4, P20) |
  */
 object KronosFx {
     fun init() {
@@ -62,6 +69,10 @@ object KronosFx {
         FxRegistry.register("kronos.shards") { KronosShardsFx(it) }
         FxRegistry.register("kronos.ghosts") { KronosGhostsFx(it) }
         FxRegistry.register("kronos.death") { KronosDeathFx(it) }
+        // Überarbeitung 4 (P20): Stillstand mit Deckung.
+        FxRegistry.register("kronos.ray") { KronosRayFx(it) }
+        FxRegistry.register("kronos.age") { KronosAgeFx(it) }
+        FxRegistry.register("kronos.rewind_hit") { KronosRewindHitFx(it) }
         // Per Befehl (Vorführung): ein Himmel um den Punkt, ohne Wesen.
         FxRegistry.register("kronos.sky") { a -> KronosSkyFx(null, a.pos.add(0.0, -1.0, 0.0), a.a.toInt().coerceIn(0, 1), KronosSkyFx.DEMO_LIFE) }
         FxAttach.register(HhaEntities.KRONOS) { KronosSkyFx(it, null, 0, KronosSkyFx.ATTACH_LIFE) }
@@ -388,12 +399,18 @@ class KronosClockFx(a: FxArgs) : FxEffect(a.life.coerceAtLeast(10)) {
     private val floorY = FxLib.groundY(a.world, hub.x, hub.y, hub.z) + FxLib.GROUND_LIFT + 0.02
     private val turn = PI * 2.0 / BossTimings.Kronos.HANDS_TURN
 
+    /** Überarbeitung 4 (P20): Die Zeiger liegen auf dem Boden jeder Ebene auf (Umgang +2, Podest +3). */
+    private val ground = KronosGround(a.world, floorY - FxLib.GROUND_LIFT - 0.02)
+
     private fun shape(p: Float): Float =
         if (p < WIDEST) HUB_SHARE + (1f - HUB_SHARE) * KronosFx.smooth(p / WIDEST) else (1f - (p - WIDEST) / (1f - WIDEST)).coerceAtLeast(0f).pow(0.8f)
 
     private fun drawHand(f: FxFrame, angle: Double, length: Double, alpha: Float, core: Boolean) {
         val dir = Vec3d(cos(angle), 0.0, sin(angle))
-        val floor = List(POINTS) { i -> Vec3d(hub.x, floorY, hub.z).add(dir.multiply(HUB_GAP + (length - HUB_GAP) * i / (POINTS - 1.0))) }
+        val floor = List(POINTS) { i ->
+            val p = Vec3d(hub.x, floorY, hub.z).add(dir.multiply(HUB_GAP + (length - HUB_GAP) * i / (POINTS - 1.0)))
+            Vec3d(p.x, ground.at(p.x, p.z) + FxLib.GROUND_LIFT + 0.02, p.z)
+        }
         val half = BossTimings.Kronos.HANDS_WIDTH / 2f
         FxDraw.strip(
             f, floor, KronosFx.UP, width = { p -> half * shape(p) },
@@ -432,7 +449,8 @@ class KronosClockFx(a: FxArgs) : FxEffect(a.life.coerceAtLeast(10)) {
     }
 
     companion object {
-        const val POINTS = 18
+        /** Überarbeitung 4: dichter abgetastet, damit die Stufe zum Umgang kurz bleibt. */
+        const val POINTS = 36
         const val HUB_GAP = 1.2
         const val WIDEST = 0.78f
         const val HUB_SHARE = 0.35f
@@ -896,4 +914,306 @@ class KronosDeathFx(a: FxArgs) : FxEffect(a.life.coerceAtLeast(MIN_LIFE)) {
 /** Sichtbares Alter eines Effekts im Tick (ohne Zwischenbild), mit Zeitfaktor – für Zustände, die im Tick fortschreiten. */
 private object KronosFxClockAge {
     fun of(effect: FxEffect): Float = dev.henny.hha.client.vfx.fx.FxClock.age(effect, effect.age.toFloat())
+}
+
+// =====================================================================================================================
+// Überarbeitung 4 (P20): Sanduhr-Strahl, alternde Säulen, Rückspulung durch den Strahl
+// =====================================================================================================================
+
+/**
+ * Höhe des festen Bodens je Spalte, einmal gesucht und gemerkt (Saal mit Umgang +2 und Podest +3; `FxLib.groundY` sucht
+ * zwei Blöcke darüber). So liegen Flächen auch auf den Ebenen auf, statt unsichtbar unter deren Belag.
+ */
+internal class KronosGround(private val world: ClientWorld, private val baseY: Double) {
+    private val cache = HashMap<Long, Double>()
+
+    fun at(x: Double, z: Double): Double {
+        val key = BlockPos.asLong(kotlin.math.floor(x).toInt(), 0, kotlin.math.floor(z).toInt())
+        return cache.getOrPut(key) { FxLib.groundY(world, x, baseY, z) }
+    }
+}
+
+/**
+ * `kronos.ray` – der Sanduhr-Strahl des Stillstands (PLAN 4.2, Briefing P20 Schritt 1). Ein ruhiger, glatter
+ * Lichtfächer aus Sand und Sternenlicht, der von Kronos' erhobener Hand über den Boden schwenkt; ein Bild, kein Flackern.
+ *
+ * Kodierung (Server `KronosStasis.Run.standstill`): pos = Boden unter der Hand, dir = Startkante, a = Ansage-Ticks,
+ * b = Schwenk-Ticks, c = Drehsinn (+1 wachsende Winkel), d = Reichweite, entity = Kronos, life = Ansage + Schwenk + Ausklang.
+ * Geometrie wie am Server: Vorderkante `RAY_ARC / Schwenk` je Tick ab der Startkante bis `RAY_ARC`, Fächer
+ * 2 · `RAY_HALF_ANGLE` hinter ihr, nie vor die Startkante.
+ *
+ * - Ansage: der überstrichene Halbkreis blass (liegt auch auf Umgang und Podest), die Startkante hell, ein Schimmer
+ *   läuft am Rand in Drehrichtung.
+ * - Schwenk: der Strahl als Fächer weicher Lichtstrahlen am Boden, vorn ein niedriger Lichtvorhang; davor bleibt der
+ *   restliche Bereich blass sichtbar.
+ *
+ * Unter dem Zeitstopp-Pass klar lesbar: gezeichnet in der Über-Phase (nach dem Pass, also nicht entsättigt) und in
+ * Echtzeit (nicht über `FxClock`, friert also nicht ein; Ablauf ebenfalls in Echtzeit, siehe [expired]).
+ */
+class KronosRayFx(a: FxArgs) : FxEffect(a.life.coerceAtLeast(MIN_LIFE)) {
+    private val apex = a.pos
+    private val startDeg = Math.toDegrees(atan2(a.dir.z, a.dir.x))
+    private val ansage = a.a.coerceIn(1f, 400f)
+    private val sweep = a.b.coerceIn(1f, 200f)
+    private val sign = if (a.c < 0f) -1.0 else 1.0
+    private val radius = a.d.coerceIn(4f, 64f).toDouble()
+    private val entity = a.entity
+    private val pal = a.palette
+    private val ground = KronosGround(a.world, apex.y)
+    private val arc = KronosSigTimings.RAY_ARC.toDouble()
+    private val width = 2.0 * KronosSigTimings.RAY_HALF_ANGLE
+    private val degPerTick = arc / sweep
+
+    /** Echtzeit (der Strahl läuft im Zeitstopp weiter). */
+    private fun now(f: FxFrame): Float = age + f.tickDelta
+
+    /**
+     * Verlässt Kronos die Pose `STASIS` (Schwenk vorbei, Phasenwechsel, Szene, Abbruch), blendet der Strahl ab dort in
+     * [END_FADE] Ticks aus; −1 = noch nicht.
+     */
+    private var endAt = -1
+
+    override fun tick(world: ClientWorld) {
+        val titan = entity as? KronosEntity
+        if (endAt < 0 && age > POSE_GRACE && (titan == null || titan.isRemoved || titan.pose != KronosPose.STASIS)) endAt = age
+    }
+
+    override fun expired(): Boolean = age >= life || (endAt >= 0 && age >= endAt + END_FADE)
+
+    private fun ending(t: Float): Float = if (endAt < 0) 1f else KronosFx.clamp01(1f - (t - endAt) / END_FADE)
+
+    private fun point(rel: Double, r: Double): Vec3d {
+        val rad = Math.toRadians(startDeg + sign * rel)
+        val x = apex.x + cos(rad) * r
+        val z = apex.z + sin(rad) * r
+        return Vec3d(x, ground.at(x, z) + LIFT, z)
+    }
+
+    /** Ein Lichtstrahl am Boden von der Hand bis zur Reichweite, im Winkel [rel] ab der Startkante. */
+    private fun spoke(f: FxFrame, rel: Double, alpha: Float, step: Double, seed: Int) {
+        if (alpha <= 0.004f) return
+        val pts = List(SPOKE_POINTS) { i -> point(rel, START_GAP + (radius - START_GAP) * i / (SPOKE_POINTS - 1.0)) }
+        val spread = Math.toRadians(step) * SPOKE_OVERLAP
+        FxDraw.strip(
+            f, pts, KronosFx.UP, width = { p -> ((START_GAP + (radius - START_GAP) * p) * spread * 0.5).toFloat() + 0.05f },
+            color = { p ->
+                FxLib.alpha(FxLib.mix(SAND, pal.core, 0.35f + 0.4f * p), alpha * (0.55f + 0.45f * KronosFx.smooth(p * 3f)) * (1f - 0.35f * p))
+            },
+            mode = FxMode.RIBBON, seed = seed,
+        )
+    }
+
+    /** Fächer von [from] bis [to] (Grad ab der Startkante), Deckkraft je Winkel aus [alpha]. */
+    private fun fan(f: FxFrame, from: Double, to: Double, alpha: (Double) -> Float) {
+        if (to - from < 0.2) return
+        val count = ceil((to - from) / FAN_STEP).toInt().coerceAtLeast(1)
+        val step = (to - from) / count
+        for (i in 0..count) {
+            val rel = from + step * i
+            spoke(f, rel, alpha(rel), step, 40 + i)
+        }
+    }
+
+    /** Lichtvorhang an der Vorderkante: je Stück gleicher Bodenhöhe eine Wand (liegt auch auf dem Umgang auf). */
+    private fun curtain(f: FxFrame, rel: Double, alpha: Float) {
+        if (alpha <= 0.01f) return
+        val color = FxLib.alpha(FxLib.mix(pal.core, SAND, 0.4f), alpha)
+        var runStart: Vec3d? = null
+        var last: Vec3d? = null
+        var r = START_GAP
+        while (r <= radius + 1e-6) {
+            val p = point(rel, r)
+            val prev = last
+            val s = runStart
+            if (s == null) {
+                runStart = p
+            } else if (prev != null && abs(p.y - prev.y) > 0.3) {
+                if (s.distanceTo(prev) > 0.5) FxDraw.wall(f, s, prev, CURTAIN_HEIGHT, color, FxMode.RIBBON, seed = 7)
+                runStart = p
+            }
+            last = p
+            r += CURTAIN_STEP
+        }
+        val s = runStart
+        val e = last
+        if (s != null && e != null && s.distanceTo(e) > 0.5) FxDraw.wall(f, s, e, CURTAIN_HEIGHT, color, FxMode.RIBBON, seed = 7)
+    }
+
+    /** Hand: woher das Licht kommt (an Kronos, sonst über dem Fußpunkt). */
+    private fun hand(f: FxFrame): Vec3d =
+        entity?.takeIf { !it.isRemoved }?.let { FxLib.body(it, f.tickDelta, HAND_SHARE) } ?: apex.add(0.0, HAND_FALLBACK, 0.0)
+
+    override fun over(f: FxFrame) {
+        val t = now(f)
+        val base = KronosFx.smooth(t / FADE_IN) * KronosFx.clamp01((life - t) / FADE_OUT) * ending(t)
+        if (base <= 0.01f) return
+        if (t < ansage) {
+            // Ansage: blasser Halbkreis, helle Startkante, Schimmer in Drehrichtung.
+            val k = t / ansage
+            fan(f, 0.0, arc) { AREA_ALPHA * base * (0.6f + 0.4f * k) }
+            spoke(f, 0.0, EDGE_ALPHA * base, FAN_STEP * 0.6, 3)
+            val glint = (t % GLINT_PERIOD) / GLINT_PERIOD
+            spoke(f, glint * GLINT_ARC, GLINT_ALPHA * base * Ease.bump(glint), FAN_STEP, 5)
+        } else {
+            val lead = ((t - ansage) * degPerTick).coerceAtMost(arc)
+            val trail = max(0.0, lead - width)
+            val passed = t > ansage + sweep
+            // Was noch kommt, bleibt blass sichtbar; der Strahl selbst ist hell, vorn am hellsten.
+            if (!passed) fan(f, lead, arc) { AHEAD_ALPHA * base }
+            fan(f, trail, lead) { rel -> BEAM_ALPHA * base * (0.45f + 0.55f * KronosFx.smooth(((rel - trail) / width).toFloat())) }
+            if (!passed) curtain(f, lead, CURTAIN_ALPHA * base)
+        }
+        val h = hand(f)
+        FxDraw.glow(f, h, HAND_GLOW, FxLib.alpha(FxLib.mix(pal.core, SAND, 0.3f), HAND_GLOW_ALPHA * base))
+        FxDraw.ribbon(
+            f, listOf(h, Vec3d(apex.x, ground.at(apex.x, apex.z) + LIFT, apex.z)), width = { p -> 0.35f * (1f - 0.5f * p) },
+            color = { p -> FxLib.alpha(FxLib.mix(pal.core, SAND, 0.5f), COLUMN_ALPHA * base * (1f - 0.6f * p)) }, mode = FxMode.RIBBON, seed = 9,
+        )
+    }
+
+    companion object {
+        const val MIN_LIFE = 20
+        /** Blassweißer Sand (kein Gold: Gold heißt im Kampf „sicher“). */
+        const val SAND = 0xFFF2EAD8.toInt()
+        const val LIFT = 0.06
+        const val START_GAP = 1.2
+        const val SPOKE_POINTS = 16
+        const val SPOKE_OVERLAP = 1.35
+        const val FAN_STEP = 2.5
+        const val AREA_ALPHA = 0.10f
+        const val EDGE_ALPHA = 0.75f
+        const val GLINT_ALPHA = 0.35f
+        const val GLINT_PERIOD = 20f
+        const val GLINT_ARC = 60.0
+        const val AHEAD_ALPHA = 0.06f
+        const val BEAM_ALPHA = 0.42f
+        const val CURTAIN_ALPHA = 0.38f
+        const val CURTAIN_HEIGHT = 2.6f
+        const val CURTAIN_STEP = 1.0
+        const val HAND_SHARE = 0.75
+        const val HAND_FALLBACK = 4.6
+        const val HAND_GLOW = 1.6f
+        const val HAND_GLOW_ALPHA = 0.55f
+        const val COLUMN_ALPHA = 0.3f
+        const val FADE_IN = 6f
+        const val FADE_OUT = 10f
+        /** Ausblenden, sobald er die Pose verlässt (Ticks); so lange nach dem Start wird die Pose noch nicht geprüft. */
+        const val END_FADE = 8
+        const val POSE_GRACE = 4
+    }
+}
+
+/**
+ * `kronos.age` – eine Säule altert (Briefing P20 Schritt 1): Staub rieselt am Schaft **nach oben**, als liefe die Zeit
+ * an ihr schneller; am Fuß liegt ein matter Staubfleck. Mit c = 1 umgekehrt (die Säule kehrt zurück): der Staub sinkt.
+ * Kodierung: pos = Fußmitte, a = halbe Breite der Säule, b = Höhe, c = 1 rückwärts, life.
+ */
+class KronosAgeFx(a: FxArgs) : FxEffect(a.life.coerceAtLeast(MIN_LIFE)) {
+    private class Mote(val angle: Double, val start: Float, val speed: Float, val delay: Float, val size: Float)
+
+    private val foot = a.pos
+    private val half = a.a.coerceIn(0.5f, 6f).toDouble()
+    private val height = a.b.coerceIn(2f, 60f)
+    private val back = a.c >= 0.5f
+    private val pal = a.palette
+    private val floorY = FxLib.groundY(a.world, foot.x, foot.y, foot.z) + FxLib.GROUND_LIFT
+    private val motes: List<Mote> = Random(a.seed).let { rnd ->
+        List(MOTES) {
+            Mote(rnd.nextDouble() * 2 * PI, rnd.nextFloat() * height * 0.8f, 0.6f + rnd.nextFloat() * 0.8f, rnd.nextFloat() * DELAY, 0.12f + rnd.nextFloat() * 0.14f)
+        }
+    }
+
+    override fun energy(f: FxFrame) {
+        val t = time(f)
+        val fade = KronosFx.smooth(t / 4f) * KronosFx.clamp01((life - t) / FADE)
+        if (fade <= 0.01f) return
+        val color = FxLib.mix(KronosRayFx.SAND, pal.edge, 0.3f)
+        for (m in motes) {
+            val s = t - m.delay
+            if (s <= 0f) continue
+            val rise = m.speed * s * RISE_RATE
+            val y = if (back) m.start + height * 0.2f - rise else m.start + rise
+            if (y < 0f || y > height + 2f) continue
+            val r = half + OUTSET + 0.25 * sin(s * 0.2 + m.angle)
+            val at = Vec3d(foot.x + cos(m.angle) * r, floorY + y, foot.z + sin(m.angle) * r)
+            FxDraw.glow(f, at, m.size, FxLib.alpha(color, MOTE_ALPHA * fade * KronosFx.smooth(s / 5f)))
+        }
+        FxDraw.flat(
+            f, Vec3d(foot.x, floorY + 0.03, foot.z), KronosFx.UP, (half * 2.2).toFloat(), FxLib.alpha(KronosRayFx.SAND, STAIN_ALPHA * fade),
+            FxMode.DUST, progress = 0.6f, seed = 21,
+        )
+    }
+
+    companion object {
+        const val MIN_LIFE = 24
+        const val MOTES = 48
+        const val DELAY = 14f
+        const val RISE_RATE = 0.45f
+        const val OUTSET = 0.35
+        const val MOTE_ALPHA = 0.55f
+        const val STAIN_ALPHA = 0.3f
+        const val FADE = 10f
+    }
+}
+
+/**
+ * `kronos.rewind_hit` – der Strahl nimmt einen Spieler aus der Zeit (Briefing P20): Ein Sandband zieht vom Trefferort
+ * zum Ort von vor 60 Ticks, dort schließt sich ein Ziffernring, am Trefferort verblasst ein Schein. In Echtzeit und in
+ * der Über-Phase gezeichnet (läuft im Zeitstopp, nicht entsättigt).
+ * Kodierung: pos = Trefferort (Füße), dir = Ziel − Treffer, a = Spielerhöhe, life.
+ */
+class KronosRewindHitFx(a: FxArgs) : FxEffect(a.life.coerceAtLeast(MIN_LIFE)) {
+    private val from = a.pos
+    private val to = a.pos.add(a.dir)
+    private val chest = a.a.coerceIn(0.5f, 3f) * 0.55
+    private val pal = a.palette
+
+    private fun now(f: FxFrame): Float = age + f.tickDelta
+
+    override fun expired(): Boolean = age >= life
+
+    override fun over(f: FxFrame) {
+        val t = now(f)
+        val fade = KronosFx.clamp01((life - t) / FADE)
+        val head = Ease.outCubic(t / TRAVEL)
+        val tail = Ease.inOut((t - TAIL_DELAY) / TRAVEL)
+        val a = from.add(0.0, chest, 0.0)
+        val b = to.add(0.0, chest, 0.0)
+        val lift = KronosFx.UP.multiply(a.distanceTo(b) * ARC_LIFT)
+        fun at(u: Float): Vec3d = a.lerp(b, u.toDouble()).add(lift.multiply(4.0 * u * (1.0 - u)))
+        if (head - tail > 0.02f) {
+            val pts = List(POINTS) { i -> at(tail + (head - tail) * i / (POINTS - 1f)) }
+            FxDraw.ribbon(
+                f, pts, width = { p -> WIDTH * sin(PI.toFloat() * p) + 0.03f },
+                color = { p -> FxLib.alpha(FxLib.mix(pal.main, KronosRayFx.SAND, p), BAND_ALPHA * fade) }, mode = FxMode.RIBBON, seed = 31,
+            )
+        }
+        if (t >= RING_FROM) {
+            // Der Ring schließt sich (gezogener Winkelanteil wächst) wie ein Zeiger, der eine Runde läuft.
+            val ring = KronosFx.clamp01((t - RING_FROM) / RING_TICKS)
+            FxDraw.flat(
+                f, to.add(0.0, 0.05, 0.0), KronosFx.UP, RING_RADIUS, FxLib.alpha(FxLib.mix(pal.core, KronosRayFx.SAND, 0.4f), RING_ALPHA * fade),
+                FxMode.RUNE, inner = RING_RADIUS * 0.78f, rotation = -t * 0.05f, progress = Ease.outCubic(ring).coerceAtLeast(0.02f), seed = 32,
+            )
+        }
+        FxDraw.glow(f, a, GLOW * (1f - KronosFx.clamp01(t / GLOW_TICKS)), FxLib.alpha(pal.core, GLOW_ALPHA * fade))
+    }
+
+    companion object {
+        const val MIN_LIFE = 20
+        const val TRAVEL = 8f
+        const val TAIL_DELAY = 5f
+        const val POINTS = 20
+        const val WIDTH = 0.35f
+        const val ARC_LIFT = 0.12
+        const val BAND_ALPHA = 0.7f
+        const val RING_FROM = 6f
+        const val RING_TICKS = 18f
+        const val RING_RADIUS = 1.3f
+        const val RING_ALPHA = 0.6f
+        const val GLOW = 1.1f
+        const val GLOW_TICKS = 12f
+        const val GLOW_ALPHA = 0.5f
+        const val FADE = 10f
+    }
 }
